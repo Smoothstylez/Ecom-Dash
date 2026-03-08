@@ -26,19 +26,19 @@ map:
     read_only: false
 
 options:
-  shopify_api_key: ""
-  shopify_api_secret: ""
+  shopify_client_id: ""
+  shopify_client_secret: ""
   shopify_shop_domain: ""
-  kaufland_client_key: ""
-  kaufland_secret_key: ""
+  shop_client_key: ""
+  shop_secret_key: ""
   live_sync_enabled: false
   live_sync_interval_seconds: 300
 
 schema:
-  shopify_api_key: str?
-  shopify_api_secret: str?
+  shopify_client_id: str?
+  shopify_client_secret: str?
   shopify_shop_domain: str?
-  kaufland_client_key: str?
-  kaufland_secret_key: str?
+  shop_client_key: str?
+  shop_secret_key: str?
   live_sync_enabled: bool
   live_sync_interval_seconds: int

@@ -60,24 +60,24 @@ OPTIONS_FILE="/data/options.json"
 if [ -f "$OPTIONS_FILE" ]; then
     echo "[add-on] Reading options from $OPTIONS_FILE..."
 
-    # Shopify credentials
-    SHOPIFY_API_KEY=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shopify_api_key',''))" 2>/dev/null || echo "")
-    SHOPIFY_API_SECRET=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shopify_api_secret',''))" 2>/dev/null || echo "")
+    # Shopify credentials (code reads: SHOPIFY_CLIENT_ID, SHOPIFY_CLIENT_SECRET, SHOPIFY_SHOP_DOMAIN)
+    SHOPIFY_CLIENT_ID=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shopify_client_id',''))" 2>/dev/null || echo "")
+    SHOPIFY_CLIENT_SECRET=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shopify_client_secret',''))" 2>/dev/null || echo "")
     SHOPIFY_SHOP_DOMAIN=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shopify_shop_domain',''))" 2>/dev/null || echo "")
 
-    # Kaufland credentials
-    KAUFLAND_CLIENT_KEY=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('kaufland_client_key',''))" 2>/dev/null || echo "")
-    KAUFLAND_SECRET_KEY=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('kaufland_secret_key',''))" 2>/dev/null || echo "")
+    # Kaufland credentials (code reads: SHOP_CLIENT_KEY, SHOP_SECRET_KEY)
+    SHOP_CLIENT_KEY=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shop_client_key',''))" 2>/dev/null || echo "")
+    SHOP_SECRET_KEY=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('shop_secret_key',''))" 2>/dev/null || echo "")
 
     # Live sync
     LIVE_SYNC_ENABLED=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print('1' if o.get('live_sync_enabled', False) else '0')" 2>/dev/null || echo "0")
     LIVE_SYNC_INTERVAL=$(python3 -c "import json; o=json.load(open('$OPTIONS_FILE')); print(o.get('live_sync_interval_seconds', 300))" 2>/dev/null || echo "300")
 
-    [ -n "$SHOPIFY_API_KEY" ]    && export SHOPIFY_API_KEY
-    [ -n "$SHOPIFY_API_SECRET" ] && export SHOPIFY_API_SECRET
-    [ -n "$SHOPIFY_SHOP_DOMAIN" ] && export SHOPIFY_SHOP_DOMAIN
-    [ -n "$KAUFLAND_CLIENT_KEY" ] && export KAUFLAND_CLIENT_KEY
-    [ -n "$KAUFLAND_SECRET_KEY" ] && export KAUFLAND_SECRET_KEY
+    [ -n "$SHOPIFY_CLIENT_ID" ]     && export SHOPIFY_CLIENT_ID
+    [ -n "$SHOPIFY_CLIENT_SECRET" ] && export SHOPIFY_CLIENT_SECRET
+    [ -n "$SHOPIFY_SHOP_DOMAIN" ]   && export SHOPIFY_SHOP_DOMAIN
+    [ -n "$SHOP_CLIENT_KEY" ]       && export SHOP_CLIENT_KEY
+    [ -n "$SHOP_SECRET_KEY" ]       && export SHOP_SECRET_KEY
     export LIVE_SYNC_BACKGROUND_ENABLED="$LIVE_SYNC_ENABLED"
     export LIVE_SYNC_INTERVAL_SECONDS="$LIVE_SYNC_INTERVAL"
 
