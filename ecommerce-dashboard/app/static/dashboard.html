@@ -1,0 +1,1323 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Combined Dropshipping Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.41.6/dist/globe.gl.min.js"></script>
+  <link rel="stylesheet" href="static/css/themes.css">
+  <link rel="stylesheet" href="static/css/main.css">
+  <script>
+    // Early theme application — prevents flash of unstyled content
+    (function() {
+      try {
+        var t = localStorage.getItem("dash-combined.theme");
+        if (t) document.documentElement.setAttribute("data-theme", t);
+      } catch(e) {}
+    })();
+  </script>
+</head>
+<body>
+  <div class="page">
+    <div class="full-back-row">
+      <a class="bookkeeping-link" href="?tab=bookings&subtab=transactions">Zurueck zum Cockpit</a>
+    </div>
+
+    <section class="controls-card">
+      <div class="controls-grid">
+        <div class="control control-icon">
+          <label for="searchOpenBtn">Suche</label>
+          <button id="searchOpenBtn" class="search-launch-btn" type="button" aria-expanded="false" aria-controls="searchModal" aria-label="Suche oeffnen">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+              <circle cx="9" cy="9" r="5.5"></circle>
+              <path d="M13 13l4.2 4.2"></path>
+            </svg>
+          </button>
+        </div>
+        <div class="control control-menu-wrap">
+          <label for="dateRangeBtn">Zeitraum</label>
+          <button id="dateRangeBtn" class="control-menu-trigger" type="button" aria-expanded="false" aria-controls="dateRangeMenu">Letzte 30 Tage</button>
+          <div id="dateRangeMenu" class="control-menu date-range-menu" aria-hidden="true">
+            <div class="date-menu-layout">
+              <div class="date-menu-presets">
+                <button class="menu-item" data-preset="today" type="button">Heute</button>
+                <button class="menu-item" data-preset="yesterday" type="button">Gestern</button>
+                <button class="menu-item" data-preset="last_7_days" type="button">Letzte 7 Tage</button>
+                <button class="menu-item active" data-preset="last_30_days" type="button">Letzte 30 Tage</button>
+                <button class="menu-item" data-preset="last_90_days" type="button">Letzte 90 Tage</button>
+                <button class="menu-item" data-preset="this_month" type="button">Dieser Monat</button>
+                <button class="menu-item" data-preset="last_month" type="button">Letzter Monat</button>
+                <button class="menu-item" data-preset="this_year" type="button">Dieses Jahr</button>
+                <button class="menu-item" data-preset="all_time" type="button">Alle Zeit</button>
+              </div>
+              <div class="date-menu-custom">
+                <div class="date-menu-custom-title">Exakter Zeitraum</div>
+                <div class="date-menu-custom-hint" id="dateRangePreviewText">-</div>
+                <div class="date-menu-nav">
+                  <button id="dateMonthPrevBtn" class="menu-item" type="button">&larr;</button>
+                  <button id="dateMonthNextBtn" class="menu-item" type="button">&rarr;</button>
+                </div>
+                <div class="date-calendars">
+                  <div class="date-calendar-pane">
+                    <div id="dateMonthLabelA" class="date-month-label">-</div>
+                    <div class="date-weekdays">
+                      <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
+                    </div>
+                    <div id="dateCalendarA" class="date-days-grid"></div>
+                  </div>
+                  <div class="date-calendar-pane">
+                    <div id="dateMonthLabelB" class="date-month-label">-</div>
+                    <div class="date-weekdays">
+                      <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
+                    </div>
+                    <div id="dateCalendarB" class="date-days-grid"></div>
+                  </div>
+                </div>
+                <button id="dateCustomApplyBtn" class="btn-inline" type="button" style="grid-column: 1 / -1;">Zeitraum anwenden</button>
+              </div>
+            </div>
+          </div>
+          <input id="fromDate" type="date" hidden>
+          <input id="toDate" type="date" hidden>
+        </div>
+        <div class="control control-menu-wrap">
+          <label for="channelMenuBtn">Channel</label>
+          <button id="channelMenuBtn" class="control-menu-trigger" type="button" aria-expanded="false" aria-controls="channelMenu">Alle</button>
+          <div id="channelMenu" class="control-menu channel-menu" aria-hidden="true">
+            <button class="menu-item active" data-channel="" type="button">Alle</button>
+            <button class="menu-item" data-channel="shopify" type="button">Shopify</button>
+            <button class="menu-item" data-channel="kaufland" type="button">Kaufland</button>
+          </div>
+          <select id="marketplaceSelect" hidden>
+            <option value="" selected>Alle</option>
+            <option value="shopify">Shopify</option>
+            <option value="kaufland">Kaufland</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="tabbar-row top-tabbar-row">
+        <div class="tabbar" role="tablist" aria-label="Dashboard Bereiche">
+          <button id="tabAnalyticsBtn" class="tab-btn active" type="button" role="tab">Analytics</button>
+          <button id="tabOrdersBtn" class="tab-btn" type="button" role="tab">Orders</button>
+          <button id="tabCustomersBtn" class="tab-btn" type="button" role="tab">Kunden</button>
+          <button id="tabBookingsBtn" class="tab-btn" type="button" role="tab">Buchungen</button>
+          <button id="tabGoogleAdsBtn" class="tab-btn" type="button" role="tab">Google Ads</button>
+          <button id="tabEbayBtn" class="tab-btn" type="button" role="tab">eBay</button>
+        </div>
+      </div>
+
+    </section>
+
+    <div id="analyticsPanel" class="tab-panel active">
+      <section class="kpi-grid" data-drag-group="kpi" data-section-id="sec-kpi">
+        <article class="card kpi" data-card-id="orders">
+          <div class="kpi-name" data-tooltip="Gefilterter Scope">Orders</div>
+          <div id="kpiOrders" class="kpi-value">0</div>
+          <div id="kpiOrdersTrend" class="kpi-trend"></div>
+        </article>
+        <article class="card kpi" data-card-id="revenue">
+          <div class="kpi-name" data-tooltip="Kundenbetrag gesamt">Umsatz</div>
+          <div id="kpiRevenue" class="kpi-value">EUR 0,00</div>
+          <div id="kpiRevenueTrend" class="kpi-trend"></div>
+        </article>
+        <article class="card kpi" data-card-id="after-fees">
+          <div class="kpi-name" data-tooltip="Nach Marketplace/Payment Fees">After Fees</div>
+          <div id="kpiAfterFees" class="kpi-value">EUR 0,00</div>
+          <div id="kpiAfterFeesTrend" class="kpi-trend"></div>
+        </article>
+        <article class="card kpi" data-card-id="purchase">
+          <div class="kpi-name" data-tooltip="Manuell gepflegte Einkaufskosten">Einkauf</div>
+          <div id="kpiPurchase" class="kpi-value">EUR 0,00</div>
+          <div id="kpiPurchaseTrend" class="kpi-trend"></div>
+        </article>
+        <article class="card kpi" data-card-id="profit">
+          <div class="kpi-name">Gewinn</div>
+          <div id="kpiProfit" class="kpi-value">EUR 0,00</div>
+          <div id="kpiProfitTrend" class="kpi-trend"></div>
+          <div id="kpiProfitSub" class="kpi-sub">Marge 0,00%</div>
+        </article>
+        <article class="card kpi" data-card-id="channels">
+          <div class="kpi-name" data-tooltip="Shopify / Kaufland Umsatz">Channel Split</div>
+          <div id="kpiChannels" class="kpi-value">S: 0 | K: 0</div>
+        </article>
+      </section>
+
+      <section class="analytics-insights-grid" data-drag-group="insights-a" data-section-id="sec-insights-a">
+        <article class="card insight-card" data-card-id="snapshot">
+          <h2 class="chart-title" data-tooltip="E-Commerce Kernmetriken fuer Shopify und Kaufland im aktiven Filter.">Performance Snapshot</h2>
+          <div class="insight-metric-grid">
+            <div class="insight-metric">
+              <div class="insight-label">AOV</div>
+              <div id="insightAov" class="insight-value">EUR 0,00</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Gewinn / Order</div>
+              <div id="insightProfitPerOrder" class="insight-value">EUR 0,00</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Fee Quote</div>
+              <div id="insightFeeRate" class="insight-value">0,00%</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Retourenrate</div>
+              <div id="insightReturnRate" class="insight-value">0,00%</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Repeat Customer</div>
+              <div id="insightRepeatRate" class="insight-value">0,00%</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Einkauf gepflegt</div>
+              <div id="insightPurchaseCoverage" class="insight-value">0,00%</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Unique Kunden</div>
+              <div id="insightUniqueCustomers" class="insight-value">0</div>
+            </div>
+            <div class="insight-metric">
+              <div class="insight-label">Fehlende Einkaufswerte</div>
+              <div id="insightMissingPurchase" class="insight-value">0</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card insight-card" data-card-id="channel-compare">
+          <h2 class="chart-title" data-tooltip="Shopify vs. Kaufland: Umsatz, Gewinn und Qualitaetsmetriken.">Channel Vergleich</h2>
+          <div class="table-wrap analytics-compact-table-wrap">
+            <table class="analytics-compact-table">
+              <thead>
+                <tr>
+                  <th>Channel</th>
+                  <th>Orders</th>
+                  <th>Umsatz</th>
+                  <th>Gewinn</th>
+                  <th>Marge</th>
+                  <th>AOV</th>
+                  <th>Retouren</th>
+                </tr>
+              </thead>
+              <tbody id="marketplaceCompareBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+
+      <section class="analytics-insights-grid" data-drag-group="insights-b" data-section-id="sec-insights-b">
+        <article class="card insight-card" data-card-id="fulfillment">
+          <h2 class="chart-title" data-tooltip="Statusverteilung im aktuellen Zeitraum.">Fulfillment & Status</h2>
+          <div class="status-pill-grid">
+            <div class="status-pill">
+              <div class="status-pill-label">Completed</div>
+              <div id="statusCompletedLike" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Pending</div>
+              <div id="statusPendingLike" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Returns</div>
+              <div id="statusReturnLike" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Other</div>
+              <div id="statusOther" class="status-pill-value">0</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card insight-card" data-card-id="payments">
+          <h2 class="chart-title" data-tooltip="Hauefigkeit nach Bestellungen im aktiven Scope.">Top Payment Methoden</h2>
+          <div id="paymentMethodsList" class="payment-method-list"></div>
+        </article>
+      </section>
+
+      <!-- ── Donut Charts Row ── -->
+      <section class="donut-grid" data-drag-group="donuts" data-section-id="sec-donuts">
+        <article class="card donut-card" data-card-id="donut-profit">
+          <h2 class="chart-title" data-tooltip="Verteilung des Gewinns auf Shopify und Kaufland.">Gewinn nach Marktplatz</h2>
+          <div class="donut-canvas-wrap">
+            <canvas id="donutMarketplace"></canvas>
+            <div class="donut-center-label">
+              <div id="donutMarketplaceCenterValue" class="donut-center-value">-</div>
+              <div class="donut-center-sub">Gesamt</div>
+            </div>
+          </div>
+        </article>
+        <article class="card donut-card" data-card-id="donut-revenue">
+          <h2 class="chart-title" data-tooltip="Aufschluesselung in Fees, Einkauf und Gewinn.">Umsatz-Aufteilung</h2>
+          <div class="donut-canvas-wrap">
+            <canvas id="donutRevenue"></canvas>
+            <div class="donut-center-label">
+              <div id="donutRevenueCenterValue" class="donut-center-value">-</div>
+              <div class="donut-center-sub">Umsatz</div>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <!-- ── Purchase Timing Heatmap ── -->
+      <section class="heatmap-section" data-section-id="sec-heatmap">
+        <article class="card heatmap-card">
+          <h2 class="chart-title" data-tooltip="Bestellverteilung nach Wochentag und Uhrzeit. Dunklere Felder = mehr Bestellungen.">Kaufzeitpunkt-Analyse</h2>
+          <div id="purchaseHeatmap" class="heatmap-grid"></div>
+        </article>
+      </section>
+
+      <section class="charts-grid" data-drag-group="charts" data-section-id="sec-charts">
+        <article class="card chart-card" data-card-id="trend">
+          <div class="chart-head-row">
+            <div>
+              <h2 id="trendChartTitle" class="chart-title">Verlauf</h2>
+              <p id="trendChartSub" class="chart-sub">Umsatz und Gewinn aus kombinierten Orders.</p>
+            </div>
+            <div id="trendGranularityGroup" class="trend-granularity" role="tablist" aria-label="Trend Aufloesung">
+              <button id="trendGranularityAutoBtn" class="trend-granularity-btn active" type="button" data-trend-granularity="auto">Auto</button>
+              <button id="trendGranularityDayBtn" class="trend-granularity-btn" type="button" data-trend-granularity="day">Tag</button>
+              <button id="trendGranularityWeekBtn" class="trend-granularity-btn" type="button" data-trend-granularity="week">Woche</button>
+              <button id="trendGranularityMonthBtn" class="trend-granularity-btn" type="button" data-trend-granularity="month">Monat</button>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="trendChart"></canvas>
+          </div>
+        </article>
+        <article class="card chart-card" data-card-id="top-articles">
+          <h2 class="chart-title" data-tooltip="Nach Umsatz im aktuellen Filter">Top Artikel</h2>
+          <div class="table-wrap" style="max-height: 280px; margin-top: 8px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Artikel</th>
+                  <th>Orders</th>
+                  <th>Umsatz</th>
+                  <th>Gewinn</th>
+                </tr>
+              </thead>
+              <tbody id="topArticlesBody"></tbody>
+            </table>
+          </div>
+        </article>
+      </section>
+    </div>
+
+    <div id="ordersPanel" class="tab-panel">
+      <section class="card table-card">
+        <div class="table-head">
+          <h2 class="table-title">Kombinierte Orders</h2>
+          <div id="ordersMeta" class="table-meta" style="min-width: 96px; text-align: right;">0 Zeilen</div>
+        </div>
+        <div class="bookings-filter-card" style="margin-bottom: 10px;">
+          <div class="bookings-filter-grid" style="grid-template-columns: 1fr auto;">
+            <div class="booking-type-legend">
+              <span class="tx-legend-label">Filter</span>
+              <span class="tx-legend-item">Retouren/Cancel inkl. Shopify & Kaufland Status</span>
+            </div>
+            <div class="bookings-form-actions">
+              <button id="returnsOnlyBtn" class="btn-inline filter-toggle" type="button">Retouren/Cancel</button>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>Channel</th>
+                <th>Order</th>
+                <th>Kunde</th>
+                <th>Artikel</th>
+                <th>Finanzen</th>
+                <th>Einkauf</th>
+                <th>Gewinn</th>
+                <th>Status</th>
+                <th>Rechnung</th>
+              </tr>
+            </thead>
+            <tbody id="ordersBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="customersPanel" class="tab-panel">
+      <section class="kpi-grid">
+        <article class="card kpi">
+          <div class="kpi-name">Kunden (gemerged)</div>
+          <div id="customersKpiCount" class="kpi-value">0</div>
+          <div class="kpi-sub">Shopify + Kaufland zusammengefuehrt</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Wiederkehrend</div>
+          <div id="customersKpiRepeat" class="kpi-value">0</div>
+          <div id="customersKpiRepeatSub" class="kpi-sub">0,00%</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Orders pro Kunde</div>
+          <div id="customersKpiOrdersPer" class="kpi-value">0,00</div>
+          <div id="customersKpiOrdersTotal" class="kpi-sub">Orders gesamt: 0</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Umsatz pro Kunde</div>
+          <div id="customersKpiRevenuePer" class="kpi-value">EUR 0,00</div>
+          <div id="customersKpiRevenueTotal" class="kpi-sub">Umsatz gesamt: EUR 0,00</div>
+        </article>
+      </section>
+
+      <section class="analytics-insights-grid" style="margin-top: 12px;">
+        <article class="card insight-card">
+          <h2 class="chart-title">Datenabdeckung</h2>
+          <p class="chart-sub">Wie vollstaendig sind Kontakt- und Adressdaten je gemergtem Kunden.</p>
+          <div class="status-pill-grid">
+            <div class="status-pill">
+              <div class="status-pill-label">Mit E-Mail</div>
+              <div id="customersCoverageEmail" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Mit Telefon</div>
+              <div id="customersCoveragePhone" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Mit Adresse</div>
+              <div id="customersCoverageAddress" class="status-pill-value">0</div>
+            </div>
+            <div class="status-pill">
+              <div class="status-pill-label">Cross-Channel</div>
+              <div id="customersCoverageCross" class="status-pill-value">0</div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card insight-card">
+          <h2 class="chart-title">Marketplace Verteilung</h2>
+          <p class="chart-sub">Anzahl gemergter Kunden, die in Shopify bzw. Kaufland Orders haben.</p>
+          <div id="customersMarketplaceList" class="payment-method-list"></div>
+        </article>
+      </section>
+
+      <section class="card chart-card customer-geo-card" style="margin-top: 12px;">
+        <div class="chart-head-row">
+          <div>
+            <h2 class="chart-title">Bestell-Herkunft</h2>
+            <p id="customerGeoSub" class="chart-sub">Weltkarte mit Zoom/Scroll fuer Bestellorte.</p>
+          </div>
+          <div id="customerGeoModeGroup" class="customer-geo-mode" role="tablist" aria-label="Kartenmodus">
+            <button id="customerGeoModeMapBtn" class="customer-geo-mode-btn active" type="button" data-customer-geo-mode="map">Karte</button>
+            <button id="customerGeoModeGlobeBtn" class="customer-geo-mode-btn" type="button" data-customer-geo-mode="globe">Hex-Globus</button>
+          </div>
+        </div>
+        <div class="customer-geo-stage">
+          <div id="customerGeoMapView" class="customer-geo-view active"></div>
+          <div id="customerGeoGlobeView" class="customer-geo-view"></div>
+          <div id="customerGeoLoadingOverlay" class="customer-geo-loading" aria-live="polite" aria-hidden="true">
+            <div class="customer-geo-loading-card">
+              <div id="customerGeoLoadingText" class="customer-geo-loading-text">Lade Kundendaten...</div>
+              <div class="customer-geo-loading-bar"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">Kundenliste</h2>
+          <div id="customersMeta" class="table-meta">0 Zeilen</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Kunde</th>
+                <th>Kontakt</th>
+                <th>Adresse</th>
+                <th>Channel</th>
+                <th>Orders</th>
+                <th>Repeat</th>
+                <th>Umsatz</th>
+                <th>Gewinn</th>
+                <th>Letzte Bestellung</th>
+                <th>Top Artikel</th>
+              </tr>
+            </thead>
+            <tbody id="customersBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="bookingsPanel" class="tab-panel">
+      <div class="bookings-subtab-bar">
+        <div class="subtabbar">
+          <button id="bookingsTransactionsBtn" class="subtab-btn active" type="button">Transaktionen</button>
+          <button id="bookingsOrdersBtn" class="subtab-btn" type="button">Bestellungen</button>
+          <button id="bookingsTemplatesBtn" class="subtab-btn" type="button">Templates</button>
+          <button id="bookingsAccountsBtn" class="subtab-btn" type="button">Konten</button>
+          <button id="bookingsDocumentsBtn" class="subtab-btn" type="button">Belege</button>
+        </div>
+        <button id="bookingsNewBtn" class="bookings-tools-toggle" type="button" aria-expanded="false" data-target="bookingsTransactionTools">
+          <svg viewBox="0 0 20 20"><line x1="10" y1="4" x2="10" y2="16"/><line x1="4" y1="10" x2="16" y2="10"/></svg>
+          Neue Transaktion
+        </button>
+      </div>
+      <section class="card table-card">
+
+        <div id="bookingsTransactionsPanel" class="bookings-subpanel active">
+
+          <!-- Booking-class segmented control -->
+          <div id="bookingClassControl" class="segmented-control booking-class-control">
+            <button id="bookingClassAutoBtn" class="segmented-btn active" type="button" data-booking-class="automatic">Automatisch</button>
+            <button id="bookingClassMonthlyBtn" class="segmented-btn" type="button" data-booking-class="monthly">Monatlich</button>
+            <button id="bookingClassSingleBtn" class="segmented-btn" type="button" data-booking-class="single">Einzeln</button>
+          </div>
+
+          <div id="bookingsTransactionTools" class="bookings-tools">
+            <div class="bookings-form-grid">
+              <div class="control">
+                <label for="createBookingDate">Datum</label>
+                <input id="createBookingDate" type="date">
+              </div>
+              <div class="control">
+                <label for="createBookingType">Typ</label>
+                <select id="createBookingType">
+                  <option value="SALE">SALE</option>
+                  <option value="COGS">COGS</option>
+                  <option value="FEE">FEE</option>
+                  <option value="SUBSCRIPTION">SUBSCRIPTION</option>
+                  <option value="EXPENSE">EXPENSE</option>
+                  <option value="REFUND">REFUND</option>
+                  <option value="PAYOUT">PAYOUT</option>
+                  <option value="ADJUSTMENT">ADJUSTMENT</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="createBookingDirection">Richtung</label>
+                <select id="createBookingDirection">
+                  <option value="IN">IN</option>
+                  <option value="OUT">OUT</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="createBookingAmount">Betrag (EUR)</label>
+                <input id="createBookingAmount" type="text" inputmode="decimal" placeholder="0,00">
+              </div>
+              <div class="control">
+                <label for="createBookingProvider">Provider</label>
+                <input id="createBookingProvider" type="text" placeholder="shopify">
+              </div>
+              <div class="control">
+                <label for="createBookingStatus">Status</label>
+                <select id="createBookingStatus">
+                  <option value="pending">pending</option>
+                  <option value="confirmed" selected>confirmed</option>
+                  <option value="reconciled">reconciled</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="createBookingReference">Referenz</label>
+                <input id="createBookingReference" type="text" placeholder="Order-ID / Beleg-Nr.">
+              </div>
+              <div class="control">
+                <label for="createBookingOrder">Order-Link (optional)</label>
+                <select id="createBookingOrder"></select>
+              </div>
+              <div class="control">
+                <label for="createBookingAccount">Konto (optional)</label>
+                <select id="createBookingAccount"></select>
+              </div>
+              <div class="control">
+                <label for="createBookingTemplate">Template (optional)</label>
+                <select id="createBookingTemplate"></select>
+              </div>
+              <div class="control" style="grid-column: 1 / -1;">
+                <label for="createBookingNotes">Notiz</label>
+                <input id="createBookingNotes" type="text" placeholder="Optional">
+              </div>
+            </div>
+          <div class="bookings-form-actions">
+              <button id="createBookingTxBtn" class="btn-inline primary" type="button">Transaktion anlegen</button>
+            </div>
+          </div>
+
+          <div id="bookingTxLegend" class="booking-type-legend"></div>
+
+          <!-- Sammelrechnung section (visible in Monatlich view) -->
+          <div id="sammelrechnungSection" class="sammelrechnung-section" style="display:none;">
+            <div class="table-head">
+              <h3 class="table-title" style="font-size: 0.98rem;">Sammelrechnungen</h3>
+              <div id="sammelrechnungMeta" class="table-meta">0 Zeilen</div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Zeitraum</th>
+                    <th>Rechnungsbetrag</th>
+                    <th>Berechnete Summe</th>
+                    <th>Differenz</th>
+                    <th>Status</th>
+                    <th>Beleg</th>
+                    <th>Notiz</th>
+                    <th>Aktion</th>
+                  </tr>
+                </thead>
+                <tbody id="sammelrechnungBody"></tbody>
+              </table>
+            </div>
+
+            <!-- Neue Sammelrechnung form (collapsible) -->
+            <div id="sammelrechnungTools" class="bookings-tools">
+              <div class="bookings-form-grid">
+                <div class="control">
+                  <label for="createSammelProvider">Provider</label>
+                  <select id="createSammelProvider">
+                    <option value="paypal">PayPal Fees</option>
+                    <option value="shopify_payments">Shopify Payments Fees</option>
+                    <option value="kaufland">Kaufland Fees</option>
+                    <option value="google_ads">Google Ads</option>
+                    <option value="ebay">eBay Fees</option>
+                  </select>
+                </div>
+                <div class="control control-menu-wrap sammel-month-wrap">
+                  <label>Monat</label>
+                  <button id="sammelMonthBtn" class="control-menu-trigger sammel-month-trigger" type="button" aria-expanded="false" aria-controls="sammelMonthMenu">—</button>
+                  <div id="sammelMonthMenu" class="control-menu sammel-month-menu" aria-hidden="true">
+                    <div class="sammel-month-nav">
+                      <button id="sammelYearPrevBtn" class="menu-item" type="button">&larr;</button>
+                      <span id="sammelYearLabel" class="sammel-year-label">2025</span>
+                      <button id="sammelYearNextBtn" class="menu-item" type="button">&rarr;</button>
+                    </div>
+                    <div id="sammelMonthGrid" class="sammel-month-grid"></div>
+                  </div>
+                </div>
+                <div class="control">
+                  <label for="createSammelAmount">Rechnungsbetrag (EUR)</label>
+                  <input id="createSammelAmount" type="text" inputmode="decimal" placeholder="0,00">
+                </div>
+                <div class="control">
+                  <label for="createSammelNotes">Notiz</label>
+                  <input id="createSammelNotes" type="text" placeholder="Optional">
+                </div>
+                <div class="control">
+                  <label>Beleg</label>
+                  <div class="sammel-file-field">
+                    <label class="sammel-file-btn" for="createSammelFile">Datei waehlen</label>
+                    <input id="createSammelFile" class="sammel-file-input" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp">
+                    <div id="createSammelFileName" class="sammel-file-name">Optional</div>
+                  </div>
+                </div>
+              </div>
+              <div id="sammelPreview" class="sammel-preview" style="display:none;"></div>
+              <div class="bookings-form-actions">
+                <button id="createSammelBtn" class="btn-inline primary" type="button">Sammelrechnung anlegen</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="table-head">
+            <h3 class="table-title" style="font-size: 0.98rem;">Transaktionen</h3>
+            <div id="bookingsMeta" class="table-meta">0 Zeilen</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Datum</th>
+                  <th>Typ</th>
+                  <th>Provider</th>
+                  <th>Richtung</th>
+                  <th>Betrag</th>
+                  <th>Referenz</th>
+                  <th>Notiz</th>
+                  <th>Konto</th>
+                  <th>Beleg</th>
+                  <th>Speichern</th>
+                </tr>
+              </thead>
+              <tbody id="bookingsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="bookingsOrdersPanel" class="bookings-subpanel">
+          <div class="table-head">
+            <h3 class="table-title" style="font-size: 0.98rem;">Bestellungen mit Kostenaufschluesselung</h3>
+            <div id="bookingOrdersMeta" class="table-meta">0 Zeilen</div>
+          </div>
+          <div class="table-wrap">
+            <table class="bookings-orders-table">
+              <thead>
+                <tr>
+                  <th>Datum</th>
+                  <th>Channel</th>
+                  <th>Order</th>
+                  <th>Kunde</th>
+                  <th>Einnahmen</th>
+                  <th>Kosten</th>
+                  <th>Gewinn</th>
+                  <th>Belege</th>
+                  <th>Aktion</th>
+                </tr>
+              </thead>
+              <tbody id="bookingOrdersBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="bookingsTemplatesPanel" class="bookings-subpanel">
+          <div id="bookingsTemplateTools" class="bookings-tools">
+            <div class="bookings-form-grid">
+              <div class="control">
+                <label for="templateNameInput">Name</label>
+                <input id="templateNameInput" type="text" placeholder="Shopify Abo">
+              </div>
+              <div class="control">
+                <label for="templateTypeInput">Typ</label>
+                <select id="templateTypeInput">
+                  <option value="SUBSCRIPTION" selected>SUBSCRIPTION</option>
+                  <option value="EXPENSE">EXPENSE</option>
+                  <option value="FEE">FEE</option>
+                  <option value="COGS">COGS</option>
+                  <option value="SALE">SALE</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="templateDirectionInput">Richtung</label>
+                <select id="templateDirectionInput">
+                  <option value="OUT" selected>OUT</option>
+                  <option value="IN">IN</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="templateAmountInput">Default Betrag (EUR)</label>
+                <input id="templateAmountInput" type="text" inputmode="decimal" placeholder="0,00">
+              </div>
+              <div class="control">
+                <label for="templateProviderInput">Provider</label>
+                <input id="templateProviderInput" type="text" value="shopify">
+              </div>
+              <div class="control">
+                <label for="templateCounterpartyInput">Gegenpartei</label>
+                <input id="templateCounterpartyInput" type="text" placeholder="z. B. OpenAI">
+              </div>
+              <div class="control">
+                <label for="templateScheduleInput">Intervall</label>
+                <select id="templateScheduleInput">
+                  <option value="monthly" selected>monthly</option>
+                  <option value="quarterly">quarterly</option>
+                  <option value="yearly">yearly</option>
+                </select>
+              </div>
+              <div class="control">
+                <label for="templateStartDateInput">Abo Startdatum</label>
+                <input id="templateStartDateInput" type="date">
+              </div>
+              <div class="control">
+                <label for="templateDayInput">Tag im Monat</label>
+                <input id="templateDayInput" type="number" min="1" max="31" placeholder="3">
+              </div>
+              <div class="control">
+                <label for="templateAccountInput">Konto (optional)</label>
+                <select id="templateAccountInput"></select>
+              </div>
+              <div class="control" style="grid-column: 1 / -1;">
+                <label for="templateNotesInput">Notiz (optional)</label>
+                <input id="templateNotesInput" type="text" placeholder="Wird in generierte Buchung uebernommen">
+              </div>
+            </div>
+            <div class="bookings-form-actions">
+              <button id="createTemplateBtn" class="btn-inline secondary" type="button">Template anlegen</button>
+            </div>
+          </div>
+
+          <div class="table-head">
+            <h3 class="table-title" style="font-size: 0.98rem;">Templates</h3>
+            <div id="bookingTemplatesMeta" class="table-meta">0 Zeilen</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Typ</th>
+                  <th>Richtung</th>
+                  <th>Gegenpartei</th>
+                  <th>Start</th>
+                  <th>Betrag</th>
+                  <th>Intervall</th>
+                  <th>Konto</th>
+                  <th>Aktiv</th>
+                  <th>Generieren</th>
+                  <th>Speichern</th>
+                </tr>
+              </thead>
+              <tbody id="bookingTemplatesBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="bookingsAccountsPanel" class="bookings-subpanel">
+          <div id="bookingsAccountTools" class="bookings-tools">
+            <div class="bookings-form-grid">
+              <div class="control">
+                <label for="accountNameInput">Name</label>
+                <input id="accountNameInput" type="text" placeholder="Bank DE">
+              </div>
+              <div class="control">
+                <label for="accountProviderInput">Provider</label>
+                <input id="accountProviderInput" type="text" placeholder="bank">
+              </div>
+              <div class="control">
+                <label for="accountActiveInput">Aktiv</label>
+                <select id="accountActiveInput">
+                  <option value="true" selected>true</option>
+                  <option value="false">false</option>
+                </select>
+              </div>
+            </div>
+            <div class="bookings-form-actions">
+              <button id="createAccountBtn" class="btn-inline secondary" type="button">Konto anlegen</button>
+            </div>
+          </div>
+
+          <div class="table-head">
+            <h3 class="table-title" style="font-size: 0.98rem;">Konten</h3>
+            <div id="bookingAccountsMeta" class="table-meta">0 Zeilen</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Provider</th>
+                  <th>Aktiv</th>
+                  <th>Speichern</th>
+                </tr>
+              </thead>
+              <tbody id="bookingAccountsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div id="bookingsDocumentsPanel" class="bookings-subpanel">
+          <div id="bookingsDocumentTools" class="bookings-tools">
+            <div class="bookings-form-grid">
+              <div class="control" style="grid-column: 1 / -1;">
+                <label for="bookingDocumentFileInput">Datei</label>
+                <input id="bookingDocumentFileInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.zip,.doc,.docx">
+              </div>
+              <div class="control">
+                <label for="bookingDocumentTxInput">Transaktion (optional)</label>
+                <select id="bookingDocumentTxInput"></select>
+              </div>
+              <div class="control">
+                <label for="bookingDocumentNotesInput">Notiz (optional)</label>
+                <input id="bookingDocumentNotesInput" type="text" placeholder="Lieferantenrechnung">
+              </div>
+            </div>
+            <div class="bookings-form-actions">
+              <button id="uploadBookingDocumentBtn" class="btn-inline secondary" type="button">Beleg hochladen</button>
+            </div>
+          </div>
+
+          <div class="table-head">
+            <h3 class="table-title" style="font-size: 0.98rem;">Belege</h3>
+            <div id="bookingDocumentsMeta" class="table-meta">0 Zeilen</div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Upload</th>
+                  <th>Originalname</th>
+                  <th>Gespeichert</th>
+                  <th>Verknuepfungen</th>
+                  <th>Aktion</th>
+                </tr>
+              </thead>
+              <tbody id="bookingDocumentsBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div id="googleAdsPanel" class="tab-panel">
+      <section class="card table-card">
+        <div class="table-head">
+          <h2 class="table-title">Google Ads CSV Import</h2>
+          <div class="table-meta" id="googleAdsImportMeta" style="min-width: 96px; text-align: right;">Bereit</div>
+        </div>
+        <div class="google-ads-import-shell">
+          <div class="google-ads-import-grid">
+            <div class="google-ads-file-field">
+              <div class="google-ads-field-label">Ads Report CSV</div>
+              <label class="google-ads-file-btn" for="googleAdsReportInput">Report waehlen</label>
+              <input id="googleAdsReportInput" class="google-ads-file-input" type="file" accept=".csv,text/csv">
+              <div id="googleAdsReportFileLabel" class="google-ads-file-name">Keine Datei ausgewaehlt</div>
+            </div>
+            <div class="google-ads-file-field">
+              <div class="google-ads-field-label">Assignment CSV (optional)</div>
+              <label class="google-ads-file-btn" for="googleAdsAssignmentInput">Assignment waehlen</label>
+              <input id="googleAdsAssignmentInput" class="google-ads-file-input" type="file" accept=".csv,text/csv">
+              <div id="googleAdsAssignmentFileLabel" class="google-ads-file-name">Keine Datei ausgewaehlt</div>
+            </div>
+            <div class="google-ads-upload-field">
+              <button id="googleAdsUploadBtn" class="btn-inline primary google-ads-upload-btn" type="button">Google Ads importieren</button>
+            </div>
+          </div>
+          <div class="table-meta">Report aktualisiert die Tageskosten. Assignment aktualisiert die Shopify-Zuordnung.</div>
+        </div>
+      </section>
+
+      <section class="kpi-grid" style="margin-top: 12px;">
+        <article class="card kpi">
+          <div class="kpi-name">Ads Kosten gesamt</div>
+          <div class="kpi-value" id="googleAdsKpiCostTotal">-</div>
+          <div class="kpi-sub" id="googleAdsKpiCostSplit">Gemappt - | Unmapped -</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Shopify Umsatz</div>
+          <div class="kpi-value" id="googleAdsKpiRevenue">-</div>
+          <div class="kpi-sub">Nur Shopify Orders im Filter</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Gewinn nach Ads</div>
+          <div class="kpi-value" id="googleAdsKpiProfitAfter">-</div>
+          <div class="kpi-sub" id="googleAdsKpiProfitBefore">Vor Ads: -</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">ROAS</div>
+          <div class="kpi-value" id="googleAdsKpiRoas">-</div>
+          <div class="kpi-sub" id="googleAdsKpiMissing">Fehlende Assignments: -</div>
+        </article>
+      </section>
+
+      <section class="card chart-card" style="margin-top: 12px;">
+        <h2 class="chart-title">Ads Kostenverlauf</h2>
+        <p id="googleAdsTrendSub" class="chart-sub">Tagesverlauf fuer Gesamt- und gemappte Ads Kosten.</p>
+        <div class="canvas-wrap">
+          <canvas id="googleAdsTrendChart"></canvas>
+        </div>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">Ads Kosten pro Produkt</h2>
+          <div id="googleAdsProductsMeta" class="table-meta">0 Zeilen</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Produkt</th>
+                <th>Mapping</th>
+                <th>Ads Kosten</th>
+                <th>Orders</th>
+                <th>Umsatz</th>
+                <th>Gewinn vor Ads</th>
+                <th>Gewinn nach Ads</th>
+              </tr>
+            </thead>
+            <tbody id="googleAdsProductsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">Fehlende Assignments</h2>
+          <div id="googleAdsMissingMeta" class="table-meta">0 Zeilen</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Artikel-ID</th>
+                <th>Ads Kosten</th>
+                <th>Tage</th>
+              </tr>
+            </thead>
+            <tbody id="googleAdsMissingBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    </div>
+
+    <div id="ebayPanel" class="tab-panel">
+      <section class="kpi-grid">
+        <article class="card kpi">
+          <div class="kpi-name">Bestellungen</div>
+          <div class="kpi-value" id="ebayKpiOrders">-</div>
+          <div class="kpi-sub" id="ebayKpiOrdersSub">Legacy eBay Daten</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Umsatz</div>
+          <div class="kpi-value" id="ebayKpiRevenue">-</div>
+          <div class="kpi-sub" id="ebayKpiRevenueSub">Brutto-Verkaufspreis</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Einkauf + Gebuehren</div>
+          <div class="kpi-value" id="ebayKpiCosts">-</div>
+          <div class="kpi-sub" id="ebayKpiCostsSub">Ali Express + eBay Provision</div>
+        </article>
+        <article class="card kpi">
+          <div class="kpi-name">Gewinn</div>
+          <div class="kpi-value" id="ebayKpiProfit">-</div>
+          <div class="kpi-sub" id="ebayKpiProfitSub">Marge: -</div>
+        </article>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">eBay Shops</h2>
+          <div id="ebayShopsMeta" class="table-meta">0 Shops</div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Shop</th>
+                <th>Orders</th>
+                <th>Zeitraum</th>
+                <th>Umsatz</th>
+                <th>Gebuehren</th>
+                <th>Einkauf</th>
+                <th>Gewinn</th>
+              </tr>
+            </thead>
+            <tbody id="ebayShopsBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">Alle eBay Bestellungen</h2>
+          <div class="bookings-filter-card" style="margin-bottom: 0; padding: 0; background: none; border: none; box-shadow: none;">
+            <div class="bookings-filter-grid" style="grid-template-columns: auto auto auto;">
+              <select id="ebayShopFilter" class="booking-select" style="min-width: 120px;">
+                <option value="">Alle Shops</option>
+              </select>
+              <select id="ebayCategoryFilter" class="booking-select" style="min-width: 120px;">
+                <option value="">Alle Kategorien</option>
+                <option value="order">Bestellungen</option>
+                <option value="computer">Computer</option>
+                <option value="return">Ruecksendungen</option>
+              </select>
+              <div id="ebayOrdersMeta" class="table-meta" style="min-width: 80px; text-align: right;">0 Zeilen</div>
+            </div>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table class="orders-table">
+            <thead>
+              <tr>
+                <th>Datum</th>
+                <th>Shop</th>
+                <th>Kategorie</th>
+                <th>Artikel</th>
+                <th>Kunde</th>
+                <th>Order Nr.</th>
+                <th>Preis</th>
+                <th>Gebuehren</th>
+                <th>Einkauf</th>
+                <th>Gewinn</th>
+              </tr>
+            </thead>
+            <tbody id="ebayOrdersBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card table-card" style="margin-top: 12px;">
+        <div class="table-head">
+          <h2 class="table-title">Top Artikel</h2>
+          <div id="ebayTopArticlesMeta" class="table-meta">Nach Umsatz</div>
+        </div>
+        <div class="table-wrap" style="max-height: 340px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Artikel</th>
+                <th>Anzahl</th>
+                <th>Umsatz</th>
+                <th>Gewinn</th>
+              </tr>
+            </thead>
+            <tbody id="ebayTopArticlesBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card" style="margin-top: 12px; padding: 16px;">
+        <div class="table-meta" id="ebayImportInfo" style="font-size: 0.82rem; color: var(--th-ink-4); line-height: 1.5;">
+          Importiert: -
+        </div>
+      </section>
+    </div>
+
+    <button id="sourcePanelToggleBtn" class="settings-fab" type="button" aria-controls="sourcePanel" aria-expanded="false" aria-label="Einstellungen">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+    <aside id="sourcePanel" class="settings-drawer" aria-hidden="true">
+      <div class="settings-drawer-head">
+        <div class="settings-drawer-title">Einstellungen</div>
+        <button id="sourcePanelCloseBtn" class="settings-drawer-close" type="button" aria-label="Schliessen">&times;</button>
+      </div>
+      <div class="settings-drawer-body">
+        <div class="settings-group">
+          <div class="settings-group-label">Ansicht</div>
+          <button id="layoutEditMenuBtn" class="settings-item" type="button">Layout anpassen</button>
+          <button id="themeModalOpenBtn" class="settings-item" type="button">Design</button>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group-label">Aktionen</div>
+          <button id="refreshBtn" class="settings-item" type="button">Alles neu laden</button>
+          <button id="syncLiveBtn" class="settings-item settings-item-accent" type="button">Live API Sync</button>
+          <button id="syncSourcesBtn" class="settings-item" type="button">Quellen synchronisieren</button>
+          <button id="dataModalOpenBtn" class="settings-item" type="button">Datenverwaltung</button>
+        </div>
+        <div class="settings-group">
+          <div class="settings-group-label">System</div>
+          <div id="lastSyncInfo" class="settings-status-line">Letzter Sync: -</div>
+          <div class="settings-source-row">
+            <span class="settings-source-label">Datenquellen</span>
+            <div id="sourceInfo" class="settings-source-detail">Lade Quellenstatus...</div>
+          </div>
+          <div class="settings-source-row">
+            <span class="settings-source-label">Google Ads</span>
+            <div id="googleAdsStatusInfo" class="settings-source-detail">Lade Google Ads Status...</div>
+          </div>
+          <div class="settings-source-row">
+            <span class="settings-source-label">Kunden-Geo</span>
+            <div id="customerGeoStatusInfo" class="settings-source-detail">Noch nicht geladen.</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Theme Modal -->
+    <div id="themeModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal-card theme-modal-card">
+        <div class="modal-head">
+          <div class="modal-title">Design waehlen</div>
+          <button id="themeModalCloseBtn" class="modal-close" type="button" aria-label="Schliessen">&times;</button>
+        </div>
+        <div class="modal-body theme-modal-body">
+          <div class="theme-grid">
+
+            <button class="theme-card active" data-theme-id="" type="button">
+              <div class="theme-preview tp-warm-light">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Warm Light</div>
+              <div class="theme-desc">Das klassische warme Design</div>
+            </button>
+
+            <button class="theme-card" data-theme-id="dark" type="button">
+              <div class="theme-preview tp-dark">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Dark</div>
+              <div class="theme-desc">Dunkles Design, augenschonend</div>
+            </button>
+
+            <button class="theme-card" data-theme-id="nord" type="button">
+              <div class="theme-preview tp-nord">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Nord</div>
+              <div class="theme-desc">Arktisch kuehl, inspiriert von Nord</div>
+            </button>
+
+            <button class="theme-card" data-theme-id="cool" type="button">
+              <div class="theme-preview tp-cool">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Cool Light</div>
+              <div class="theme-desc">Modern, klar und kuehle Toene</div>
+            </button>
+
+            <button class="theme-card" data-theme-id="espresso" type="button">
+              <div class="theme-preview tp-espresso">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Espresso</div>
+              <div class="theme-desc">Warme dunkle Kaffeetoene</div>
+            </button>
+
+            <button class="theme-card" data-theme-id="vision" type="button">
+              <div class="theme-preview tp-vision">
+                <div class="tp-bar"></div>
+                <div class="tp-content">
+                  <div class="tp-card-mock"></div>
+                  <div class="tp-card-mock"></div>
+                </div>
+              </div>
+              <div class="theme-name">Vision</div>
+              <div class="theme-desc">Glassmorphism, Navy + Violet-Akzente</div>
+            </button>
+
+          </div>
+        </div>
+      </div>
+    </div>
+
+  <div id="searchModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card search-modal-card">
+      <div class="modal-head">
+        <div class="modal-title">Suche</div>
+        <button id="closeSearchModalBtn" class="btn-inline" type="button">Schliessen</button>
+      </div>
+      <div class="search-modal-body">
+        <div class="control">
+          <label for="searchInput">Detailsuche</label>
+          <input id="searchInput" type="text" placeholder="Order, Kunde, Artikel, Referenz...">
+        </div>
+        <div class="search-modal-actions">
+          <button id="clearSearchBtn" class="btn-inline ghost" type="button">Suche leeren</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="detailsModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div id="detailsTitle" class="modal-title">Order Details</div>
+        <button id="closeModalBtn" class="btn-inline" type="button">Schliessen</button>
+      </div>
+      <div id="detailsContent" class="detail-content">-</div>
+    </div>
+  </div>
+
+  <div id="previewModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+    <div class="modal-card preview-modal-card">
+      <div class="modal-head">
+        <div>
+          <div id="previewTitle" class="modal-title">Beleg Preview</div>
+          <div id="previewMeta" class="preview-meta">-</div>
+        </div>
+        <div class="preview-controls">
+          <button id="previewZoomOut" class="btn-inline" type="button" title="Verkleinern">-</button>
+          <span id="previewZoomLevel" class="preview-zoom-label">100%</span>
+          <button id="previewZoomIn" class="btn-inline" type="button" title="Vergroessern">+</button>
+          <button id="previewZoomReset" class="btn-inline" type="button" title="Zuruecksetzen">1:1</button>
+          <button id="closePreviewBtn" class="btn-inline" type="button">Schliessen</button>
+        </div>
+      </div>
+      <div id="previewBody" class="preview-shell">-</div>
+    </div>
+  </div>
+
+
+    <!-- Datenverwaltung Modal -->
+    <div id="dataModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
+      <div class="modal-card data-modal-card">
+        <div class="modal-head">
+          <div class="modal-title">Datenverwaltung</div>
+          <button id="dataModalCloseBtn" class="modal-close" type="button" aria-label="Schliessen">&times;</button>
+        </div>
+        <div class="modal-body data-modal-body">
+
+          <!-- Export Section -->
+          <div class="data-section">
+            <div class="data-section-head">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+              <span>Export</span>
+            </div>
+            <div class="data-section-body">
+              <button id="dataExportPeriodBtn" class="data-action-btn" type="button">
+                <div class="data-action-label">Zeitraum-Export</div>
+                <div class="data-action-desc">CSV-Dateien + Belege fuer den aktuellen Filterbereich</div>
+              </button>
+              <button id="dataExportBackupBtn" class="data-action-btn" type="button">
+                <div class="data-action-label">Vollbackup</div>
+                <div class="data-action-desc">Kompletter Snapshot aller Datenbanken, Belege und Dokumente</div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Restore Section -->
+          <div class="data-section">
+            <div class="data-section-head">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+              <span>Wiederherstellen</span>
+            </div>
+            <div class="data-section-body">
+              <div class="data-restore-info">
+                Lade eine Vollbackup-ZIP-Datei hoch, um alle Datenbanken und Dateien wiederherzustellen.
+                Vor der Wiederherstellung wird automatisch ein Sicherheitsbackup angelegt.
+              </div>
+              <div class="data-restore-upload">
+                <label for="restoreFileInput" class="data-upload-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                  <span id="restoreFileLabel">ZIP-Datei waehlen...</span>
+                </label>
+                <input id="restoreFileInput" type="file" accept=".zip" style="display:none;">
+              </div>
+              <div id="restoreConfirmSection" class="data-restore-confirm" style="display:none;">
+                <div id="restoreFileInfo" class="data-restore-file-info"></div>
+                <div class="data-restore-warning">
+                  <strong>Achtung:</strong> Alle aktuellen Daten werden ueberschrieben.
+                  Ein Sicherheitsbackup wird automatisch erstellt.
+                </div>
+                <div class="data-restore-actions">
+                  <button id="restoreCancelBtn" class="btn-inline ghost" type="button">Abbrechen</button>
+                  <button id="restoreConfirmBtn" class="btn-inline data-restore-confirm-btn" type="button">Wiederherstellen</button>
+                </div>
+              </div>
+              <div id="restoreProgress" class="data-restore-progress" style="display:none;">
+                <div class="data-restore-spinner"></div>
+                <span>Wiederherstellung laeuft...</span>
+              </div>
+              <div id="restoreResult" class="data-restore-result" style="display:none;"></div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+
+  <!-- Application Scripts -->
+  <script src="static/js/core.js"></script>
+  <script src="static/js/theme.js"></script>
+  <script src="static/js/analytics.js"></script>
+  <script src="static/js/orders.js"></script>
+  <script src="static/js/customers.js"></script>
+  <script src="static/js/bookings.js"></script>
+  <script src="static/js/google-ads.js"></script>
+  <script src="static/js/ebay.js"></script>
+  <script src="static/js/init.js"></script>
+</body>
+</html>

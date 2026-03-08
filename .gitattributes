@@ -1,0 +1,11 @@
+# Ensure shell scripts keep LF endings (they run in Linux containers)
+*.sh text eol=lf
+
+# Binary files
+*.sqlite3 binary
+*.png binary
+*.pdf binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.zip binary

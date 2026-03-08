@@ -1,0 +1,10 @@
+.git/
+.gitignore
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.sqlite3-journal
+*.sqlite3-wal
+*.sqlite3-shm
+docs/

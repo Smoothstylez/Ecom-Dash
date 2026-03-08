@@ -1,0 +1,44 @@
+name: "E-Commerce Dashboard"
+description: "Combined e-commerce analytics dashboard (Shopify, Kaufland, eBay) with bookkeeping"
+slug: ecommerce-dashboard
+url: "https://github.com/aumovio/ecommerce-dashboard"
+version: "0.2.0"
+
+arch:
+  - amd64
+  - aarch64
+
+init: false
+homeassistant_api: false
+
+ingress: true
+ingress_port: 8012
+panel_icon: "mdi:chart-box-outline"
+panel_title: "E-Commerce"
+
+ports:
+  "8012/tcp": null
+ports_description:
+  "8012/tcp": "Web interface (not needed when using ingress)"
+
+map:
+  - type: data
+    read_only: false
+
+options:
+  shopify_api_key: ""
+  shopify_api_secret: ""
+  shopify_shop_domain: ""
+  kaufland_client_key: ""
+  kaufland_secret_key: ""
+  live_sync_enabled: false
+  live_sync_interval_seconds: 300
+
+schema:
+  shopify_api_key: str?
+  shopify_api_secret: str?
+  shopify_shop_domain: str?
+  kaufland_client_key: str?
+  kaufland_secret_key: str?
+  live_sync_enabled: bool
+  live_sync_interval_seconds: int

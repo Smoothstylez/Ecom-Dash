@@ -1,0 +1,958 @@
+/* === Theme Definitions === */
+
+:root {
+  /* ── Design Tokens ── */
+  --space-xs: 4px;
+  --space-sm: 6px;
+  --space-md: 8px;
+  --space-lg: 10px;
+  --space-xl: 12px;
+  --space-2xl: 14px;
+
+  --text-xs: 0.67rem;
+  --text-sm: 0.78rem;
+  --text-base: 0.82rem;
+  --text-md: 0.84rem;
+  --text-lg: 0.88rem;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-pill: 999px;
+
+  --font-heading: "Space Grotesk", sans-serif;
+  --font-body: "IBM Plex Sans", sans-serif;
+
+  /* ── Page ── */
+  --th-page-bg: #f4efe8;
+  --th-page-bg-mid: #f6f0e6;
+  --th-page-bg-end: #f3ece2;
+  --th-page-glow-1: rgba(217, 96, 57, 0.17);
+  --th-page-glow-2: rgba(13, 139, 138, 0.14);
+
+  /* ── Surfaces ── */
+  --th-card-from: rgba(255, 253, 247, 0.95);
+  --th-card-to: rgba(255, 249, 240, 0.9);
+  --th-card-border: rgba(226, 214, 200, 0.9);
+  --th-panel: #fffbf4;
+  --th-panel-border: #d8cbbe;
+  --th-surface: #fffdf9;
+  --th-surface-alt: #fffbf4;
+  --th-surface-warm: #fff9f0;
+  --th-surface-deep: #fff8ef;
+  --th-surface-white: #fff;
+  --th-overlay: rgba(255, 253, 248, 0.98);
+  --th-drawer-head: #fff7ee;
+  --th-thead: #fff4e8;
+
+  /* ── Text ── */
+  --th-ink: #1a2233;
+  --th-ink-2: #3f4d67;
+  --th-ink-3: #556078;
+  --th-ink-4: #65708a;
+  --th-ink-5: #8a96ad;
+
+  /* ── Lines ── */
+  --th-line: #e2d6c8;
+  --th-line-2: #d7cabb;
+  --th-line-3: #efe6dc;
+
+  /* ── Accent ── */
+  --th-accent: #d96039;
+  --th-accent-2: #0d8b8a;
+  --th-accent-3: #1f5cb8;
+
+  /* ── Semantic ── */
+  --th-ok: #117c4f;
+  --th-warn: #b64b2c;
+
+  /* ── Buttons ── */
+  --th-btn-primary-from: #1a6cc6;
+  --th-btn-primary-to: #1f4ea5;
+  --th-btn-primary-border: #19498f;
+  --th-btn-secondary-from: #1a9d91;
+  --th-btn-secondary-to: #117b7e;
+  --th-btn-secondary-border: #117770;
+  --th-btn-neutral-from: #6a748c;
+  --th-btn-neutral-to: #505a73;
+  --th-btn-neutral-border: #4c556d;
+  --th-btn-danger-from: #c74e42;
+  --th-btn-danger-to: #a33128;
+  --th-btn-danger-border: #8e2c24;
+  --th-btn-soft-bg: #fff8ef;
+  --th-btn-soft-bg-end: #f7eee1;
+  --th-btn-soft-border: #d7cabb;
+  --th-btn-soft-text: #3f4d67;
+  --th-btn-text: #fff;
+
+  /* ── Interactive ── */
+  --th-hover-bg: rgba(26, 108, 198, 0.05);
+  --th-hover-border: rgba(26, 108, 198, 0.12);
+  --th-active-bg: #eef5ff;
+  --th-active-border: #bcd2f0;
+  --th-active-text: #204f8d;
+  --th-focus-ring: rgba(31, 92, 184, 0.2);
+  --th-focus-border: #8ba7d9;
+  --th-range-bg: #eaf2ff;
+  --th-range-border: #d3e2f9;
+  --th-range-edge: #1f4ea5;
+
+  /* ── Shadows ── */
+  --th-shadow-rgb: 22, 29, 46;
+  --th-shadow: 0 14px 34px rgba(var(--th-shadow-rgb), 0.1);
+
+  /* ── Status ── */
+  --th-info-bg: #f1f8ff;
+  --th-info-border: #cde1f8;
+  --th-info-text: #214d73;
+  --th-ok-bg: #ecfbf3;
+  --th-ok-border: #c8ecd8;
+  --th-ok-text: #1f6a48;
+  --th-error-bg: #fff1ee;
+  --th-error-border: #f0c6bd;
+  --th-error-text: #8d3728;
+
+  /* ── Badges ── */
+  --th-badge-sale-bg: #e9f9f0;
+  --th-badge-sale-border: #b8e7c9;
+  --th-badge-sale-text: #136b45;
+  --th-badge-fee-bg: #fff3e4;
+  --th-badge-fee-border: #f0d3ae;
+  --th-badge-fee-text: #915013;
+  --th-badge-cogs-bg: #f3eefc;
+  --th-badge-cogs-border: #d9cbf4;
+  --th-badge-cogs-text: #4f3e8e;
+  --th-badge-invoice-bg: #edf5ff;
+  --th-badge-invoice-border: #c9dbf3;
+  --th-badge-invoice-text: #2d568f;
+  --th-badge-refund-bg: #ffeef0;
+  --th-badge-refund-border: #f2c3cb;
+  --th-badge-refund-text: #9d3045;
+  --th-badge-subscription-bg: #e6faf8;
+  --th-badge-subscription-border: #b2ece5;
+  --th-badge-subscription-text: #1a6b5e;
+  --th-badge-default-bg: #f2f4f8;
+  --th-badge-default-border: #d5dce7;
+  --th-badge-default-text: #48566f;
+
+  /* ── Row accents ── */
+  --th-row-sale: #1f8b5f;
+  --th-row-fee: #c57e2a;
+  --th-row-cogs: #6a54ad;
+  --th-row-invoice: #3f73ba;
+  --th-row-refund: #bb4058;
+  --th-row-subscription: #1a8a7a;
+  --th-row-other: #6f7c92;
+
+  /* ── Charts ── */
+  --th-chart-1: #1f73e0;
+  --th-chart-1-fill: rgba(31, 115, 224, 0.12);
+  --th-chart-2: #0f8a7a;
+  --th-chart-2-fill: rgba(15, 138, 122, 0.14);
+  --th-chart-grid: rgba(73, 90, 118, 0.15);
+  --th-chart-label: #74839c;
+  --th-donut-shopify: #50b468;
+  --th-donut-kaufland: #d85048;
+  --th-donut-fees: #e0a030;
+  --th-donut-purchase: #c05070;
+  --th-donut-profit: #38a868;
+
+  /* ── Globe ── */
+  --th-globe-bg: #e9edf3;
+  --th-globe-atmosphere: #9db3d0;
+  --th-globe-surface: #b8c1ce;
+  --th-globe-emissive: #4f5a6b;
+  --th-globe-hex-land: rgba(89, 101, 122, 0.42);
+  --th-globe-hex-top-r: 42;
+  --th-globe-hex-top-g: 108;
+  --th-globe-hex-top-b: 202;
+  --th-globe-hex-side-r: 32;
+  --th-globe-hex-side-g: 88;
+  --th-globe-hex-side-b: 176;
+
+  /* ── Modal ── */
+  --th-modal-backdrop: rgba(20, 24, 34, 0.5);
+  --th-modal-border: #d8cabc;
+
+  /* ── Misc ── */
+  --th-radius: 18px;
+  --th-geo-stage: #f2f3f5;
+  --th-loading-bar: #ebeff4;
+  --th-loading-accent-rgb: 26, 108, 198;
+  --th-link: #1a6cc6;
+  --th-link-hover: #0d4e8b;
+  --th-select-arrow: #505f79;
+  --th-today-border: #b9cbea;
+  --th-kpi-orb: rgba(217, 96, 57, 0.2);
+
+  /* Legacy aliases */
+  --bg: var(--th-page-bg);
+  --surface: var(--th-surface);
+  --surface-2: var(--th-surface-deep);
+  --ink: var(--th-ink);
+  --muted: var(--th-ink-3);
+  --line: var(--th-line);
+  --accent: var(--th-accent);
+  --accent-2: var(--th-accent-2);
+  --accent-3: var(--th-accent-3);
+  --ok: var(--th-ok);
+  --warn: var(--th-warn);
+  --shadow: var(--th-shadow);
+  --radius: var(--th-radius);
+}
+
+/* ═══════════════════════════════════════
+   THEME: Dark
+   ═══════════════════════════════════════ */
+[data-theme="dark"] {
+  --th-page-bg: #13161d;
+  --th-page-bg-mid: #171b24;
+  --th-page-bg-end: #1a1e28;
+  --th-page-glow-1: rgba(217, 96, 57, 0.08);
+  --th-page-glow-2: rgba(13, 139, 138, 0.07);
+  --th-card-from: rgba(30, 34, 44, 0.95);
+  --th-card-to: rgba(26, 30, 40, 0.92);
+  --th-card-border: rgba(55, 62, 78, 0.7);
+  --th-panel: #1e222c;
+  --th-panel-border: #2e3442;
+  --th-surface: #232830;
+  --th-surface-alt: #1e222c;
+  --th-surface-warm: #252a34;
+  --th-surface-deep: #1a1e28;
+  --th-surface-white: #2a2f3a;
+  --th-overlay: rgba(24, 28, 36, 0.98);
+  --th-drawer-head: #1e222c;
+  --th-thead: #1c2029;
+  --th-ink: #e4e7ed;
+  --th-ink-2: #b8bfcc;
+  --th-ink-3: #8e97a8;
+  --th-ink-4: #6e7889;
+  --th-ink-5: #555e6e;
+  --th-line: #2e3442;
+  --th-line-2: #353c4a;
+  --th-line-3: #262c38;
+  --th-accent: #e87a58;
+  --th-accent-2: #25b0a8;
+  --th-accent-3: #4a8ee0;
+  --th-ok: #2ecc71;
+  --th-warn: #e67e54;
+  --th-btn-primary-from: #2a7ad4;
+  --th-btn-primary-to: #1f5cb8;
+  --th-btn-primary-border: #1a4e9e;
+  --th-btn-secondary-from: #22b0a5;
+  --th-btn-secondary-to: #1a9088;
+  --th-btn-secondary-border: #158680;
+  --th-btn-neutral-from: #515b72;
+  --th-btn-neutral-to: #3f4858;
+  --th-btn-neutral-border: #353e4e;
+  --th-btn-danger-from: #d45a4e;
+  --th-btn-danger-to: #b33a30;
+  --th-btn-danger-border: #8e2c24;
+  --th-btn-soft-bg: #252a34;
+  --th-btn-soft-bg-end: #1e222c;
+  --th-btn-soft-border: #353c4a;
+  --th-btn-soft-text: #b8bfcc;
+  --th-btn-text: #fff;
+  --th-hover-bg: rgba(74, 142, 224, 0.08);
+  --th-hover-border: rgba(74, 142, 224, 0.18);
+  --th-active-bg: rgba(42, 122, 212, 0.15);
+  --th-active-border: rgba(42, 122, 212, 0.35);
+  --th-active-text: #7db4f0;
+  --th-focus-ring: rgba(74, 142, 224, 0.25);
+  --th-focus-border: #4a7ec0;
+  --th-range-bg: rgba(42, 122, 212, 0.12);
+  --th-range-border: rgba(42, 122, 212, 0.25);
+  --th-range-edge: #2a7ad4;
+  --th-shadow-rgb: 0, 0, 0;
+  --th-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  --th-info-bg: rgba(42, 122, 212, 0.12);
+  --th-info-border: rgba(42, 122, 212, 0.3);
+  --th-info-text: #7db4f0;
+  --th-ok-bg: rgba(46, 204, 113, 0.1);
+  --th-ok-border: rgba(46, 204, 113, 0.25);
+  --th-ok-text: #5dd89a;
+  --th-error-bg: rgba(231, 76, 60, 0.1);
+  --th-error-border: rgba(231, 76, 60, 0.3);
+  --th-error-text: #f08070;
+  --th-badge-sale-bg: rgba(46, 204, 113, 0.12);
+  --th-badge-sale-border: rgba(46, 204, 113, 0.25);
+  --th-badge-sale-text: #5dd89a;
+  --th-badge-fee-bg: rgba(243, 156, 18, 0.12);
+  --th-badge-fee-border: rgba(243, 156, 18, 0.3);
+  --th-badge-fee-text: #f0b050;
+  --th-badge-cogs-bg: rgba(155, 89, 182, 0.12);
+  --th-badge-cogs-border: rgba(155, 89, 182, 0.3);
+  --th-badge-cogs-text: #b88dd6;
+  --th-badge-invoice-bg: rgba(74, 142, 224, 0.12);
+  --th-badge-invoice-border: rgba(74, 142, 224, 0.25);
+  --th-badge-invoice-text: #7db4f0;
+  --th-badge-refund-bg: rgba(231, 76, 60, 0.1);
+  --th-badge-refund-border: rgba(231, 76, 60, 0.25);
+  --th-badge-refund-text: #f08070;
+  --th-badge-subscription-bg: rgba(26, 188, 156, 0.12);
+  --th-badge-subscription-border: rgba(26, 188, 156, 0.25);
+  --th-badge-subscription-text: #58d6c4;
+  --th-badge-default-bg: rgba(142, 151, 168, 0.1);
+  --th-badge-default-border: rgba(142, 151, 168, 0.25);
+  --th-badge-default-text: #8e97a8;
+  --th-row-sale: #2ecc71;
+  --th-row-fee: #f0b050;
+  --th-row-cogs: #9b59b6;
+  --th-row-invoice: #4a8ee0;
+  --th-row-refund: #e74c3c;
+  --th-row-subscription: #1abc9c;
+  --th-row-other: #8e97a8;
+  --th-chart-1: #4a8ee0;
+  --th-chart-1-fill: rgba(74, 142, 224, 0.15);
+  --th-chart-2: #25b0a8;
+  --th-chart-2-fill: rgba(37, 176, 168, 0.15);
+  --th-chart-grid: rgba(142, 151, 168, 0.12);
+  --th-chart-label: #6e7889;
+  --th-donut-shopify: #5ec47b;
+  --th-donut-kaufland: #e86058;
+  --th-donut-fees: #f0a840;
+  --th-donut-purchase: #d06888;
+  --th-donut-profit: #48c080;
+  --th-globe-bg: #1a1e28;
+  --th-globe-atmosphere: #3a5070;
+  --th-globe-surface: #2a3040;
+  --th-globe-emissive: #1a2030;
+  --th-globe-hex-land: rgba(100, 115, 140, 0.35);
+  --th-globe-hex-top-r: 74;
+  --th-globe-hex-top-g: 142;
+  --th-globe-hex-top-b: 224;
+  --th-globe-hex-side-r: 50;
+  --th-globe-hex-side-g: 110;
+  --th-globe-hex-side-b: 200;
+  --th-modal-backdrop: rgba(0, 0, 0, 0.6);
+  --th-modal-border: #353c4a;
+  --th-geo-stage: #1a1e28;
+  --th-loading-bar: #2e3442;
+  --th-loading-accent-rgb: 42, 122, 212;
+  --th-link: #4a8ee0;
+  --th-link-hover: #7db4f0;
+  --th-select-arrow: #8e97a8;
+  --th-today-border: #4a7ec0;
+  --th-kpi-orb: rgba(232, 122, 88, 0.12);
+}
+
+/* ═══════════════════════════════════════
+   THEME: Nord
+   ═══════════════════════════════════════ */
+[data-theme="nord"] {
+  --th-page-bg: #2e3440;
+  --th-page-bg-mid: #313845;
+  --th-page-bg-end: #353c49;
+  --th-page-glow-1: rgba(191, 97, 106, 0.1);
+  --th-page-glow-2: rgba(136, 192, 208, 0.08);
+  --th-card-from: rgba(59, 66, 82, 0.95);
+  --th-card-to: rgba(54, 61, 77, 0.92);
+  --th-card-border: rgba(76, 86, 106, 0.5);
+  --th-panel: #3b4252;
+  --th-panel-border: #4c566a;
+  --th-surface: #434c5e;
+  --th-surface-alt: #3b4252;
+  --th-surface-warm: #434c5e;
+  --th-surface-deep: #363d4f;
+  --th-surface-white: #4c566a;
+  --th-overlay: rgba(59, 66, 82, 0.98);
+  --th-drawer-head: #3b4252;
+  --th-thead: #353c49;
+  --th-ink: #eceff4;
+  --th-ink-2: #d8dee9;
+  --th-ink-3: #a3b1c4;
+  --th-ink-4: #7b8da3;
+  --th-ink-5: #5d6e82;
+  --th-line: #4c566a;
+  --th-line-2: #555f73;
+  --th-line-3: #414b5e;
+  --th-accent: #bf616a;
+  --th-accent-2: #88c0d0;
+  --th-accent-3: #81a1c1;
+  --th-ok: #a3be8c;
+  --th-warn: #d08770;
+  --th-btn-primary-from: #5e81ac;
+  --th-btn-primary-to: #4e6e96;
+  --th-btn-primary-border: #436084;
+  --th-btn-secondary-from: #88c0d0;
+  --th-btn-secondary-to: #6faab8;
+  --th-btn-secondary-border: #5e96a4;
+  --th-btn-neutral-from: #5d6e82;
+  --th-btn-neutral-to: #4c566a;
+  --th-btn-neutral-border: #434c5e;
+  --th-btn-danger-from: #bf616a;
+  --th-btn-danger-to: #a3505a;
+  --th-btn-danger-border: #8b434c;
+  --th-btn-soft-bg: #3b4252;
+  --th-btn-soft-bg-end: #353c49;
+  --th-btn-soft-border: #4c566a;
+  --th-btn-soft-text: #d8dee9;
+  --th-btn-text: #eceff4;
+  --th-hover-bg: rgba(136, 192, 208, 0.08);
+  --th-hover-border: rgba(136, 192, 208, 0.18);
+  --th-active-bg: rgba(94, 129, 172, 0.18);
+  --th-active-border: rgba(94, 129, 172, 0.35);
+  --th-active-text: #88c0d0;
+  --th-focus-ring: rgba(136, 192, 208, 0.25);
+  --th-focus-border: #6faab8;
+  --th-range-bg: rgba(94, 129, 172, 0.15);
+  --th-range-border: rgba(94, 129, 172, 0.3);
+  --th-range-edge: #5e81ac;
+  --th-shadow-rgb: 0, 0, 0;
+  --th-shadow: 0 14px 34px rgba(0, 0, 0, 0.3);
+  --th-info-bg: rgba(129, 161, 193, 0.12);
+  --th-info-border: rgba(129, 161, 193, 0.3);
+  --th-info-text: #88c0d0;
+  --th-ok-bg: rgba(163, 190, 140, 0.12);
+  --th-ok-border: rgba(163, 190, 140, 0.3);
+  --th-ok-text: #a3be8c;
+  --th-error-bg: rgba(191, 97, 106, 0.12);
+  --th-error-border: rgba(191, 97, 106, 0.3);
+  --th-error-text: #d08770;
+  --th-badge-sale-bg: rgba(163, 190, 140, 0.15);
+  --th-badge-sale-border: rgba(163, 190, 140, 0.3);
+  --th-badge-sale-text: #a3be8c;
+  --th-badge-fee-bg: rgba(235, 203, 139, 0.12);
+  --th-badge-fee-border: rgba(235, 203, 139, 0.3);
+  --th-badge-fee-text: #ebcb8b;
+  --th-badge-cogs-bg: rgba(180, 142, 173, 0.12);
+  --th-badge-cogs-border: rgba(180, 142, 173, 0.3);
+  --th-badge-cogs-text: #b48ead;
+  --th-badge-invoice-bg: rgba(129, 161, 193, 0.12);
+  --th-badge-invoice-border: rgba(129, 161, 193, 0.3);
+  --th-badge-invoice-text: #81a1c1;
+  --th-badge-refund-bg: rgba(191, 97, 106, 0.12);
+  --th-badge-refund-border: rgba(191, 97, 106, 0.3);
+  --th-badge-refund-text: #bf616a;
+  --th-badge-subscription-bg: rgba(136, 192, 184, 0.12);
+  --th-badge-subscription-border: rgba(136, 192, 184, 0.3);
+  --th-badge-subscription-text: #88c0b8;
+  --th-badge-default-bg: rgba(127, 140, 163, 0.12);
+  --th-badge-default-border: rgba(127, 140, 163, 0.25);
+  --th-badge-default-text: #7b8da3;
+  --th-row-sale: #a3be8c;
+  --th-row-fee: #ebcb8b;
+  --th-row-cogs: #b48ead;
+  --th-row-invoice: #81a1c1;
+  --th-row-refund: #bf616a;
+  --th-row-subscription: #88c0b8;
+  --th-row-other: #7b8da3;
+  --th-chart-1: #81a1c1;
+  --th-chart-1-fill: rgba(129, 161, 193, 0.15);
+  --th-chart-2: #88c0d0;
+  --th-chart-2-fill: rgba(136, 192, 208, 0.15);
+  --th-chart-grid: rgba(127, 140, 163, 0.15);
+  --th-chart-label: #7b8da3;
+  --th-donut-shopify: #a3be8c;
+  --th-donut-kaufland: #bf616a;
+  --th-donut-fees: #ebcb8b;
+  --th-donut-purchase: #d08770;
+  --th-donut-profit: #88c0d0;
+  --th-globe-bg: #353c49;
+  --th-globe-atmosphere: #4c6080;
+  --th-globe-surface: #3b4252;
+  --th-globe-emissive: #2e3440;
+  --th-globe-hex-land: rgba(127, 140, 163, 0.35);
+  --th-globe-hex-top-r: 129;
+  --th-globe-hex-top-g: 161;
+  --th-globe-hex-top-b: 193;
+  --th-globe-hex-side-r: 94;
+  --th-globe-hex-side-g: 129;
+  --th-globe-hex-side-b: 172;
+  --th-modal-backdrop: rgba(0, 0, 0, 0.55);
+  --th-modal-border: #4c566a;
+  --th-geo-stage: #353c49;
+  --th-loading-bar: #4c566a;
+  --th-loading-accent-rgb: 94, 129, 172;
+  --th-link: #88c0d0;
+  --th-link-hover: #a3d4e0;
+  --th-select-arrow: #a3b1c4;
+  --th-today-border: #5e81ac;
+  --th-kpi-orb: rgba(191, 97, 106, 0.1);
+}
+
+/* ═══════════════════════════════════════
+   THEME: Cool Light
+   ═══════════════════════════════════════ */
+[data-theme="cool"] {
+  --th-page-bg: #f0f2f5;
+  --th-page-bg-mid: #eceef2;
+  --th-page-bg-end: #e8eaef;
+  --th-page-glow-1: rgba(99, 102, 241, 0.08);
+  --th-page-glow-2: rgba(16, 185, 129, 0.07);
+  --th-card-from: rgba(255, 255, 255, 0.95);
+  --th-card-to: rgba(248, 250, 252, 0.92);
+  --th-card-border: rgba(203, 213, 225, 0.8);
+  --th-panel: #f8fafc;
+  --th-panel-border: #cbd5e1;
+  --th-surface: #f8fafc;
+  --th-surface-alt: #f1f5f9;
+  --th-surface-warm: #f1f5f9;
+  --th-surface-deep: #e2e8f0;
+  --th-surface-white: #fff;
+  --th-overlay: rgba(248, 250, 252, 0.98);
+  --th-drawer-head: #f1f5f9;
+  --th-thead: #edf0f5;
+  --th-ink: #1e293b;
+  --th-ink-2: #334155;
+  --th-ink-3: #64748b;
+  --th-ink-4: #94a3b8;
+  --th-ink-5: #cbd5e1;
+  --th-line: #e2e8f0;
+  --th-line-2: #cbd5e1;
+  --th-line-3: #eef1f5;
+  --th-accent: #f97316;
+  --th-accent-2: #0d9488;
+  --th-accent-3: #3b82f6;
+  --th-ok: #16a34a;
+  --th-warn: #dc2626;
+  --th-btn-primary-from: #3b82f6;
+  --th-btn-primary-to: #2563eb;
+  --th-btn-primary-border: #1d4ed8;
+  --th-btn-secondary-from: #14b8a6;
+  --th-btn-secondary-to: #0d9488;
+  --th-btn-secondary-border: #0f766e;
+  --th-btn-neutral-from: #64748b;
+  --th-btn-neutral-to: #475569;
+  --th-btn-neutral-border: #334155;
+  --th-btn-danger-from: #ef4444;
+  --th-btn-danger-to: #dc2626;
+  --th-btn-danger-border: #b91c1c;
+  --th-btn-soft-bg: #f8fafc;
+  --th-btn-soft-bg-end: #f1f5f9;
+  --th-btn-soft-border: #cbd5e1;
+  --th-btn-soft-text: #334155;
+  --th-btn-text: #fff;
+  --th-hover-bg: rgba(59, 130, 246, 0.05);
+  --th-hover-border: rgba(59, 130, 246, 0.15);
+  --th-active-bg: rgba(59, 130, 246, 0.08);
+  --th-active-border: rgba(59, 130, 246, 0.3);
+  --th-active-text: #1d4ed8;
+  --th-focus-ring: rgba(59, 130, 246, 0.25);
+  --th-focus-border: #93c5fd;
+  --th-range-bg: rgba(59, 130, 246, 0.06);
+  --th-range-border: rgba(59, 130, 246, 0.2);
+  --th-range-edge: #2563eb;
+  --th-shadow-rgb: 15, 23, 42;
+  --th-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+  --th-info-bg: #eff6ff;
+  --th-info-border: #bfdbfe;
+  --th-info-text: #1e40af;
+  --th-ok-bg: #f0fdf4;
+  --th-ok-border: #bbf7d0;
+  --th-ok-text: #166534;
+  --th-error-bg: #fef2f2;
+  --th-error-border: #fecaca;
+  --th-error-text: #991b1b;
+  --th-badge-sale-bg: #f0fdf4;
+  --th-badge-sale-border: #bbf7d0;
+  --th-badge-sale-text: #166534;
+  --th-badge-fee-bg: #fffbeb;
+  --th-badge-fee-border: #fde68a;
+  --th-badge-fee-text: #92400e;
+  --th-badge-cogs-bg: #faf5ff;
+  --th-badge-cogs-border: #e9d5ff;
+  --th-badge-cogs-text: #6b21a8;
+  --th-badge-invoice-bg: #eff6ff;
+  --th-badge-invoice-border: #bfdbfe;
+  --th-badge-invoice-text: #1e40af;
+  --th-badge-refund-bg: #fef2f2;
+  --th-badge-refund-border: #fecaca;
+  --th-badge-refund-text: #991b1b;
+  --th-badge-subscription-bg: #f0fdfa;
+  --th-badge-subscription-border: #99f6e4;
+  --th-badge-subscription-text: #115e59;
+  --th-badge-default-bg: #f8fafc;
+  --th-badge-default-border: #e2e8f0;
+  --th-badge-default-text: #475569;
+  --th-row-sale: #16a34a;
+  --th-row-fee: #d97706;
+  --th-row-cogs: #7c3aed;
+  --th-row-invoice: #2563eb;
+  --th-row-refund: #dc2626;
+  --th-row-subscription: #0d9488;
+  --th-row-other: #64748b;
+  --th-chart-1: #3b82f6;
+  --th-chart-1-fill: rgba(59, 130, 246, 0.1);
+  --th-chart-2: #14b8a6;
+  --th-chart-2-fill: rgba(20, 184, 166, 0.1);
+  --th-chart-grid: rgba(100, 116, 139, 0.12);
+  --th-chart-label: #94a3b8;
+  --th-donut-shopify: #4caf68;
+  --th-donut-kaufland: #e05050;
+  --th-donut-fees: #e8a530;
+  --th-donut-purchase: #c85878;
+  --th-donut-profit: #38a068;
+  --th-globe-bg: #f1f5f9;
+  --th-globe-atmosphere: #93b0d8;
+  --th-globe-surface: #c0c8d4;
+  --th-globe-emissive: #5a6878;
+  --th-globe-hex-land: rgba(100, 116, 139, 0.38);
+  --th-globe-hex-top-r: 59;
+  --th-globe-hex-top-g: 130;
+  --th-globe-hex-top-b: 246;
+  --th-globe-hex-side-r: 37;
+  --th-globe-hex-side-g: 99;
+  --th-globe-hex-side-b: 235;
+  --th-modal-backdrop: rgba(15, 23, 42, 0.5);
+  --th-modal-border: #cbd5e1;
+  --th-geo-stage: #f1f5f9;
+  --th-loading-bar: #e2e8f0;
+  --th-loading-accent-rgb: 59, 130, 246;
+  --th-link: #2563eb;
+  --th-link-hover: #1d4ed8;
+  --th-select-arrow: #64748b;
+  --th-today-border: #93c5fd;
+  --th-kpi-orb: rgba(249, 115, 22, 0.12);
+}
+
+/* ═══════════════════════════════════════
+   THEME: Espresso
+   ═══════════════════════════════════════ */
+[data-theme="espresso"] {
+  --th-page-bg: #1c1816;
+  --th-page-bg-mid: #211d1a;
+  --th-page-bg-end: #26211e;
+  --th-page-glow-1: rgba(198, 134, 66, 0.1);
+  --th-page-glow-2: rgba(120, 180, 140, 0.06);
+  --th-card-from: rgba(42, 36, 32, 0.95);
+  --th-card-to: rgba(38, 33, 29, 0.92);
+  --th-card-border: rgba(72, 62, 54, 0.7);
+  --th-panel: #2a2420;
+  --th-panel-border: #3e352e;
+  --th-surface: #322b26;
+  --th-surface-alt: #2a2420;
+  --th-surface-warm: #352e28;
+  --th-surface-deep: #241f1c;
+  --th-surface-white: #3e352e;
+  --th-overlay: rgba(36, 31, 28, 0.98);
+  --th-drawer-head: #2a2420;
+  --th-thead: #261f1b;
+  --th-ink: #e8e0d8;
+  --th-ink-2: #c4b8aa;
+  --th-ink-3: #9a8e80;
+  --th-ink-4: #786c60;
+  --th-ink-5: #5c5048;
+  --th-line: #3e352e;
+  --th-line-2: #4a403a;
+  --th-line-3: #332c26;
+  --th-accent: #c68642;
+  --th-accent-2: #78b48c;
+  --th-accent-3: #6ca0d0;
+  --th-ok: #78b48c;
+  --th-warn: #d4845a;
+  --th-btn-primary-from: #6ca0d0;
+  --th-btn-primary-to: #5888b6;
+  --th-btn-primary-border: #4a749c;
+  --th-btn-secondary-from: #78b48c;
+  --th-btn-secondary-to: #5e9a72;
+  --th-btn-secondary-border: #4e8662;
+  --th-btn-neutral-from: #6a5e54;
+  --th-btn-neutral-to: #564a42;
+  --th-btn-neutral-border: #4a3e38;
+  --th-btn-danger-from: #c06050;
+  --th-btn-danger-to: #a64a3c;
+  --th-btn-danger-border: #8c3a30;
+  --th-btn-soft-bg: #322b26;
+  --th-btn-soft-bg-end: #2a2420;
+  --th-btn-soft-border: #4a403a;
+  --th-btn-soft-text: #c4b8aa;
+  --th-btn-text: #f5efe8;
+  --th-hover-bg: rgba(108, 160, 208, 0.08);
+  --th-hover-border: rgba(108, 160, 208, 0.18);
+  --th-active-bg: rgba(108, 160, 208, 0.14);
+  --th-active-border: rgba(108, 160, 208, 0.32);
+  --th-active-text: #8cc0e0;
+  --th-focus-ring: rgba(108, 160, 208, 0.25);
+  --th-focus-border: #6ca0d0;
+  --th-range-bg: rgba(108, 160, 208, 0.1);
+  --th-range-border: rgba(108, 160, 208, 0.25);
+  --th-range-edge: #6ca0d0;
+  --th-shadow-rgb: 0, 0, 0;
+  --th-shadow: 0 14px 34px rgba(0, 0, 0, 0.4);
+  --th-info-bg: rgba(108, 160, 208, 0.1);
+  --th-info-border: rgba(108, 160, 208, 0.28);
+  --th-info-text: #8cc0e0;
+  --th-ok-bg: rgba(120, 180, 140, 0.1);
+  --th-ok-border: rgba(120, 180, 140, 0.28);
+  --th-ok-text: #8cd0a0;
+  --th-error-bg: rgba(192, 96, 80, 0.1);
+  --th-error-border: rgba(192, 96, 80, 0.28);
+  --th-error-text: #e09080;
+  --th-badge-sale-bg: rgba(120, 180, 140, 0.12);
+  --th-badge-sale-border: rgba(120, 180, 140, 0.28);
+  --th-badge-sale-text: #8cd0a0;
+  --th-badge-fee-bg: rgba(198, 134, 66, 0.12);
+  --th-badge-fee-border: rgba(198, 134, 66, 0.3);
+  --th-badge-fee-text: #d4a868;
+  --th-badge-cogs-bg: rgba(160, 120, 180, 0.12);
+  --th-badge-cogs-border: rgba(160, 120, 180, 0.28);
+  --th-badge-cogs-text: #b898cc;
+  --th-badge-invoice-bg: rgba(108, 160, 208, 0.12);
+  --th-badge-invoice-border: rgba(108, 160, 208, 0.28);
+  --th-badge-invoice-text: #8cc0e0;
+  --th-badge-refund-bg: rgba(192, 96, 80, 0.1);
+  --th-badge-refund-border: rgba(192, 96, 80, 0.28);
+  --th-badge-refund-text: #e09080;
+  --th-badge-subscription-bg: rgba(100, 180, 168, 0.12);
+  --th-badge-subscription-border: rgba(100, 180, 168, 0.28);
+  --th-badge-subscription-text: #88d0c0;
+  --th-badge-default-bg: rgba(154, 142, 128, 0.1);
+  --th-badge-default-border: rgba(154, 142, 128, 0.25);
+  --th-badge-default-text: #9a8e80;
+  --th-row-sale: #78b48c;
+  --th-row-fee: #d4a868;
+  --th-row-cogs: #b898cc;
+  --th-row-invoice: #6ca0d0;
+  --th-row-refund: #c06050;
+  --th-row-subscription: #64b4a8;
+  --th-row-other: #9a8e80;
+  --th-chart-1: #6ca0d0;
+  --th-chart-1-fill: rgba(108, 160, 208, 0.15);
+  --th-chart-2: #78b48c;
+  --th-chart-2-fill: rgba(120, 180, 140, 0.15);
+  --th-chart-grid: rgba(154, 142, 128, 0.15);
+  --th-chart-label: #786c60;
+  --th-donut-shopify: #7ab87a;
+  --th-donut-kaufland: #d06050;
+  --th-donut-fees: #d8a040;
+  --th-donut-purchase: #c06070;
+  --th-donut-profit: #58b070;
+  --th-globe-bg: #241f1c;
+  --th-globe-atmosphere: #5a4838;
+  --th-globe-surface: #3a3028;
+  --th-globe-emissive: #2a2018;
+  --th-globe-hex-land: rgba(154, 142, 128, 0.35);
+  --th-globe-hex-top-r: 108;
+  --th-globe-hex-top-g: 160;
+  --th-globe-hex-top-b: 208;
+  --th-globe-hex-side-r: 88;
+  --th-globe-hex-side-g: 130;
+  --th-globe-hex-side-b: 180;
+  --th-modal-backdrop: rgba(0, 0, 0, 0.6);
+  --th-modal-border: #4a403a;
+  --th-geo-stage: #241f1c;
+  --th-loading-bar: #3e352e;
+  --th-loading-accent-rgb: 108, 160, 208;
+  --th-link: #8cc0e0;
+  --th-link-hover: #a8d4ec;
+  --th-select-arrow: #9a8e80;
+  --th-today-border: #6ca0d0;
+  --th-kpi-orb: rgba(198, 134, 66, 0.1);
+}
+
+/* ═══════════════════════════════════════
+   THEME: Vision
+   ═══════════════════════════════════════ */
+[data-theme="vision"] {
+  --th-page-bg: #060b28;
+  --th-page-bg-mid: #070d2a;
+  --th-page-bg-end: #080e2c;
+  --th-page-glow-1: rgba(67, 24, 255, 0.18);
+  --th-page-glow-2: rgba(0, 117, 255, 0.10);
+
+  /* ── Surfaces (Glassmorphism) ── */
+  --th-card-from: rgba(6, 11, 40, 0.94);
+  --th-card-to: rgba(10, 14, 35, 0.49);
+  --th-card-border: rgba(255, 255, 255, 0.08);
+  --th-panel: rgba(10, 14, 35, 0.72);
+  --th-panel-border: rgba(255, 255, 255, 0.10);
+  --th-surface: rgba(15, 21, 53, 0.92);
+  --th-surface-alt: rgba(10, 14, 35, 0.80);
+  --th-surface-warm: rgba(20, 26, 60, 0.85);
+  --th-surface-deep: rgba(6, 11, 40, 0.95);
+  --th-surface-white: rgba(15, 21, 53, 0.96);
+  --th-overlay: rgba(6, 11, 40, 0.92);
+  --th-drawer-head: rgba(12, 18, 48, 0.95);
+  --th-thead: rgba(10, 14, 35, 0.88);
+
+  /* ── Text ── */
+  --th-ink: #ffffff;
+  --th-ink-2: #e2e8f0;
+  --th-ink-3: #a0aec0;
+  --th-ink-4: #718096;
+  --th-ink-5: #4a5568;
+
+  /* ── Lines ── */
+  --th-line: rgba(255, 255, 255, 0.08);
+  --th-line-2: rgba(255, 255, 255, 0.12);
+  --th-line-3: rgba(255, 255, 255, 0.05);
+
+  /* ── Accent ── */
+  --th-accent: #4318ff;
+  --th-accent-2: #0075ff;
+  --th-accent-3: #01b574;
+
+  /* ── Semantic ── */
+  --th-ok: #01b574;
+  --th-warn: #ff5630;
+
+  /* ── Buttons ── */
+  --th-btn-primary-from: #4318ff;
+  --th-btn-primary-to: #3311cc;
+  --th-btn-primary-border: #2a0ea8;
+  --th-btn-secondary-from: #0075ff;
+  --th-btn-secondary-to: #005fcc;
+  --th-btn-secondary-border: #004da6;
+  --th-btn-neutral-from: #56577a;
+  --th-btn-neutral-to: #434460;
+  --th-btn-neutral-border: #383954;
+  --th-btn-danger-from: #ff5630;
+  --th-btn-danger-to: #d4421e;
+  --th-btn-danger-border: #b83818;
+  --th-btn-soft-bg: rgba(15, 21, 53, 0.72);
+  --th-btn-soft-bg-end: rgba(10, 14, 35, 0.60);
+  --th-btn-soft-border: rgba(255, 255, 255, 0.10);
+  --th-btn-soft-text: #a0aec0;
+  --th-btn-text: #fff;
+
+  /* ── Interactive ── */
+  --th-hover-bg: rgba(67, 24, 255, 0.08);
+  --th-hover-border: rgba(67, 24, 255, 0.18);
+  --th-active-bg: rgba(67, 24, 255, 0.14);
+  --th-active-border: rgba(67, 24, 255, 0.35);
+  --th-active-text: #a78bfa;
+  --th-focus-ring: rgba(67, 24, 255, 0.30);
+  --th-focus-border: #6d4cff;
+  --th-range-bg: rgba(67, 24, 255, 0.10);
+  --th-range-border: rgba(67, 24, 255, 0.25);
+  --th-range-edge: #4318ff;
+
+  /* ── Shadows ── */
+  --th-shadow-rgb: 0, 0, 0;
+  --th-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+
+  /* ── Status ── */
+  --th-info-bg: rgba(0, 117, 255, 0.10);
+  --th-info-border: rgba(0, 117, 255, 0.25);
+  --th-info-text: #63b3ed;
+  --th-ok-bg: rgba(1, 181, 116, 0.10);
+  --th-ok-border: rgba(1, 181, 116, 0.25);
+  --th-ok-text: #48bb78;
+  --th-error-bg: rgba(255, 86, 48, 0.10);
+  --th-error-border: rgba(255, 86, 48, 0.25);
+  --th-error-text: #fc8181;
+
+  /* ── Badges ── */
+  --th-badge-sale-bg: rgba(1, 181, 116, 0.12);
+  --th-badge-sale-border: rgba(1, 181, 116, 0.28);
+  --th-badge-sale-text: #48bb78;
+  --th-badge-fee-bg: rgba(236, 201, 75, 0.10);
+  --th-badge-fee-border: rgba(236, 201, 75, 0.28);
+  --th-badge-fee-text: #ecc94b;
+  --th-badge-cogs-bg: rgba(159, 122, 234, 0.12);
+  --th-badge-cogs-border: rgba(159, 122, 234, 0.28);
+  --th-badge-cogs-text: #b794f4;
+  --th-badge-invoice-bg: rgba(0, 117, 255, 0.12);
+  --th-badge-invoice-border: rgba(0, 117, 255, 0.28);
+  --th-badge-invoice-text: #63b3ed;
+  --th-badge-refund-bg: rgba(255, 86, 48, 0.10);
+  --th-badge-refund-border: rgba(255, 86, 48, 0.28);
+  --th-badge-refund-text: #fc8181;
+  --th-badge-subscription-bg: rgba(56, 178, 172, 0.12);
+  --th-badge-subscription-border: rgba(56, 178, 172, 0.28);
+  --th-badge-subscription-text: #4fd1c5;
+  --th-badge-default-bg: rgba(86, 87, 122, 0.14);
+  --th-badge-default-border: rgba(86, 87, 122, 0.30);
+  --th-badge-default-text: #a0aec0;
+
+  /* ── Row accents ── */
+  --th-row-sale: #48bb78;
+  --th-row-fee: #ecc94b;
+  --th-row-cogs: #b794f4;
+  --th-row-invoice: #63b3ed;
+  --th-row-refund: #fc8181;
+  --th-row-subscription: #4fd1c5;
+  --th-row-other: #718096;
+
+  /* ── Charts ── */
+  --th-chart-1: #0075ff;
+  --th-chart-1-fill: rgba(0, 117, 255, 0.15);
+  --th-chart-2: #01b574;
+  --th-chart-2-fill: rgba(1, 181, 116, 0.15);
+  --th-chart-grid: rgba(86, 87, 122, 0.20);
+  --th-chart-label: #718096;
+  --th-donut-shopify: #6ad0a0;
+  --th-donut-kaufland: #f06878;
+  --th-donut-fees: #f0b050;
+  --th-donut-purchase: #e070a0;
+  --th-donut-profit: #4ad4ff;
+
+  /* ── Globe ── */
+  --th-globe-bg: #060b28;
+  --th-globe-atmosphere: #4318ff;
+  --th-globe-surface: #0f1535;
+  --th-globe-emissive: #060b28;
+  --th-globe-hex-land: rgba(86, 87, 122, 0.40);
+  --th-globe-hex-top-r: 67;
+  --th-globe-hex-top-g: 24;
+  --th-globe-hex-top-b: 255;
+  --th-globe-hex-side-r: 0;
+  --th-globe-hex-side-g: 117;
+  --th-globe-hex-side-b: 255;
+
+  /* ── Modal ── */
+  --th-modal-backdrop: rgba(0, 0, 0, 0.65);
+  --th-modal-border: rgba(255, 255, 255, 0.10);
+
+  /* ── Misc ── */
+  --th-radius: 20px;
+  --th-geo-stage: #0a0e23;
+  --th-loading-bar: rgba(86, 87, 122, 0.25);
+  --th-loading-accent-rgb: 67, 24, 255;
+  --th-link: #63b3ed;
+  --th-link-hover: #90cdf4;
+  --th-select-arrow: #718096;
+  --th-today-border: #4318ff;
+  --th-kpi-orb: rgba(67, 24, 255, 0.15);
+}
+
+/* ── Vision glassmorphism overrides ── */
+[data-theme="vision"] .card {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  will-change: transform;
+}
+
+[data-theme="vision"] .controls-grid {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-theme="vision"] .control-menu,
+[data-theme="vision"] .status-drawer,
+[data-theme="vision"] .customer-geo-loading-card {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+[data-theme="vision"] .source-box {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+[data-theme="vision"] .menu-item {
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(15, 21, 53, 0.60);
+}
+
+[data-theme="vision"] .menu-item.active {
+  border-color: var(--th-active-border);
+  background: var(--th-active-bg);
+}
+
+[data-theme="vision"] .tabbar {
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+[data-theme="vision"] .bookings-filter-card,
+[data-theme="vision"] .bookings-tools {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+[data-theme="vision"] .google-ads-import-shell {
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
