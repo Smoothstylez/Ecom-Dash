@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from app.config import COMBINED_DB_PATH, INVOICES_DIR, ensure_runtime_dirs
+from app.config import COMBINED_DB_PATH, INVOICES_DIR, PROJECT_ROOT, SHOPIFY_DB_PATH, ensure_runtime_dirs
 
 
 def now_iso() -> str:
@@ -94,6 +94,33 @@ def init_combined_db() -> None:
         )
         connection.commit()
 
+    _migrate_invoice_paths_to_relative()
+
+
+def _migrate_invoice_paths_to_relative() -> None:
+    """One-time migration: convert absolute file_path entries to relative."""
+    project_root = PROJECT_ROOT.resolve()
+    with connect_combined_db() as connection:
+        rows = connection.execute(
+            "SELECT id, file_path FROM order_purchase_documents"
+        ).fetchall()
+        updated = 0
+        for row in rows:
+            fp = str(row["file_path"] or "")
+            if not fp or not Path(fp).is_absolute():
+                continue
+            try:
+                relative = Path(fp).resolve().relative_to(project_root).as_posix()
+            except (ValueError, OSError):
+                continue
+            connection.execute(
+                "UPDATE order_purchase_documents SET file_path = ? WHERE id = ?",
+                (relative, row["id"]),
+            )
+            updated += 1
+        if updated:
+            connection.commit()
+
 
 def _normalize_currency(value: Optional[str]) -> str:
     if not value:
@@ -102,6 +129,59 @@ def _normalize_currency(value: Optional[str]) -> str:
     if len(currency) != 3:
         return "EUR"
     return currency
+
+
+def _resolve_enrichment_order_id(marketplace: str, external_order_id: str) -> str:
+    """Resolve an external_order_id back to the raw order_id used in enrichments.
+
+    For Kaufland, these are identical. For Shopify, the external_order_id is
+    ``#1148`` while the enrichment key is the numeric Shopify order id
+    (e.g. ``7469627212115``).
+    """
+    if marketplace != "shopify" or not external_order_id.startswith("#"):
+        return external_order_id
+
+    try:
+        conn = sqlite3.connect(SHOPIFY_DB_PATH)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            "SELECT id FROM orders WHERE name = ?", (external_order_id,)
+        ).fetchone()
+        conn.close()
+        if row:
+            return str(row["id"])
+    except Exception:
+        pass
+    return external_order_id
+
+
+def clear_purchase_enrichment(
+    *,
+    marketplace: str,
+    order_id: str,
+) -> bool:
+    """Reset purchase_cost_cents to 0 and unlink invoice document for a given order.
+
+    *order_id* may be either the raw source id or an external_order_id
+    (e.g. ``#1148`` for Shopify). The function resolves it automatically.
+
+    Returns True if a row was updated, False otherwise.
+    """
+    resolved_id = _resolve_enrichment_order_id(marketplace, order_id)
+    timestamp = now_iso()
+    with connect_combined_db() as connection:
+        cursor = connection.execute(
+            """
+            UPDATE order_enrichments
+            SET purchase_cost_cents = 0,
+                invoice_document_id = NULL,
+                updated_at = ?
+            WHERE marketplace = ? AND order_id = ?
+            """,
+            (timestamp, marketplace, resolved_id),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
 
 
 def upsert_purchase_enrichment(
@@ -194,7 +274,7 @@ def create_invoice_document(
                 order_id,
                 original_filename,
                 stored_filename,
-                str(file_path),
+                _to_relative_path(file_path),
                 mime_type,
                 timestamp,
             ),
@@ -298,3 +378,51 @@ def build_invoice_storage_path(marketplace: str, order_id: str, original_filenam
     unique = uuid.uuid4().hex[:8]
     stored_name = f"{timestamp}_{token_market}_{token_order}_{unique}{ext}"
     return INVOICES_DIR / stored_name
+
+
+def _to_relative_path(absolute_path: Path) -> str:
+    """Convert an absolute path to a PROJECT_ROOT-relative POSIX path.
+
+    If the path is already relative or cannot be made relative, return it
+    as-is with forward slashes.
+    """
+    try:
+        return absolute_path.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except (ValueError, OSError):
+        return str(absolute_path)
+
+
+def resolve_invoice_path(raw_path: str) -> Optional[Path]:
+    """Resolve a stored invoice path to an absolute filesystem path.
+
+    Handles both relative (``storage/invoices/...``) and legacy absolute
+    paths (Windows, Mac, Linux).  Returns *None* when no matching file
+    can be located.
+    """
+    text = str(raw_path or "").strip()
+    if not text:
+        return None
+
+    candidate = Path(text)
+
+    # Already absolute — check directly
+    if candidate.is_absolute():
+        if candidate.exists() and candidate.is_file():
+            return candidate
+        # Attempt to recover by using just the filename under INVOICES_DIR
+        fallback = INVOICES_DIR / candidate.name
+        if fallback.exists() and fallback.is_file():
+            return fallback
+        return None
+
+    # Relative — resolve against PROJECT_ROOT
+    resolved = (PROJECT_ROOT / candidate).resolve()
+    if resolved.exists() and resolved.is_file():
+        return resolved
+
+    # Last resort: bare filename in INVOICES_DIR
+    fallback = INVOICES_DIR / Path(text).name
+    if fallback.exists() and fallback.is_file():
+        return fallback
+
+    return None

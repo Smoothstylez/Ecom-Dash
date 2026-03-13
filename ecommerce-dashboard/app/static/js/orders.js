@@ -220,7 +220,7 @@ function renderBookkeepingBreakdown(detail, summary) {
           ? renderDocumentActions(docUrl, tx.document_original_filename || tx.document_id, tx.document_mime_type, true)
           : "-";
         return `
-          <tr>
+          <tr data-tx-id="${escapeHtml(tx.id || "")}" style="cursor:pointer">
             <td>${escapeHtml(formatDate(tx.date))}</td>
             <td>${escapeHtml(safeText(tx.type))}</td>
             <td>${escapeHtml(safeText(tx.direction))}</td>
@@ -471,8 +471,38 @@ async function loadOrders() {
 
 /* ── Render ── */
 
+function filterOrders(orders) {
+  const statusSet = state.filters.orderStatus;
+  const paymentSet = state.filters.orderPayment;
+  const returnsOnly = state.filters.returnsOnly;
+  if (!statusSet.size && !paymentSet.size && !returnsOnly) return orders;
+
+  const returnKeywords = ["cancel", "cancelled", "canceled", "void", "return", "returned", "refund", "refunded", "partially_refunded", "rma", "revoked", "returning"];
+  function isReturnLike(val) {
+    const t = String(val || "").trim().toLowerCase();
+    if (!t) return false;
+    return returnKeywords.some((kw) => t.includes(kw));
+  }
+
+  return orders.filter((order) => {
+    if (statusSet.size) {
+      const fs = String(order.fulfillment_status || "").trim().toLowerCase();
+      if (!statusSet.has(fs)) return false;
+    }
+    if (paymentSet.size) {
+      const pm = String(order.payment_method || "").trim();
+      if (!paymentSet.has(pm)) return false;
+    }
+    if (returnsOnly) {
+      if (!isReturnLike(order.fulfillment_status) && !isReturnLike(order.financial_status) && !isReturnLike(order.raw_status)) return false;
+    }
+    return true;
+  });
+}
+
 function renderOrders() {
-  const rows = state.orders.map((order) => {
+  const filtered = filterOrders(state.orders);
+  const rows = filtered.map((order) => {
     const invoice = order.invoice;
     const invoiceHtml = invoice
       ? `<a class="order-invoice-link" href="${API_BASE}/orders/${encodeURIComponent(order.marketplace)}/${encodeURIComponent(order.order_id)}/invoice/${encodeURIComponent(invoice.document_id)}/download?disposition=inline" target="_blank" rel="noreferrer" title="${escapeHtml(invoice.original_filename || "Download")}">${escapeHtml(invoice.original_filename || "Download")}</a>`
@@ -516,7 +546,14 @@ function renderOrders() {
   }).join("");
 
   els.ordersBody.innerHTML = rows || "<tr><td colspan=\"10\">Keine Orders fuer aktuellen Filter.</td></tr>";
-  els.ordersMeta.textContent = `${NUMBER_FMT.format(state.ordersTotal)} Zeilen`;
+  const total = state.ordersTotal;
+  const shown = filtered.length;
+  const activeFilters = getActiveOrdersFilterCount();
+  if (activeFilters > 0 && shown !== total) {
+    els.ordersMeta.textContent = `${NUMBER_FMT.format(shown)} / ${NUMBER_FMT.format(total)} Zeilen`;
+  } else {
+    els.ordersMeta.textContent = `${NUMBER_FMT.format(shown)} Zeilen`;
+  }
 }
 
 /* ── Actions (Save/Upload/Open) ── */
@@ -635,6 +672,8 @@ async function openOrderDetailById(marketplace, orderId) {
     const detail = await fetchJson(`${API_BASE}/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}`);
     state.detailsMode = "order";
     state.bookingDetailsTransactionId = null;
+    state.orderDetailMarketplace = marketplace;
+    state.orderDetailOrderId = orderId;
     els.detailsTitle.textContent = `Details ${marketplace.toUpperCase()} ${orderId}`;
     els.detailsContent.innerHTML = renderDetailHtml(detail);
     els.detailsModal.classList.add("active");

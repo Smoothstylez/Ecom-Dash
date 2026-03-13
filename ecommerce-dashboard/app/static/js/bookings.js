@@ -228,7 +228,7 @@ async function loadBookings() {
   if (state.bookingTxFilters.type) {
     params.set("type", state.bookingTxFilters.type);
   }
-  if (state.bookingClass) {
+  if (state.bookingClass && state.bookingClass !== "all") {
     params.set("bookingClass", state.bookingClass);
   }
   const payload = await fetchJson(`${API_BASE}/bookings/transactions?${params.toString()}`);
@@ -388,11 +388,10 @@ function renderBookings() {
         <select class="booking-select" data-field="payment_account_id">${accountOptions(booking.payment_account_id)}</select>
       </td>
       <td>${documentHtml}</td>
-      <td><button class="btn-inline primary" data-action="save-booking" type="button">Speichern</button></td>
     </tr>`;
   }).join("");
 
-  els.bookingsBody.innerHTML = rows || "<tr><td colspan=\"10\">Keine Buchungen gefunden.</td></tr>";
+  els.bookingsBody.innerHTML = rows || "<tr><td colspan=\"9\">Keine Buchungen gefunden.</td></tr>";
   const filterHints = [];
   if (state.bookingTxFilters.type) {
     filterHints.push(`Typ ${state.bookingTxFilters.type}`);
@@ -486,11 +485,10 @@ function renderBookingTemplates() {
           <button class="btn-inline ghost" data-action="generate-template-backfill" type="button">Seit Start</button>
         </div>
       </td>
-      <td><button class="btn-inline primary" data-action="save-template" type="button">Speichern</button></td>
     </tr>`;
   }).join("");
 
-  els.bookingTemplatesBody.innerHTML = rows || "<tr><td colspan=\"11\">Keine Templates vorhanden.</td></tr>";
+  els.bookingTemplatesBody.innerHTML = rows || "<tr><td colspan=\"10\">Keine Templates vorhanden.</td></tr>";
   els.bookingTemplatesMeta.textContent = `${NUMBER_FMT.format(state.bookingTemplatesTotal)} Zeilen`;
 }
 
@@ -506,11 +504,10 @@ function renderBookingAccounts() {
           <option value="false" ${activeValue === "false" ? "selected" : ""}>false</option>
         </select>
       </td>
-      <td><button class="btn-inline primary" data-action="save-account" type="button">Speichern</button></td>
     </tr>`;
   }).join("");
 
-  els.bookingAccountsBody.innerHTML = rows || "<tr><td colspan=\"4\">Keine Konten vorhanden.</td></tr>";
+  els.bookingAccountsBody.innerHTML = rows || "<tr><td colspan=\"3\">Keine Konten vorhanden.</td></tr>";
   els.bookingAccountsMeta.textContent = `${NUMBER_FMT.format(state.bookingAccountsTotal)} Zeilen`;
 }
 
@@ -547,10 +544,13 @@ const SAMMELRECHNUNG_PROVIDERS = {
 };
 
 function setBookingClass(bookingClass) {
-  const allowed = new Set(["automatic", "monthly", "single"]);
+  const allowed = new Set(["all", "automatic", "monthly", "single"]);
   state.bookingClass = allowed.has(bookingClass) ? bookingClass : "automatic";
 
-  /* Update segmented control active state */
+  /* Update subtab-bar active state */
+  if (els.bookingClassAllBtn) {
+    els.bookingClassAllBtn.classList.toggle("active", state.bookingClass === "all");
+  }
   if (els.bookingClassAutoBtn) {
     els.bookingClassAutoBtn.classList.toggle("active", state.bookingClass === "automatic");
   }
@@ -588,6 +588,7 @@ function updateBookingNewBtnForClass() {
   if (state.bookingsSubtab !== "transactions") return;
 
   const classCfg = {
+    all:       null,
     automatic: null,
     monthly:   { target: "sammelrechnungTools", label: "Neue Sammelrechnung" },
     single:    { target: "bookingsTransactionTools", label: "Neue Transaktion" },
@@ -690,6 +691,17 @@ function renderMonthlyInvoiceDetailHtml(inv) {
     docActions = renderDocumentActions(dlUrl, docLabel, inv.document.mime_type, true);
   }
 
+  /* Provider select options */
+  const providerOptions = Object.entries(SAMMELRECHNUNG_PROVIDERS).map(([key, label]) => {
+    const sel = key === inv.provider ? " selected" : "";
+    return `<option value="${escapeHtml(key)}"${sel}>${escapeHtml(label)}</option>`;
+  }).join("");
+
+  /* Document display for edit form */
+  const currentDocHtml = inv.document_id && inv.document
+    ? `<span class="sammel-edit-current-doc">${escapeHtml(inv.document.original_filename || "Beleg")} ${docActions}</span>`
+    : `<span class="sammel-edit-current-doc">Kein Beleg</span>`;
+
   /* Linked transactions table */
   const txs = Array.isArray(inv.transactions) ? inv.transactions : [];
   let txTableHtml;
@@ -737,7 +749,7 @@ function renderMonthlyInvoiceDetailHtml(inv) {
       </div>`;
   }
 
-  return `<div class="sammel-detail-shell">
+  return `<div class="sammel-detail-shell" data-invoice-id="${escapeHtml(String(inv.id || ""))}">
     <section class="detail-grid">
       <article class="detail-card">
         <h3>Sammelrechnung</h3>
@@ -771,6 +783,44 @@ function renderMonthlyInvoiceDetailHtml(inv) {
       </article>
     </section>
 
+    <section class="booking-detail-form">
+      <h3>Sammelrechnung bearbeiten</h3>
+      <div class="booking-detail-form-grid">
+        <div class="control">
+          <label for="sammelDetailProvider">Provider</label>
+          <select id="sammelDetailProvider">${providerOptions}</select>
+        </div>
+        <div class="control">
+          <label for="sammelDetailPeriodFrom">Zeitraum von</label>
+          <input id="sammelDetailPeriodFrom" type="date" value="${escapeHtml((inv.period_from || "").substring(0, 10))}">
+        </div>
+        <div class="control">
+          <label for="sammelDetailPeriodTo">Zeitraum bis</label>
+          <input id="sammelDetailPeriodTo" type="date" value="${escapeHtml((inv.period_to || "").substring(0, 10))}">
+        </div>
+        <div class="control">
+          <label for="sammelDetailAmount">Rechnungsbetrag (EUR)</label>
+          <input id="sammelDetailAmount" type="text" inputmode="decimal" value="${escapeHtml(centsToInputValue(invoiceCents))}">
+        </div>
+        <div class="control">
+          <label>Aktueller Beleg</label>
+          <div>${currentDocHtml}</div>
+        </div>
+        <div class="control">
+          <label for="sammelDetailFile">Neuen Beleg hochladen</label>
+          <input id="sammelDetailFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp">
+        </div>
+        <div class="control" style="grid-column: 1 / -1;">
+          <label for="sammelDetailNotes">Notiz</label>
+          <textarea id="sammelDetailNotes" class="booking-input notes" rows="2">${escapeHtml(inv.notes || "")}</textarea>
+        </div>
+      </div>
+      <div class="booking-detail-actions">
+        <button class="btn-inline danger" data-action="delete-invoice-modal" type="button">Sammelrechnung loeschen</button>
+        <button class="btn-inline primary" data-action="save-invoice-modal" type="button">Speichern</button>
+      </div>
+    </section>
+
     <section class="sammel-detail-transactions">
       <h3>Verknuepfte Transaktionen</h3>
       ${txTableHtml}
@@ -798,6 +848,118 @@ async function openMonthlyInvoiceDetail(invoiceId) {
     setStatus("", "ok");
   } catch (error) {
     setStatus(`Sammelrechnung konnte nicht geladen werden: ${error.message}`, "error");
+  }
+}
+
+async function saveMonthlyInvoiceFromDetail(options) {
+  const silent = options && options.silent === true;
+  const invoiceId = String(state.monthlyInvoiceDetailId || "").trim();
+  if (!invoiceId) {
+    if (!silent) setStatus("Keine Sammelrechnung im Detailfenster aktiv.", "error");
+    return;
+  }
+
+  const providerEl = document.getElementById("sammelDetailProvider");
+  const periodFromEl = document.getElementById("sammelDetailPeriodFrom");
+  const periodToEl = document.getElementById("sammelDetailPeriodTo");
+  const amountEl = document.getElementById("sammelDetailAmount");
+  const notesEl = document.getElementById("sammelDetailNotes");
+  const fileEl = document.getElementById("sammelDetailFile");
+
+  if (!providerEl || !amountEl) {
+    /* Detail form not in DOM */
+    return;
+  }
+
+  const provider = String(providerEl.value || "").trim().toLowerCase();
+  const periodFrom = String(periodFromEl?.value || "").trim();
+  const periodTo = String(periodToEl?.value || "").trim();
+  const amountCents = parseEuroToCents(amountEl.value || "");
+  const notes = String(notesEl?.value || "").trim() || null;
+
+  if (!provider) {
+    if (!silent) setStatus("Provider ist erforderlich.", "error");
+    return;
+  }
+  if (!periodFrom || !periodTo) {
+    if (!silent) setStatus("Zeitraum ist erforderlich.", "error");
+    return;
+  }
+  if (!amountCents) {
+    if (!silent) setStatus("Rechnungsbetrag muss groesser 0 sein.", "error");
+    return;
+  }
+
+  const payload = {
+    provider,
+    period_from: periodFrom,
+    period_to: periodTo,
+    invoice_amount_cents: amountCents,
+    notes,
+  };
+
+  try {
+    /* Upload new file if selected */
+    const file = fileEl?.files?.[0];
+    if (file) {
+      const form = new FormData();
+      form.append("file", file);
+      const uploadResult = await fetchJson(`${API_BASE}/bookings/documents/upload`, {
+        method: "POST",
+        body: form,
+      });
+      const docId = uploadResult?.document?.id;
+      if (docId) {
+        payload.document_id = docId;
+      }
+    }
+
+    const result = await fetchJson(`${API_BASE}/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    await Promise.all([loadMonthlyInvoices(), loadBookingDocuments()]);
+    renderMonthlyInvoices();
+    renderBookingDocuments();
+
+    if (!silent) {
+      /* Re-fetch full detail (with transactions) to re-render */
+      try {
+        const detailPayload = await fetchJson(`${API_BASE}/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`);
+        const updated = detailPayload?.invoice;
+        if (updated && state.detailsMode === "monthly-invoice") {
+          const providerLabel = SAMMELRECHNUNG_PROVIDERS[updated.provider] || updated.provider || "";
+          state.monthlyInvoiceDetailId = String(updated.id || invoiceId);
+          els.detailsTitle.textContent = `Sammelrechnung – ${providerLabel}`;
+          els.detailsContent.innerHTML = renderMonthlyInvoiceDetailHtml(updated);
+        }
+      } catch (_) { /* best-effort re-render */ }
+      setStatus("Sammelrechnung gespeichert.", "ok");
+    }
+  } catch (error) {
+    if (!silent) setStatus(`Speichern fehlgeschlagen: ${error.message}`, "error");
+  }
+}
+
+async function deleteMonthlyInvoiceFromDetail() {
+  const invoiceId = String(state.monthlyInvoiceDetailId || "").trim();
+  if (!invoiceId) return;
+
+  const confirmed = window.confirm("Sammelrechnung wirklich loeschen?");
+  if (!confirmed) return;
+
+  try {
+    await fetchJson(`${API_BASE}/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`, {
+      method: "DELETE",
+    });
+    setStatus("Sammelrechnung geloescht.", "ok");
+    closeDetailsModal();
+    await loadMonthlyInvoices();
+    renderMonthlyInvoices();
+  } catch (error) {
+    setStatus(`Loeschen fehlgeschlagen: ${error.message}`, "error");
   }
 }
 
@@ -1203,9 +1365,9 @@ function setBookingsSubtab(tab) {
     }
   }
 
-  /* Show/hide booking class control — only visible on transactions subtab */
-  if (els.bookingClassControl) {
-    els.bookingClassControl.style.display = transactionsActive ? "" : "none";
+  /* Show/hide booking class bar — only visible on transactions subtab */
+  if (els.bookingClassBar) {
+    els.bookingClassBar.style.display = transactionsActive ? "" : "none";
   }
 }
 
@@ -1226,10 +1388,11 @@ function renderBookingTransactionDetailPreview(transaction) {
   const previewKind = detectPreviewKind(mimeType, fileName);
 
   let previewHtml = `<div class="booking-detail-note">Preview fuer diesen Dateityp nicht verfuegbar.</div>`;
+  const inlineUrl = downloadUrl + "?disposition=inline";
   if (previewKind === "image") {
-    previewHtml = `<img class="booking-detail-preview-image" src="${escapeHtml(downloadUrl)}" alt="${escapeHtml(fileName)}">`;
+    previewHtml = `<img class="booking-detail-preview-image" src="${escapeHtml(inlineUrl)}" alt="${escapeHtml(fileName)}">`;
   } else if (previewKind === "pdf") {
-    const pdfUrl = `${downloadUrl}#toolbar=1&view=FitH`;
+    const pdfUrl = `${inlineUrl}#toolbar=1&view=FitH`;
     previewHtml = `<iframe class="booking-detail-preview-frame" src="${escapeHtml(pdfUrl)}" title="${escapeHtml(fileName)}"></iframe>`;
   }
 
@@ -1486,7 +1649,7 @@ async function saveBookingFromDetailsModal(options) {
       body: JSON.stringify(payload),
     });
 
-    await Promise.all([loadBookings(), loadBookingOrders(), loadBookingDocuments()]);
+    await Promise.all([loadBookings(), loadBookingOrders(), loadBookingDocuments(), loadOrders(), loadAnalytics()]);
     rerender();
 
     if (!silent) {
@@ -1521,7 +1684,7 @@ async function deleteBookingFromDetailsModal() {
       method: "DELETE",
     });
     closeDetailsModal();
-    await Promise.all([loadBookings(), loadBookingOrders(), loadBookingDocuments()]);
+    await Promise.all([loadBookings(), loadBookingOrders(), loadBookingDocuments(), loadOrders(), loadAnalytics()]);
     rerender();
     setStatus(`Transaktion geloescht: ${txId}`, "ok");
   } catch (error) {

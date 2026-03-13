@@ -3,12 +3,15 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from app import changestamp
+
 from app.config import (
+    APP_VERSION,
     AUTO_SYNC_ON_STARTUP,
     BOOKKEEPING_DB_PATH,
     COMBINED_DB_PATH,
@@ -25,7 +28,7 @@ from app.routers.exports import router as exports_router
 from app.routers.google_ads import router as google_ads_router
 from app.routers.orders import router as orders_router
 from app.routers.sync import router as sync_router
-from app.services.bookings import sync_combined_orders_into_bookkeeping, sync_google_ads_into_bookkeeping
+from app.services.bookings import sync_combined_orders_into_bookkeeping, sync_google_ads_into_bookkeeping, migrate_bookkeeping_document_paths
 from app.services.live_sync import (
     build_live_sync_status,
     start_live_sync_background_worker,
@@ -39,7 +42,7 @@ STATIC_DIR = BASE_DIR / "app" / "static"
 LOGGER = logging.getLogger("combined_dashboard")
 
 
-app = FastAPI(title="Combined Dropshipping Dashboard", version="0.2.0")
+app = FastAPI(title="Combined Dropshipping Dashboard", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,6 +62,15 @@ app.include_router(google_ads_router)
 app.include_router(sync_router)
 
 
+@app.middleware("http")
+async def changestamp_middleware(request: Request, call_next) -> Response:
+    """Bump the changestamp on any successful mutating request."""
+    response: Response = await call_next(request)
+    if request.method not in ("GET", "HEAD", "OPTIONS") and 200 <= response.status_code < 300:
+        changestamp.bump()
+    return response
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_runtime_dirs()
@@ -69,6 +81,12 @@ def on_startup() -> None:
         except Exception as exc:  # pragma: no cover - startup robustness
             LOGGER.exception("startup source sync failed: %s", exc)
     init_combined_db()
+    try:
+        migrated = migrate_bookkeeping_document_paths()
+        if migrated:
+            LOGGER.info("migrated %d bookkeeping document paths to relative", migrated)
+    except Exception as exc:  # pragma: no cover - startup robustness
+        LOGGER.exception("bookkeeping document path migration failed: %s", exc)
     try:
         order_sync = sync_combined_orders_into_bookkeeping()
         LOGGER.info(
@@ -129,7 +147,7 @@ def dashboard_alias() -> FileResponse:
 
 @app.get("/bookings/module", include_in_schema=False)
 def deprecated_bookings_module() -> RedirectResponse:
-    return RedirectResponse(url="bookings/full?subtab=transactions", status_code=307)
+    return RedirectResponse(url="/bookings/full?subtab=transactions", status_code=307)
 
 
 @app.get("/api/health")

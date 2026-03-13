@@ -7,6 +7,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 
+# ── Versioning (written into backup manifests for future compatibility) ──
+APP_VERSION = "0.3.0"
+SCHEMA_VERSION = 1  # Increment when DB schema changes in a breaking way
+
 DATA_DIR = PROJECT_ROOT / "data"
 STORAGE_DIR = PROJECT_ROOT / "storage"
 INVOICES_DIR = STORAGE_DIR / "invoices"
@@ -15,6 +19,7 @@ SOURCES_DIR = DATA_DIR / "sources"
 SHOPIFY_SOURCE_DIR = SOURCES_DIR / "shopify"
 KAUFLAND_SOURCE_DIR = SOURCES_DIR / "kaufland"
 BOOKKEEPING_SOURCE_DIR = SOURCES_DIR / "bookkeeping"
+EBAY_SOURCE_DIR = SOURCES_DIR / "ebay"
 
 
 def _resolve_env_path(env_name: str, default_path: Path) -> Path:
@@ -35,6 +40,7 @@ COMBINED_DB_PATH = _resolve_env_path("COMBINED_DB_PATH", DATA_DIR / "combined.sq
 SHOPIFY_DB_PATH = _resolve_env_path("SHOPIFY_DB_PATH", SHOPIFY_SOURCE_DIR / "shopify_data.sqlite3")
 KAUFLAND_DB_PATH = _resolve_env_path("KAUFLAND_DB_PATH", KAUFLAND_SOURCE_DIR / "kaufland_data.sqlite3")
 BOOKKEEPING_DB_PATH = _resolve_env_path("BOOKKEEPING_DB_PATH", BOOKKEEPING_SOURCE_DIR / "dashboard.sqlite3")
+EBAY_DB_PATH = _resolve_env_path("EBAY_DB_PATH", EBAY_SOURCE_DIR / "ebay_data.sqlite3")
 
 # Bootstrap source DBs used for local copy-sync into the runtime source DBs.
 SHOPIFY_BOOTSTRAP_DB_PATH = _resolve_env_path(
@@ -82,3 +88,4 @@ def ensure_runtime_dirs() -> None:
     SHOPIFY_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     KAUFLAND_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     BOOKKEEPING_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    EBAY_SOURCE_DIR.mkdir(parents=True, exist_ok=True)

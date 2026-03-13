@@ -12,6 +12,7 @@ from app.db import (
     build_invoice_storage_path,
     create_invoice_document,
     fetch_invoice_document,
+    resolve_invoice_path,
     sanitize_filename,
     upsert_purchase_enrichment,
 )
@@ -212,8 +213,8 @@ def api_download_invoice(
     if row.get("marketplace") != market or row.get("order_id") != order_id:
         raise HTTPException(status_code=404, detail="document not found for order")
 
-    file_path = Path(str(row.get("file_path") or ""))
-    if not file_path.exists() or not file_path.is_file():
+    file_path = resolve_invoice_path(str(row.get("file_path") or ""))
+    if file_path is None:
         raise HTTPException(status_code=404, detail="file not found")
 
     download_name = sanitize_filename(str(row.get("original_filename") or file_path.name))

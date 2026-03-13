@@ -1,7 +1,7 @@
 "use strict";
 
 /* ── Constants ── */
-const API_BASE = "api";
+const API_BASE = "/api";
 const DATE_FMT = new Intl.DateTimeFormat("de-DE");
 const MONEY_FMT = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const NUMBER_FMT = new Intl.NumberFormat("de-DE");
@@ -15,6 +15,8 @@ const state = {
     q: "",
     marketplace: "",
     returnsOnly: false,
+    orderStatus: new Set(),
+    orderPayment: new Set(),
   },
   dateRangeUi: {
     anchorMonth: "",
@@ -65,6 +67,11 @@ const state = {
   trendGranularityResolved: "day",
   googleAds: null,
   googleAdsTrendChart: null,
+  googleAdsProfitChart: null,
+  googleAdsRoasChart: null,
+  googleAdsCumulChart: null,
+  googleAdsProductDetailChart: null,
+  googleAdsExpandedProductKey: null,
   ebaySummary: null,
   ebayOrders: [],
   ebayOrdersTotal: 0,
@@ -79,6 +86,11 @@ const state = {
   lastSyncInfoText: "Letzter Sync: -",
   kpiAnimatedValues: {},
   kpiAnimationFrames: {},
+  /* Cross-device polling */
+  pollingEnabled: false,
+  pollingIntervalSec: 30,
+  pollingTimerId: 0,
+  pollingLastStamp: 0,
 };
 
 /* ── DOM References ── */
@@ -119,7 +131,10 @@ const els = {
   restoreConfirmBtn: document.getElementById("restoreConfirmBtn"),
   restoreProgress: document.getElementById("restoreProgress"),
   restoreResult: document.getElementById("restoreResult"),
-  returnsOnlyBtn: document.getElementById("returnsOnlyBtn"),
+  ordersFilterBtn: document.getElementById("ordersFilterBtn"),
+  ordersFilterDropdown: document.getElementById("ordersFilterDropdown"),
+  ordersFilterBadge: document.getElementById("ordersFilterBadge"),
+  ordersFilterClearBtn: document.getElementById("ordersFilterClearBtn"),
   syncLiveBtn: document.getElementById("syncLiveBtn"),
   syncSourcesBtn: document.getElementById("syncSourcesBtn"),
   sourcePanelToggleBtn: document.getElementById("sourcePanelToggleBtn"),
@@ -174,7 +189,9 @@ const els = {
   bookingsDocumentsPanel: document.getElementById("bookingsDocumentsPanel"),
 
   /* Booking class segmented control */
+  bookingClassBar: document.getElementById("bookingClassBar"),
   bookingClassControl: document.getElementById("bookingClassControl"),
+  bookingClassAllBtn: document.getElementById("bookingClassAllBtn"),
   bookingClassAutoBtn: document.getElementById("bookingClassAutoBtn"),
   bookingClassMonthlyBtn: document.getElementById("bookingClassMonthlyBtn"),
   bookingClassSingleBtn: document.getElementById("bookingClassSingleBtn"),
@@ -313,7 +330,12 @@ const els = {
   googleAdsReportFileLabel: document.getElementById("googleAdsReportFileLabel"),
   googleAdsAssignmentFileLabel: document.getElementById("googleAdsAssignmentFileLabel"),
   googleAdsUploadBtn: document.getElementById("googleAdsUploadBtn"),
+  googleAdsResetBtn: document.getElementById("googleAdsResetBtn"),
+  /* Polling settings */
+  pollingToggle: document.getElementById("pollingToggle"),
+  pollingIntervalInput: document.getElementById("pollingIntervalInput"),
   googleAdsImportMeta: document.getElementById("googleAdsImportMeta"),
+  googleAdsStatusInfo: document.getElementById("googleAdsStatusInfo"),
   googleAdsKpiCostTotal: document.getElementById("googleAdsKpiCostTotal"),
   googleAdsKpiCostSplit: document.getElementById("googleAdsKpiCostSplit"),
   googleAdsKpiRevenue: document.getElementById("googleAdsKpiRevenue"),
@@ -321,8 +343,17 @@ const els = {
   googleAdsKpiProfitBefore: document.getElementById("googleAdsKpiProfitBefore"),
   googleAdsKpiRoas: document.getElementById("googleAdsKpiRoas"),
   googleAdsKpiMissing: document.getElementById("googleAdsKpiMissing"),
+  googleAdsKpiCostPerOrder: document.getElementById("googleAdsKpiCostPerOrder"),
+  googleAdsKpiOrderCount: document.getElementById("googleAdsKpiOrderCount"),
+  googleAdsKpiAdsShare: document.getElementById("googleAdsKpiAdsShare"),
   googleAdsTrendSub: document.getElementById("googleAdsTrendSub"),
   googleAdsTrendChartCanvas: document.getElementById("googleAdsTrendChart"),
+  googleAdsProfitChartCanvas: document.getElementById("googleAdsProfitChart"),
+  googleAdsProfitChartSub: document.getElementById("googleAdsProfitChartSub"),
+  googleAdsRoasChartCanvas: document.getElementById("googleAdsRoasChart"),
+  googleAdsRoasChartSub: document.getElementById("googleAdsRoasChartSub"),
+  googleAdsCumulChartCanvas: document.getElementById("googleAdsCumulChart"),
+  googleAdsCumulSub: document.getElementById("googleAdsCumulSub"),
   googleAdsProductsMeta: document.getElementById("googleAdsProductsMeta"),
   googleAdsProductsBody: document.getElementById("googleAdsProductsBody"),
   googleAdsMissingMeta: document.getElementById("googleAdsMissingMeta"),
@@ -991,6 +1022,30 @@ function setChannelMenuOpen(isOpen) {
   els.channelMenuBtn.setAttribute("aria-expanded", open ? "true" : "false");
 }
 
+function setOrdersFilterOpen(isOpen) {
+  if (!(els.ordersFilterDropdown instanceof HTMLElement) || !(els.ordersFilterBtn instanceof HTMLElement)) {
+    return;
+  }
+  const open = Boolean(isOpen);
+  els.ordersFilterDropdown.setAttribute("aria-hidden", open ? "false" : "true");
+  els.ordersFilterBtn.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+function getActiveOrdersFilterCount() {
+  return state.filters.orderStatus.size + state.filters.orderPayment.size + (state.filters.returnsOnly ? 1 : 0);
+}
+
+function updateOrdersFilterBadge() {
+  if (!(els.ordersFilterBadge instanceof HTMLElement)) return;
+  const count = getActiveOrdersFilterCount();
+  if (count > 0) {
+    els.ordersFilterBadge.textContent = String(count);
+    els.ordersFilterBadge.hidden = false;
+  } else {
+    els.ordersFilterBadge.hidden = true;
+  }
+}
+
 function setSearchModalOpen(isOpen) {
   if (!(els.searchModal instanceof HTMLElement) || !(els.searchOpenBtn instanceof HTMLElement)) {
     return;
@@ -1123,9 +1178,6 @@ function buildQuery() {
   if (state.filters.marketplace) {
     params.set("marketplace", state.filters.marketplace);
   }
-  if (state.filters.returnsOnly) {
-    params.set("status", "returns");
-  }
   return params;
 }
 
@@ -1217,6 +1269,10 @@ function closeDetailsModal() {
   if (state.detailsMode === "booking-transaction") {
     saveBookingFromDetailsModal({ silent: true });
   }
+  /* Auto-save monthly invoice changes (fire-and-forget). */
+  if (state.detailsMode === "monthly-invoice") {
+    saveMonthlyInvoiceFromDetail({ silent: true });
+  }
 
   /* If we came from a transaction detail (via order drill-down), go back there */
   if (state.detailsMode === "order" && state.returnToTransactionId) {
@@ -1233,11 +1289,20 @@ function closeDetailsModal() {
     openMonthlyInvoiceDetail(invoiceId);
     return;
   }
+  /* If we came from an Order detail, go back there instead of closing */
+  if (state.detailsMode === "booking-transaction" && state.returnToOrderKey) {
+    const { marketplace, orderId } = state.returnToOrderKey;
+    state.returnToOrderKey = null;
+    state.bookingDetailsTransactionId = null;
+    openOrderDetailById(marketplace, orderId);
+    return;
+  }
   state.detailsMode = "";
   state.bookingDetailsTransactionId = null;
   state.monthlyInvoiceDetailId = null;
   state.returnToInvoiceId = null;
   state.returnToTransactionId = null;
+  state.returnToOrderKey = null;
   els.detailsModal.classList.remove("active");
   els.detailsModal.setAttribute("aria-hidden", "true");
 }
@@ -1291,11 +1356,13 @@ function openPreviewModal(url, filename, mimeType) {
   els.previewMeta.textContent = metaText;
 
   if (kind === "image") {
+    const imgUrl = safeUrl + (safeUrl.includes("?") ? "&" : "?") + "disposition=inline";
     els.previewBody.innerHTML = `
-      <img class="preview-image" src="${escapeHtml(safeUrl)}" alt="${escapeHtml(safeName)}">
+      <img class="preview-image" src="${escapeHtml(imgUrl)}" alt="${escapeHtml(safeName)}">
     `;
   } else if (kind === "pdf") {
-    const pdfUrl = safeUrl.includes("#") ? safeUrl : `${safeUrl}#toolbar=1&view=FitH`;
+    const inlineUrl = safeUrl + (safeUrl.includes("?") ? "&" : "?") + "disposition=inline";
+    const pdfUrl = `${inlineUrl}#toolbar=1&view=FitH`;
     els.previewBody.innerHTML = `
       <iframe class="preview-frame" src="${escapeHtml(pdfUrl)}" title="${escapeHtml(safeName)}"></iframe>
     `;

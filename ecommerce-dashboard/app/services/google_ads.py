@@ -255,7 +255,8 @@ def import_google_ads_data(
                     ),
                 ),
             )
-            connection.execute("DELETE FROM google_ads_daily_costs")
+            connection.execute("DELETE FROM google_ads_daily_costs WHERE day >= ? AND day <= ?",
+                               (parsed_report["report_from_day"], parsed_report["report_to_day"]))
             for row in parsed_report["rows"]:
                 connection.execute(
                     """
@@ -298,7 +299,6 @@ def import_google_ads_data(
                     json.dumps({"rows": parsed_assignment["count"]}, ensure_ascii=True),
                 ),
             )
-            connection.execute("DELETE FROM google_ads_product_assignments")
             for row in parsed_assignment["rows"]:
                 connection.execute(
                     """
@@ -330,6 +330,20 @@ def import_google_ads_data(
         connection.commit()
 
     return result
+
+
+def reset_google_ads_data() -> dict[str, Any]:
+    """Delete all Google Ads data (costs, assignments, import batches)."""
+    with connect_combined_db() as connection:
+        costs_deleted = connection.execute("DELETE FROM google_ads_daily_costs").rowcount
+        assignments_deleted = connection.execute("DELETE FROM google_ads_product_assignments").rowcount
+        batches_deleted = connection.execute("DELETE FROM google_ads_import_batches").rowcount
+        connection.commit()
+    return {
+        "costs_deleted": costs_deleted,
+        "assignments_deleted": assignments_deleted,
+        "batches_deleted": batches_deleted,
+    }
 
 
 def _load_import_status() -> dict[str, Any]:
@@ -418,6 +432,9 @@ def build_google_ads_analytics(
             "profit_before_ads_cents": 0,
         }
     )
+    daily_order_map: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"revenue_cents": 0, "profit_cents": 0, "order_count": 0}
+    )
     for order in orders:
         title_key = _normalize_title_key(order.get("article"))
         if not title_key:
@@ -432,6 +449,12 @@ def build_google_ads_analytics(
         bucket["after_fees_total_cents"] += after_fees
         bucket["purchase_total_cents"] += purchase
         bucket["profit_before_ads_cents"] += profit_before
+
+        order_day = str(order.get("order_date") or "")[:10].strip()
+        if order_day:
+            daily_order_map[order_day]["revenue_cents"] += revenue
+            daily_order_map[order_day]["profit_cents"] += profit_before
+            daily_order_map[order_day]["order_count"] += 1
 
     product_rows: dict[str, dict[str, Any]] = {}
     missing_assignments: dict[str, dict[str, Any]] = {}
@@ -540,11 +563,19 @@ def build_google_ads_analytics(
         ]
     missing_list.sort(key=lambda item: int(item.get("ads_cost_cents") or 0), reverse=True)
 
+    # Merge order days into trend_map so cumulative chart covers all days
+    for day in daily_order_map:
+        if day not in trend_map:
+            trend_map[day]  # triggers defaultdict creation
+
     trend_points = [
         {
             "day": day,
             "ads_cost_cents": values["ads_cost_cents"],
             "mapped_ads_cost_cents": values["mapped_ads_cost_cents"],
+            "revenue_cents": daily_order_map.get(day, {}).get("revenue_cents", 0),
+            "profit_cents": daily_order_map.get(day, {}).get("profit_cents", 0),
+            "order_count": daily_order_map.get(day, {}).get("order_count", 0),
         }
         for day, values in sorted(trend_map.items())
     ]
@@ -580,5 +611,111 @@ def build_google_ads_analytics(
         "imports": {
             "report": report_status,
             "assignment": assignment_status,
+        },
+    }
+
+
+def build_google_ads_product_detail(
+    *,
+    product_key: str,
+    from_date: Optional[str],
+    to_date: Optional[str],
+) -> dict[str, Any]:
+    """Return daily breakdown for a single product (ads cost + order metrics)."""
+    from_day = str(from_date or "").strip()[:10]
+    to_day = str(to_date or "").strip()[:10]
+    if from_day and to_day and from_day > to_day:
+        from_day, to_day = to_day, from_day
+
+    # ── Determine article_ids for this product_key ──
+    with connect_combined_db() as connection:
+        assignment_rows = connection.execute(
+            "SELECT article_id FROM google_ads_product_assignments WHERE product_key = ?",
+            (product_key,),
+        ).fetchall()
+        article_ids = [str(r["article_id"]) for r in assignment_rows]
+
+        # Unmapped products use "unmapped:<article_id>" as key
+        if not article_ids and product_key.startswith("unmapped:"):
+            article_ids = [product_key[len("unmapped:"):]]
+
+        # ── Daily ads cost grouped by day ──
+        ads_daily: dict[str, int] = {}
+        if article_ids:
+            placeholders = ",".join("?" * len(article_ids))
+            daily_rows = connection.execute(
+                f"""
+                SELECT day, SUM(cost_cents) AS cost_cents
+                FROM google_ads_daily_costs
+                WHERE article_id IN ({placeholders})
+                  AND (? = '' OR day >= ?)
+                  AND (? = '' OR day <= ?)
+                GROUP BY day
+                ORDER BY day
+                """,
+                (*article_ids, from_day, from_day, to_day, to_day),
+            ).fetchall()
+            for row in daily_rows:
+                ads_daily[str(row["day"])] = int(row["cost_cents"] or 0)
+
+    # ── Order metrics for this product_key ──
+    orders = list_all_orders_without_pagination(
+        from_date=from_date,
+        to_date=to_date,
+        marketplace="shopify",
+        query=None,
+    )
+
+    daily_order_map: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"revenue_cents": 0, "profit_cents": 0, "order_count": 0}
+    )
+    total_orders = 0
+    total_revenue = 0
+    total_profit = 0
+
+    for order in orders:
+        title_key = _normalize_title_key(order.get("article"))
+        if title_key != product_key:
+            continue
+        revenue = int(order.get("total_cents") or 0)
+        after_fees = int(order.get("after_fees_cents") or 0)
+        purchase = int(order.get("purchase_cost_cents") or 0)
+        profit = int(order.get("profit_cents") or (after_fees - purchase))
+        total_orders += 1
+        total_revenue += revenue
+        total_profit += profit
+
+        order_day = str(order.get("order_date") or "")[:10].strip()
+        if order_day:
+            daily_order_map[order_day]["revenue_cents"] += revenue
+            daily_order_map[order_day]["profit_cents"] += profit
+            daily_order_map[order_day]["order_count"] += 1
+
+    # ── Merge into unified timeline ──
+    all_days: set[str] = set(ads_daily.keys()) | set(daily_order_map.keys())
+    trend = [
+        {
+            "day": day,
+            "ads_cost_cents": ads_daily.get(day, 0),
+            "revenue_cents": daily_order_map.get(day, {}).get("revenue_cents", 0),
+            "profit_cents": daily_order_map.get(day, {}).get("profit_cents", 0),
+            "order_count": daily_order_map.get(day, {}).get("order_count", 0),
+        }
+        for day in sorted(all_days)
+    ]
+
+    total_ads = sum(ads_daily.values())
+    roas = round(total_revenue / total_ads, 4) if total_ads > 0 else 0.0
+
+    return {
+        "product_key": product_key,
+        "trend": trend,
+        "kpis": {
+            "ads_cost_total_cents": total_ads,
+            "orders_count": total_orders,
+            "revenue_total_cents": total_revenue,
+            "profit_before_ads_cents": total_profit,
+            "profit_after_ads_cents": total_profit - total_ads,
+            "roas": roas,
         },
     }

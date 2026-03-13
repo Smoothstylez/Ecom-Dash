@@ -5,10 +5,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Any, Optional
 
-from app.config import SOURCES_DIR
-
-
-EBAY_DB_PATH = SOURCES_DIR / "ebay" / "ebay_data.sqlite3"
+from app.config import EBAY_DB_PATH
 
 
 def _connect() -> Optional[sqlite3.Connection]:

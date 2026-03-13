@@ -2246,7 +2246,7 @@ def create_monthly_invoice(payload: Any) -> dict[str, Any]:
     if payload.get("document_id") is not None:
         document_id = _ensure_uuid(payload["document_id"], "document_id")
 
-    notes = _ensure_optional_string(payload, "notes", max_length=5000)
+    notes = _ensure_optional_string(payload, "notes", max_length=5000, nullable=True)
     if notes == "":
         notes = None
 

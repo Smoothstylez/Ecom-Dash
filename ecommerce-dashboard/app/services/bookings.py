@@ -111,6 +111,37 @@ def _resolve_document_path(raw_path: str) -> Optional[Path]:
     return fallback
 
 
+def migrate_bookkeeping_document_paths() -> int:
+    """Convert absolute file_path entries in the bookkeeping documents table
+    to portable relative paths.  Returns the number of rows updated."""
+    if not BOOKKEEPING_DB_PATH.exists():
+        return 0
+    roots = _bookkeeping_project_roots()
+    with _connect_bookkeeping_db() as connection:
+        rows = connection.execute("SELECT id, file_path FROM documents").fetchall()
+        updated = 0
+        for row in rows:
+            fp = str(row["file_path"] or "")
+            if not fp or not Path(fp).is_absolute():
+                continue
+            converted = False
+            for project_root in roots:
+                try:
+                    relative = Path(fp).resolve().relative_to(project_root).as_posix()
+                    connection.execute(
+                        "UPDATE documents SET file_path = ? WHERE id = ?",
+                        (relative, row["id"]),
+                    )
+                    updated += 1
+                    converted = True
+                    break
+                except (ValueError, OSError):
+                    continue
+        if updated:
+            connection.commit()
+    return updated
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -239,6 +270,19 @@ def _upsert_synced_document(
     if resolved is None:
         return None, "skipped"
 
+    # Store portable relative path when possible, not the resolved absolute.
+    raw = str(file_path or "").strip()
+    if Path(raw).is_absolute():
+        # Try to convert legacy absolute path to relative
+        for project_root in _bookkeeping_project_roots():
+            try:
+                portable = resolved.relative_to(project_root).as_posix()
+                raw = portable
+                break
+            except ValueError:
+                continue
+    portable_path = raw
+
     document_id = _stable_uuid(f"combined-document:{external_document_id}")
     existing = connection.execute(
         "SELECT id FROM documents WHERE id = ? LIMIT 1",
@@ -263,7 +307,7 @@ def _upsert_synced_document(
                 document_id,
                 safe_original,
                 safe_stored,
-                str(resolved),
+                portable_path,
                 safe_mime,
                 safe_uploaded_at,
                 notes,
@@ -286,7 +330,7 @@ def _upsert_synced_document(
         (
             safe_original,
             safe_stored,
-            str(resolved),
+            portable_path,
             safe_mime,
             safe_uploaded_at,
             notes,
@@ -664,9 +708,6 @@ def sync_google_ads_into_bookkeeping() -> dict[str, Any]:
 
     result["db_available"] = True
     result["days_total"] = len(daily_totals)
-
-    if not daily_totals:
-        return result
 
     # ── Step 2: Find existing google_ads source_keys to detect stale days ──
     with _connect_bookkeeping_db() as bk_conn:

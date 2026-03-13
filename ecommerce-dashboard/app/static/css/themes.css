@@ -907,6 +907,175 @@
   --th-kpi-orb: rgba(67, 24, 255, 0.15);
 }
 
+/* ═══════════════════════════════════════
+   THEME: Focus
+   Minimal white canvas, subtle gray chrome,
+   vivid data-colors for instant readability.
+   ═══════════════════════════════════════ */
+[data-theme="focus"] {
+  /* ── Page ── */
+  --th-page-bg: #f8f9fa;
+  --th-page-bg-mid: #f8f9fa;
+  --th-page-bg-end: #f5f6f7;
+  --th-page-glow-1: rgba(99, 102, 241, 0.04);
+  --th-page-glow-2: rgba(16, 185, 129, 0.03);
+
+  /* ── Surfaces — barely tinted, almost invisible separation ── */
+  --th-card-from: rgba(255, 255, 255, 0.98);
+  --th-card-to: rgba(255, 255, 255, 0.96);
+  --th-card-border: rgba(0, 0, 0, 0.07);
+  --th-panel: #ffffff;
+  --th-panel-border: #e5e7eb;
+  --th-surface: #ffffff;
+  --th-surface-alt: #fafbfc;
+  --th-surface-warm: #fafbfc;
+  --th-surface-deep: #f3f4f6;
+  --th-surface-white: #ffffff;
+  --th-overlay: rgba(255, 255, 255, 0.98);
+  --th-drawer-head: #fafbfc;
+  --th-thead: #f9fafb;
+
+  /* ── Text — main ink is near-black, secondary is mid-gray ── */
+  --th-ink: #111827;
+  --th-ink-2: #374151;
+  --th-ink-3: #6b7280;
+  --th-ink-4: #9ca3af;
+  --th-ink-5: #d1d5db;
+
+  /* ── Lines — very light, just enough structure ── */
+  --th-line: #e5e7eb;
+  --th-line-2: #d1d5db;
+  --th-line-3: #f3f4f6;
+
+  /* ── Accents — vivid and saturated for maximum pop ── */
+  --th-accent: #ef4444;
+  --th-accent-2: #0ea5e9;
+  --th-accent-3: #6366f1;
+
+  /* ── Semantic — strong, saturated colors ── */
+  --th-ok: #059669;
+  --th-warn: #dc2626;
+
+  /* ── Buttons ── */
+  --th-btn-primary-from: #4f46e5;
+  --th-btn-primary-to: #4338ca;
+  --th-btn-primary-border: #3730a3;
+  --th-btn-secondary-from: #0ea5e9;
+  --th-btn-secondary-to: #0284c7;
+  --th-btn-secondary-border: #0369a1;
+  --th-btn-neutral-from: #6b7280;
+  --th-btn-neutral-to: #4b5563;
+  --th-btn-neutral-border: #374151;
+  --th-btn-danger-from: #ef4444;
+  --th-btn-danger-to: #dc2626;
+  --th-btn-danger-border: #b91c1c;
+  --th-btn-soft-bg: #ffffff;
+  --th-btn-soft-bg-end: #f9fafb;
+  --th-btn-soft-border: #e5e7eb;
+  --th-btn-soft-text: #374151;
+  --th-btn-text: #fff;
+
+  /* ── Interactive ── */
+  --th-hover-bg: rgba(99, 102, 241, 0.04);
+  --th-hover-border: rgba(99, 102, 241, 0.12);
+  --th-active-bg: rgba(99, 102, 241, 0.07);
+  --th-active-border: rgba(99, 102, 241, 0.28);
+  --th-active-text: #4338ca;
+  --th-focus-ring: rgba(99, 102, 241, 0.22);
+  --th-focus-border: #a5b4fc;
+  --th-range-bg: rgba(99, 102, 241, 0.05);
+  --th-range-border: rgba(99, 102, 241, 0.18);
+  --th-range-edge: #4338ca;
+
+  /* ── Shadows — extremely subtle ── */
+  --th-shadow-rgb: 0, 0, 0;
+  --th-shadow: 0 1px 3px rgba(0, 0, 0, 0.04), 0 4px 12px rgba(0, 0, 0, 0.03);
+
+  /* ── Status — vivid backgrounds with strong text ── */
+  --th-info-bg: #eff6ff;
+  --th-info-border: #bfdbfe;
+  --th-info-text: #1d4ed8;
+  --th-ok-bg: #ecfdf5;
+  --th-ok-border: #a7f3d0;
+  --th-ok-text: #047857;
+  --th-error-bg: #fef2f2;
+  --th-error-border: #fecaca;
+  --th-error-text: #b91c1c;
+
+  /* ── Badges — light tinted backgrounds, vivid text ── */
+  --th-badge-sale-bg: #ecfdf5;
+  --th-badge-sale-border: #a7f3d0;
+  --th-badge-sale-text: #047857;
+  --th-badge-fee-bg: #fffbeb;
+  --th-badge-fee-border: #fcd34d;
+  --th-badge-fee-text: #b45309;
+  --th-badge-cogs-bg: #f5f3ff;
+  --th-badge-cogs-border: #c4b5fd;
+  --th-badge-cogs-text: #6d28d9;
+  --th-badge-invoice-bg: #eff6ff;
+  --th-badge-invoice-border: #93c5fd;
+  --th-badge-invoice-text: #1d4ed8;
+  --th-badge-refund-bg: #fef2f2;
+  --th-badge-refund-border: #fca5a5;
+  --th-badge-refund-text: #b91c1c;
+  --th-badge-subscription-bg: #ecfeff;
+  --th-badge-subscription-border: #67e8f9;
+  --th-badge-subscription-text: #0e7490;
+  --th-badge-default-bg: #f9fafb;
+  --th-badge-default-border: #e5e7eb;
+  --th-badge-default-text: #4b5563;
+
+  /* ── Row accents — saturated for left-border pops ── */
+  --th-row-sale: #059669;
+  --th-row-fee: #d97706;
+  --th-row-cogs: #7c3aed;
+  --th-row-invoice: #2563eb;
+  --th-row-refund: #dc2626;
+  --th-row-subscription: #0891b2;
+  --th-row-other: #6b7280;
+
+  /* ── Charts — strong, vivid series ── */
+  --th-chart-1: #6366f1;
+  --th-chart-1-fill: rgba(99, 102, 241, 0.08);
+  --th-chart-2: #0ea5e9;
+  --th-chart-2-fill: rgba(14, 165, 233, 0.08);
+  --th-chart-grid: rgba(0, 0, 0, 0.06);
+  --th-chart-label: #9ca3af;
+  --th-donut-shopify: #10b981;
+  --th-donut-kaufland: #ef4444;
+  --th-donut-fees: #f59e0b;
+  --th-donut-purchase: #ec4899;
+  --th-donut-profit: #059669;
+
+  /* ── Globe ── */
+  --th-globe-bg: #f3f4f6;
+  --th-globe-atmosphere: #a5b4fc;
+  --th-globe-surface: #d1d5db;
+  --th-globe-emissive: #6b7280;
+  --th-globe-hex-land: rgba(99, 102, 241, 0.25);
+  --th-globe-hex-top-r: 99;
+  --th-globe-hex-top-g: 102;
+  --th-globe-hex-top-b: 241;
+  --th-globe-hex-side-r: 79;
+  --th-globe-hex-side-g: 70;
+  --th-globe-hex-side-b: 229;
+
+  /* ── Modal ── */
+  --th-modal-backdrop: rgba(17, 24, 39, 0.35);
+  --th-modal-border: #e5e7eb;
+
+  /* ── Misc ── */
+  --th-radius: 16px;
+  --th-geo-stage: #f3f4f6;
+  --th-loading-bar: #f3f4f6;
+  --th-loading-accent-rgb: 99, 102, 241;
+  --th-link: #4f46e5;
+  --th-link-hover: #4338ca;
+  --th-select-arrow: #6b7280;
+  --th-today-border: #a5b4fc;
+  --th-kpi-orb: rgba(99, 102, 241, 0.08);
+}
+
 /* ── Vision glassmorphism overrides ── */
 [data-theme="vision"] .card {
   backdrop-filter: blur(16px);

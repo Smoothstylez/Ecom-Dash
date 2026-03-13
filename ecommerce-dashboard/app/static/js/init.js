@@ -840,11 +840,53 @@ function bindEvents() {
     });
   }
 
-  if (els.returnsOnlyBtn) {
-    els.returnsOnlyBtn.addEventListener("click", () => {
-      state.filters.returnsOnly = !state.filters.returnsOnly;
-      els.returnsOnlyBtn.classList.toggle("active", state.filters.returnsOnly);
-      refreshFilterData();
+  if (els.ordersFilterBtn) {
+    els.ordersFilterBtn.addEventListener("click", () => {
+      const open = els.ordersFilterDropdown instanceof HTMLElement &&
+        els.ordersFilterDropdown.getAttribute("aria-hidden") === "false";
+      setOrdersFilterOpen(!open);
+    });
+  }
+
+  if (els.ordersFilterDropdown) {
+    els.ordersFilterDropdown.addEventListener("click", (e) => {
+      const chip = e.target.closest(".ofd-chip[data-filter-group]");
+      if (!chip) return;
+      const group = chip.getAttribute("data-filter-group");
+      const value = chip.getAttribute("data-value");
+      if (group === "status") {
+        if (state.filters.orderStatus.has(value)) {
+          state.filters.orderStatus.delete(value);
+        } else {
+          state.filters.orderStatus.add(value);
+        }
+        chip.classList.toggle("active", state.filters.orderStatus.has(value));
+      } else if (group === "payment") {
+        if (state.filters.orderPayment.has(value)) {
+          state.filters.orderPayment.delete(value);
+        } else {
+          state.filters.orderPayment.add(value);
+        }
+        chip.classList.toggle("active", state.filters.orderPayment.has(value));
+      } else if (group === "returns") {
+        state.filters.returnsOnly = !state.filters.returnsOnly;
+        chip.classList.toggle("active", state.filters.returnsOnly);
+      }
+      updateOrdersFilterBadge();
+      renderOrders();
+    });
+  }
+
+  if (els.ordersFilterClearBtn) {
+    els.ordersFilterClearBtn.addEventListener("click", () => {
+      state.filters.orderStatus.clear();
+      state.filters.orderPayment.clear();
+      state.filters.returnsOnly = false;
+      if (els.ordersFilterDropdown) {
+        els.ordersFilterDropdown.querySelectorAll(".ofd-chip.active").forEach((c) => c.classList.remove("active"));
+      }
+      updateOrdersFilterBadge();
+      renderOrders();
     });
   }
 
@@ -914,14 +956,39 @@ function bindEvents() {
     });
   });
 
+  /* ── Custom Theme Editor ── */
+  const customThemeCard = document.getElementById("customThemeCard");
+  if (customThemeCard) customThemeCard.addEventListener("click", openCustomThemeEditor);
+
+  const cteBackBtn = document.getElementById("cteBackBtn");
+  if (cteBackBtn) cteBackBtn.addEventListener("click", () => closeCustomThemeEditor(false));
+
+  const cteSaveBtn = document.getElementById("cteSaveBtn");
+  if (cteSaveBtn) cteSaveBtn.addEventListener("click", () => closeCustomThemeEditor(true));
+
+  const cteResetBtn = document.getElementById("cteResetBtn");
+  if (cteResetBtn) cteResetBtn.addEventListener("click", () => {
+    const sel = document.getElementById("cteBaseSelect");
+    cteSwitchBase(sel ? sel.value : "");
+  });
+
+  const cteBaseSelect = document.getElementById("cteBaseSelect");
+  if (cteBaseSelect) cteBaseSelect.addEventListener("change", (e) => cteSwitchBase(e.target.value));
+
+  const cteBody = document.getElementById("cteBody");
+  if (cteBody) cteBody.addEventListener("input", cteHandleInput);
+
   // Apply stored theme and mark active card on load
   {
     const stored = getStoredTheme();
     applyTheme(stored);
+    const customData = getStoredCustomTheme();
+    if (customData) updateCustomPreviewThumbnail(customData);
   }
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (_cteOpen) { closeCustomThemeEditor(false); return; }
       setSourcePanelOpen(false);
       setDateRangeMenuOpen(false);
       setExportMenuOpen(false);
@@ -952,6 +1019,11 @@ function bindEvents() {
         setSammelMonthMenuOpen(false);
       }
     }
+    if (els.ordersFilterBtn instanceof HTMLElement && els.ordersFilterDropdown instanceof HTMLElement) {
+      if (!els.ordersFilterBtn.contains(target) && !els.ordersFilterDropdown.contains(target)) {
+        setOrdersFilterOpen(false);
+      }
+    }
   });
 
   els.tabAnalyticsBtn.addEventListener("click", () => setActiveTab("analytics"));
@@ -966,10 +1038,10 @@ function bindEvents() {
   els.bookingsAccountsBtn.addEventListener("click", () => setBookingsSubtab("accounts"));
   els.bookingsDocumentsBtn.addEventListener("click", () => setBookingsSubtab("documents"));
 
-  /* Booking class segmented control */
+  /* Booking class subtab bar */
   if (els.bookingClassControl) {
     els.bookingClassControl.addEventListener("click", (e) => {
-      const btn = e.target.closest(".segmented-btn[data-booking-class]");
+      const btn = e.target.closest("[data-booking-class]");
       if (!btn) return;
       const cls = btn.getAttribute("data-booking-class") || "automatic";
       setBookingClass(cls);
@@ -1080,6 +1152,38 @@ function bindEvents() {
       uploadGoogleAdsCsv();
     });
   }
+  if (els.googleAdsResetBtn) {
+    els.googleAdsResetBtn.addEventListener("click", () => {
+      resetGoogleAdsData();
+    });
+  }
+
+  /* ── Polling settings ── */
+  if (els.pollingToggle instanceof HTMLInputElement) {
+    els.pollingToggle.addEventListener("change", () => {
+      const enabled = els.pollingToggle.checked;
+      state.pollingEnabled = enabled;
+      savePollingSettings();
+      if (enabled) {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    });
+  }
+  if (els.pollingIntervalInput instanceof HTMLInputElement) {
+    els.pollingIntervalInput.addEventListener("change", () => {
+      const val = parseInt(els.pollingIntervalInput.value, 10);
+      if (val >= 5 && val <= 3600) {
+        state.pollingIntervalSec = val;
+        savePollingSettings();
+        if (state.pollingEnabled) {
+          stopPolling();
+          startPolling();
+        }
+      }
+    });
+  }
   if (els.googleAdsReportInput instanceof HTMLInputElement) {
     els.googleAdsReportInput.addEventListener("change", () => {
       syncGoogleAdsFileLabels();
@@ -1186,22 +1290,22 @@ function bindEvents() {
       openPreviewModal(target.dataset.url, target.dataset.filename, target.dataset.mime);
       return;
     }
-    if (action !== "save-booking") {
-      const interactive = target.closest("input, select, button, a, label, textarea");
-      if (interactive) {
-        return;
-      }
-      const detailsRow = target.closest("tr[data-booking-id]");
-      if (detailsRow instanceof HTMLElement) {
-        openBookingTransactionDetailsById(detailsRow.dataset.bookingId);
-      }
+    const interactive = target.closest("input, select, button, a, label, textarea");
+    if (interactive) {
       return;
     }
+    const detailsRow = target.closest("tr[data-booking-id]");
+    if (detailsRow instanceof HTMLElement) {
+      openBookingTransactionDetailsById(detailsRow.dataset.bookingId);
+    }
+  });
+
+  /* Auto-save bookings on change */
+  els.bookingsBody.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
     const row = target.closest("tr[data-booking-id]");
-    if (!(row instanceof HTMLElement)) {
-      return;
-    }
-    saveBooking(row);
+    if (row instanceof HTMLElement) saveBooking(row);
   });
 
   els.bookingOrdersBody.addEventListener("click", (event) => {
@@ -1233,10 +1337,6 @@ function bindEvents() {
     if (!(row instanceof HTMLElement)) {
       return;
     }
-    if (action === "save-template") {
-      saveBookingTemplate(row);
-      return;
-    }
     if (action === "generate-template") {
       runBookingTemplate(row);
       return;
@@ -1246,19 +1346,20 @@ function bindEvents() {
     }
   });
 
-  els.bookingAccountsBody.addEventListener("click", (event) => {
+  /* Auto-save templates on change */
+  els.bookingTemplatesBody.addEventListener("change", (event) => {
     const target = event.target;
-    if (!(target instanceof HTMLElement)) {
-      return;
-    }
-    if (target.dataset.action !== "save-account") {
-      return;
-    }
+    if (!(target instanceof HTMLElement)) return;
+    const row = target.closest("tr[data-template-id]");
+    if (row instanceof HTMLElement) saveBookingTemplate(row);
+  });
+
+  /* Auto-save accounts on change */
+  els.bookingAccountsBody.addEventListener("change", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
     const row = target.closest("tr[data-account-id]");
-    if (!(row instanceof HTMLElement)) {
-      return;
-    }
-    saveBookingAccount(row);
+    if (row instanceof HTMLElement) saveBookingAccount(row);
   });
 
   els.bookingDocumentsBody.addEventListener("click", (event) => {
@@ -1293,6 +1394,14 @@ function bindEvents() {
       deleteBookingFromDetailsModal();
       return;
     }
+    if (action === "save-invoice-modal") {
+      saveMonthlyInvoiceFromDetail();
+      return;
+    }
+    if (action === "delete-invoice-modal") {
+      deleteMonthlyInvoiceFromDetail();
+      return;
+    }
     if (action === "open-order") {
       const provider = (target.dataset.provider || "").trim().toLowerCase();
       const externalOrderId = (target.dataset.externalOrderId || "").trim();
@@ -1307,8 +1416,23 @@ function bindEvents() {
         return;
       }
       state.returnToTransactionId = state.bookingDetailsTransactionId || null;
+      state.returnToOrderKey = null;
       openOrderDetailById(match.marketplace, match.order_id);
       return;
+    }
+    /* Click on a transaction row inside Order detail → open transaction detail */
+    if (state.detailsMode === "order") {
+      const interactive = target.closest("input, select, button, a, label, textarea");
+      if (interactive) return;
+      const txRow = target.closest("tr[data-tx-id]");
+      if (txRow instanceof HTMLElement && txRow.dataset.txId) {
+        state.returnToOrderKey = {
+          marketplace: state.orderDetailMarketplace || "",
+          orderId: state.orderDetailOrderId || "",
+        };
+        openBookingTransactionDetailsById(txRow.dataset.txId);
+        return;
+      }
     }
     /* Click on a transaction row inside Sammelrechnung detail → open transaction detail */
     if (state.detailsMode === "monthly-invoice") {
@@ -1364,6 +1488,73 @@ function bindEvents() {
   });
 }
 
+/* ── Cross-Device Polling ── */
+
+const POLLING_STORAGE_KEY = "dash-combined.polling";
+
+function loadPollingSettings() {
+  try {
+    const raw = localStorage.getItem(POLLING_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      state.pollingEnabled = !!parsed.enabled;
+      const iv = parseInt(parsed.intervalSec, 10);
+      if (iv >= 5 && iv <= 3600) {
+        state.pollingIntervalSec = iv;
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+function savePollingSettings() {
+  try {
+    localStorage.setItem(POLLING_STORAGE_KEY, JSON.stringify({
+      enabled: state.pollingEnabled,
+      intervalSec: state.pollingIntervalSec,
+    }));
+  } catch { /* ignore */ }
+}
+
+function applyPollingSettingsToUi() {
+  if (els.pollingToggle instanceof HTMLInputElement) {
+    els.pollingToggle.checked = state.pollingEnabled;
+  }
+  if (els.pollingIntervalInput instanceof HTMLInputElement) {
+    els.pollingIntervalInput.value = String(state.pollingIntervalSec);
+  }
+}
+
+async function pollChangestamp() {
+  try {
+    const data = await fetchJson(`${API_BASE}/sync/changestamp`);
+    const stamp = data && typeof data.stamp === "number" ? data.stamp : 0;
+    if (state.pollingLastStamp === 0) {
+      /* First poll — just store the stamp, no refresh needed */
+      state.pollingLastStamp = stamp;
+      return;
+    }
+    if (stamp !== state.pollingLastStamp) {
+      state.pollingLastStamp = stamp;
+      await refreshFilterData();
+    }
+  } catch { /* ignore network errors during polling */ }
+}
+
+function startPolling() {
+  stopPolling();
+  if (!state.pollingEnabled || state.pollingIntervalSec < 5) return;
+  state.pollingTimerId = window.setInterval(() => {
+    pollChangestamp();
+  }, state.pollingIntervalSec * 1000);
+}
+
+function stopPolling() {
+  if (state.pollingTimerId) {
+    window.clearInterval(state.pollingTimerId);
+    state.pollingTimerId = 0;
+  }
+}
+
 async function boot() {
   bindEvents();
   initAllCustomSelects();
@@ -1391,7 +1582,12 @@ async function boot() {
   initSammelrechnungDefaults();
   initSammelPreviewListeners();
   applyInitialViewFromUrl();
+  loadPollingSettings();
+  applyPollingSettingsToUi();
   await refreshAll();
+  if (state.pollingEnabled) {
+    startPolling();
+  }
 }
 
 /* Close custom selects on outside click */

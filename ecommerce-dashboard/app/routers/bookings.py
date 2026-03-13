@@ -8,6 +8,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.config import BOOKKEEPING_DB_PATH
+from app.db import clear_purchase_enrichment
 from app.services.bookings import (
     fetch_bookkeeping_document,
     get_order_bookkeeping_breakdown,
@@ -185,6 +186,21 @@ def api_get_bookkeeping_transaction(transaction_id: str) -> dict[str, Any]:
 def api_delete_bookkeeping_transaction(transaction_id: str) -> dict[str, Any]:
     try:
         deleted = delete_bookkeeping_transaction(transaction_id)
+
+        # Cascade: if this was an auto-synced COGS transaction, clear the
+        # order enrichment so the purchase price disappears from the order
+        # and the next sync won't re-create the transaction.
+        source_key = str(deleted.get("source_key") or "")
+        if source_key.startswith("combined:") and source_key.endswith(":cogs"):
+            # source_key format: "combined:{marketplace}:{external_order_id}:cogs"
+            parts = source_key.split(":")
+            if len(parts) == 4:
+                marketplace, external_order_id = parts[1], parts[2]
+                clear_purchase_enrichment(
+                    marketplace=marketplace,
+                    order_id=external_order_id,
+                )
+
         return {"ok": True, "deleted": deleted}
     except BookkeepingServiceError as exc:
         _raise_service_error(exc)
@@ -334,7 +350,10 @@ def api_booking_order_detail(marketplace: str, external_order_id: str) -> dict[s
 
 
 @router.get("/documents/{document_id}/download")
-def api_download_booking_document(document_id: str) -> FileResponse:
+def api_download_booking_document(
+    document_id: str,
+    disposition: Optional[str] = Query(default="attachment"),
+) -> FileResponse:
     row = fetch_bookkeeping_document(document_id)
     if row is None:
         raise HTTPException(status_code=404, detail="document not found")
@@ -346,10 +365,14 @@ def api_download_booking_document(document_id: str) -> FileResponse:
     original = str(row.get("original_filename") or row.get("stored_filename") or path.name)
     download_name = _sanitize_download_name(original)
 
+    requested = str(disposition or "attachment").strip().lower()
+    content_disposition_type = "inline" if requested in {"inline", "preview"} else "attachment"
+
     return FileResponse(
         path=path,
         media_type=str(row.get("mime_type") or "application/octet-stream"),
         filename=download_name,
+        content_disposition_type=content_disposition_type,
     )
 
 

@@ -15,13 +15,16 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from app.config import (
     ALLOWED_MARKETPLACES,
+    APP_VERSION,
     BOOKKEEPING_DB_PATH,
     BOOKKEEPING_DOCUMENTS_DIR,
     COMBINED_DB_PATH,
     DATA_DIR,
+    EBAY_DB_PATH,
     INVOICES_DIR,
     KAUFLAND_DB_PATH,
     PROJECT_ROOT,
+    SCHEMA_VERSION,
     SHOPIFY_DB_PATH,
     STORAGE_DIR,
 )
@@ -201,6 +204,7 @@ def create_full_backup_archive() -> ExportArchive:
         ("shopify", SHOPIFY_DB_PATH),
         ("kaufland", KAUFLAND_DB_PATH),
         ("bookkeeping", BOOKKEEPING_DB_PATH),
+        ("ebay", EBAY_DB_PATH),
     ]
 
     db_manifest: list[dict[str, Any]] = []
@@ -226,6 +230,8 @@ def create_full_backup_archive() -> ExportArchive:
         manifest = {
             "kind": "full_backup",
             "generated_at": _iso_utc(timestamp),
+            "app_version": APP_VERSION,
+            "schema_version": SCHEMA_VERSION,
             "databases": db_manifest,
             "documents": {
                 "invoice_files": invoices_count,
@@ -663,6 +669,7 @@ _DB_RESTORE_MAP: dict[str, Path] = {
     "shopify": SHOPIFY_DB_PATH,
     "kaufland": KAUFLAND_DB_PATH,
     "bookkeeping": BOOKKEEPING_DB_PATH,
+    "ebay": EBAY_DB_PATH,
 }
 
 # Map archive storage prefixes to their runtime directories.
@@ -873,6 +880,21 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
                 summary={"error": str(exc), "timestamp": _iso_utc(timestamp)},
             )
 
+        # Check schema version compatibility
+        backup_schema = manifest.get("schema_version")
+        backup_app_version = manifest.get("app_version", "unknown")
+        if backup_schema is not None and backup_schema != SCHEMA_VERSION:
+            LOGGER.warning(
+                "Restore: schema version mismatch — backup has schema_version=%s (app %s), "
+                "current app has schema_version=%s (app %s). Proceeding with restore anyway.",
+                backup_schema, backup_app_version, SCHEMA_VERSION, APP_VERSION,
+            )
+        elif backup_schema is None:
+            LOGGER.warning(
+                "Restore: backup manifest has no schema_version field (pre-versioning backup). "
+                "Proceeding with restore anyway.",
+            )
+
         # ── 2. Stop live sync ──
         from app.services.live_sync import start_live_sync_background_worker, stop_live_sync_background_worker
 
@@ -923,6 +945,10 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
         summary = {
             "timestamp": _iso_utc(timestamp),
             "backup_generated_at": manifest.get("generated_at", "unknown"),
+            "backup_app_version": manifest.get("app_version", "unknown"),
+            "backup_schema_version": manifest.get("schema_version"),
+            "current_app_version": APP_VERSION,
+            "current_schema_version": SCHEMA_VERSION,
             "safety_backup_path": str(safety_path),
             "databases": db_results,
             "databases_restored": db_restored_count,

@@ -5,6 +5,7 @@ from typing import Any, Optional
 from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
+from app import changestamp
 from app.services.bookings import sync_combined_orders_into_bookkeeping
 from app.services.live_sync import (
     build_live_sync_background_status,
@@ -44,6 +45,12 @@ class LiveSyncRunRequest(BaseModel):
 
 class LiveSyncTriggerRequest(BaseModel):
     reason: Optional[str] = Field(default="api")
+
+
+@router.get("/changestamp")
+def api_sync_changestamp() -> dict[str, Any]:
+    """Return the current changestamp for cross-device polling."""
+    return {"stamp": changestamp.get()}
 
 
 @router.get("/status")
