@@ -1,7 +1,7 @@
 "use strict";
 
 /* ── Constants ── */
-const API_BASE = "/api";
+const API_BASE = "api";
 const DATE_FMT = new Intl.DateTimeFormat("de-DE");
 const MONEY_FMT = new Intl.NumberFormat("de-DE", { style: "currency", currency: "EUR" });
 const NUMBER_FMT = new Intl.NumberFormat("de-DE");

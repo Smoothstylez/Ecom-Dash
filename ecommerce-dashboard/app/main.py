@@ -147,7 +147,7 @@ def dashboard_alias() -> FileResponse:
 
 @app.get("/bookings/module", include_in_schema=False)
 def deprecated_bookings_module() -> RedirectResponse:
-    return RedirectResponse(url="/bookings/full?subtab=transactions", status_code=307)
+    return RedirectResponse(url="bookings/full?subtab=transactions", status_code=307)
 
 
 @app.get("/api/health")
