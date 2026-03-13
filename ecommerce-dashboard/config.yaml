@@ -2,7 +2,7 @@ name: "E-Commerce Dashboard"
 description: "Combined e-commerce analytics dashboard (Shopify, Kaufland, eBay) with bookkeeping"
 slug: ecommerce-dashboard
 url: "https://github.com/Smoothstylez/Ecom-Dash"
-version: "0.3.1"
+version: "0.3.2"
 
 arch:
   - amd64
