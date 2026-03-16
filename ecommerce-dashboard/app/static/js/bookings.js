@@ -1328,6 +1328,11 @@ function setBookingsSubtab(tab) {
   els.bookingsAccountsBtn.classList.toggle("active", accountsActive);
   els.bookingsDocumentsBtn.classList.toggle("active", documentsActive);
 
+  /* Show booking class subnav only for Transaktionen */
+  if (els.bookingClassSubnav) {
+    els.bookingClassSubnav.classList.toggle("visible", transactionsActive);
+  }
+
   els.bookingsTransactionsPanel.classList.toggle("active", transactionsActive);
   els.bookingsOrdersPanel.classList.toggle("active", ordersActive);
   els.bookingsTemplatesPanel.classList.toggle("active", templatesActive);

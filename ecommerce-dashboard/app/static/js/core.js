@@ -157,6 +157,8 @@ const els = {
   ordersPanel: document.getElementById("ordersPanel"),
   customersPanel: document.getElementById("customersPanel"),
   bookingsPanel: document.getElementById("bookingsPanel"),
+  bookingsSubnav: document.getElementById("bookingsSubnav"),
+  bookingClassSubnav: document.getElementById("bookingClassSubnav"),
   googleAdsPanel: document.getElementById("googleAdsPanel"),
   ebayPanel: document.getElementById("ebayPanel"),
   ebayKpiOrders: document.getElementById("ebayKpiOrders"),

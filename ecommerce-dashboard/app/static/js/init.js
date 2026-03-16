@@ -87,6 +87,8 @@ function setActiveTab(tab) {
   els.tabGoogleAdsBtn.classList.toggle("active", googleAdsActive);
   els.tabEbayBtn.classList.toggle("active", ebayActive);
 
+  els.bookingsSubnav.classList.toggle("visible", bookingsActive);
+
   els.analyticsPanel.classList.toggle("active", analyticsActive);
   els.ordersPanel.classList.toggle("active", ordersActive);
   els.customersPanel.classList.toggle("active", customersActive);
@@ -1038,7 +1040,7 @@ function bindEvents() {
   els.bookingsAccountsBtn.addEventListener("click", () => setBookingsSubtab("accounts"));
   els.bookingsDocumentsBtn.addEventListener("click", () => setBookingsSubtab("documents"));
 
-  /* Booking class subtab bar */
+  /* Booking class subtab bar - old horizontal bar */
   if (els.bookingClassControl) {
     els.bookingClassControl.addEventListener("click", (e) => {
       const btn = e.target.closest("[data-booking-class]");
@@ -1047,6 +1049,20 @@ function bindEvents() {
       setBookingClass(cls);
       refreshBookingsTransactionsOnly(false);
       /* Also load monthly invoices when switching to monthly */
+      if (cls === "monthly") {
+        loadMonthlyInvoices().then(() => renderMonthlyInvoices()).catch(() => {});
+      }
+    });
+  }
+
+  /* Booking class subnav in sidebar */
+  if (els.bookingClassSubnav) {
+    els.bookingClassSubnav.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-booking-class]");
+      if (!btn) return;
+      const cls = btn.getAttribute("data-booking-class") || "automatic";
+      setBookingClass(cls);
+      refreshBookingsTransactionsOnly(false);
       if (cls === "monthly") {
         loadMonthlyInvoices().then(() => renderMonthlyInvoices()).catch(() => {});
       }

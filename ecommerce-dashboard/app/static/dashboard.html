@@ -31,90 +31,113 @@
     </div>
 
     <section class="controls-card">
-      <div class="controls-grid">
-        <div class="control control-icon">
-          <label for="searchOpenBtn">Suche</label>
-          <button id="searchOpenBtn" class="search-launch-btn" type="button" aria-expanded="false" aria-controls="searchModal" aria-label="Suche oeffnen">
-            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-              <circle cx="9" cy="9" r="5.5"></circle>
-              <path d="M13 13l4.2 4.2"></path>
-            </svg>
-          </button>
+      <!-- Controls moved to sidebar - this section is hidden -->
+    </section>
+
+    <!-- Dropdown menus moved outside hidden controls-card -->
+    <div id="dateRangeMenu" class="control-menu date-range-menu" aria-hidden="true">
+      <div class="date-menu-layout">
+        <div class="date-menu-presets">
+          <button class="menu-item" data-preset="today" type="button">Heute</button>
+          <button class="menu-item" data-preset="yesterday" type="button">Gestern</button>
+          <button class="menu-item" data-preset="last_7_days" type="button">Letzte 7 Tage</button>
+          <button class="menu-item active" data-preset="last_30_days" type="button">Letzte 30 Tage</button>
+          <button class="menu-item" data-preset="last_90_days" type="button">Letzte 90 Tage</button>
+          <button class="menu-item" data-preset="this_month" type="button">Dieser Monat</button>
+          <button class="menu-item" data-preset="last_month" type="button">Letzter Monat</button>
+          <button class="menu-item" data-preset="this_year" type="button">Dieses Jahr</button>
+          <button class="menu-item" data-preset="all_time" type="button">Alle Zeit</button>
         </div>
-        <div class="control control-menu-wrap">
-          <label for="dateRangeBtn">Zeitraum</label>
-          <button id="dateRangeBtn" class="control-menu-trigger" type="button" aria-expanded="false" aria-controls="dateRangeMenu">Letzte 30 Tage</button>
-          <div id="dateRangeMenu" class="control-menu date-range-menu" aria-hidden="true">
-            <div class="date-menu-layout">
-              <div class="date-menu-presets">
-                <button class="menu-item" data-preset="today" type="button">Heute</button>
-                <button class="menu-item" data-preset="yesterday" type="button">Gestern</button>
-                <button class="menu-item" data-preset="last_7_days" type="button">Letzte 7 Tage</button>
-                <button class="menu-item active" data-preset="last_30_days" type="button">Letzte 30 Tage</button>
-                <button class="menu-item" data-preset="last_90_days" type="button">Letzte 90 Tage</button>
-                <button class="menu-item" data-preset="this_month" type="button">Dieser Monat</button>
-                <button class="menu-item" data-preset="last_month" type="button">Letzter Monat</button>
-                <button class="menu-item" data-preset="this_year" type="button">Dieses Jahr</button>
-                <button class="menu-item" data-preset="all_time" type="button">Alle Zeit</button>
+        <div class="date-menu-custom">
+          <div class="date-menu-custom-title">Exakter Zeitraum</div>
+          <div class="date-menu-custom-hint" id="dateRangePreviewText">-</div>
+          <div class="date-menu-nav">
+            <button id="dateMonthPrevBtn" class="menu-item" type="button">&larr;</button>
+            <button id="dateMonthNextBtn" class="menu-item" type="button">&rarr;</button>
+          </div>
+          <div class="date-calendars">
+            <div class="date-calendar-pane">
+              <div id="dateMonthLabelA" class="date-month-label">-</div>
+              <div class="date-weekdays">
+                <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
               </div>
-              <div class="date-menu-custom">
-                <div class="date-menu-custom-title">Exakter Zeitraum</div>
-                <div class="date-menu-custom-hint" id="dateRangePreviewText">-</div>
-                <div class="date-menu-nav">
-                  <button id="dateMonthPrevBtn" class="menu-item" type="button">&larr;</button>
-                  <button id="dateMonthNextBtn" class="menu-item" type="button">&rarr;</button>
-                </div>
-                <div class="date-calendars">
-                  <div class="date-calendar-pane">
-                    <div id="dateMonthLabelA" class="date-month-label">-</div>
-                    <div class="date-weekdays">
-                      <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
-                    </div>
-                    <div id="dateCalendarA" class="date-days-grid"></div>
-                  </div>
-                  <div class="date-calendar-pane">
-                    <div id="dateMonthLabelB" class="date-month-label">-</div>
-                    <div class="date-weekdays">
-                      <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
-                    </div>
-                    <div id="dateCalendarB" class="date-days-grid"></div>
-                  </div>
-                </div>
-                <button id="dateCustomApplyBtn" class="btn-inline" type="button" style="grid-column: 1 / -1;">Zeitraum anwenden</button>
+              <div id="dateCalendarA" class="date-days-grid"></div>
+            </div>
+            <div class="date-calendar-pane">
+              <div id="dateMonthLabelB" class="date-month-label">-</div>
+              <div class="date-weekdays">
+                <span>Mo</span><span>Di</span><span>Mi</span><span>Do</span><span>Fr</span><span>Sa</span><span>So</span>
               </div>
+              <div id="dateCalendarB" class="date-days-grid"></div>
             </div>
           </div>
-          <input id="fromDate" type="date" hidden>
-          <input id="toDate" type="date" hidden>
+          <button id="dateCustomApplyBtn" class="btn-inline" type="button" style="grid-column: 1 / -1;">Zeitraum anwenden</button>
         </div>
-        <div class="control control-menu-wrap">
-          <label for="channelMenuBtn">Channel</label>
-          <button id="channelMenuBtn" class="control-menu-trigger" type="button" aria-expanded="false" aria-controls="channelMenu">Alle</button>
-          <div id="channelMenu" class="control-menu channel-menu" aria-hidden="true">
-            <button class="menu-item active" data-channel="" type="button">Alle</button>
-            <button class="menu-item" data-channel="shopify" type="button">Shopify</button>
-            <button class="menu-item" data-channel="kaufland" type="button">Kaufland</button>
+      </div>
+    </div>
+    <input id="fromDate" type="date" hidden>
+    <input id="toDate" type="date" hidden>
+
+    <div id="channelMenu" class="control-menu channel-menu" aria-hidden="true">
+      <button class="menu-item active" data-channel="" type="button">Alle</button>
+      <button class="menu-item" data-channel="shopify" type="button">Shopify</button>
+      <button class="menu-item" data-channel="kaufland" type="button">Kaufland</button>
+    </div>
+
+    <div class="page-layout">
+      <nav class="sidebar">
+        <div class="sidebar-inner">
+          <div class="sidebar-logo">E-Com</div>
+          <div class="sidebar-controls">
+            <div class="sidebar-control sidebar-control-menu">
+              <button id="channelMenuBtn" class="sidebar-control-btn" type="button" aria-expanded="false" aria-controls="channelMenu">Alle</button>
+            </div>
+            <div class="sidebar-control sidebar-control-menu">
+              <button id="dateRangeBtn" class="sidebar-control-btn" type="button" aria-expanded="false" aria-controls="dateRangeMenu">Letzte 30 Tage</button>
+            </div>
+            <div class="sidebar-control">
+              <button id="searchOpenBtn" class="sidebar-control-btn" type="button" aria-expanded="false" aria-controls="searchModal" aria-label="Suche oeffnen">
+                Suche
+              </button>
+            </div>
           </div>
-          <select id="marketplaceSelect" hidden>
-            <option value="" selected>Alle</option>
-            <option value="shopify">Shopify</option>
-            <option value="kaufland">Kaufland</option>
-          </select>
+          <div class="sidebar-nav" role="tablist" aria-label="Dashboard Bereiche">
+            <button id="tabAnalyticsBtn" class="sidebar-nav-btn active" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+              <span>Analytics</span>
+            </button>
+            <button id="tabOrdersBtn" class="sidebar-nav-btn" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H7v-2h5v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+              <span>Orders</span>
+            </button>
+            <button id="tabCustomersBtn" class="sidebar-nav-btn" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+              <span>Kunden</span>
+            </button>
+            <button id="tabBookingsBtn" class="sidebar-nav-btn" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+              <span>Buchungen</span>
+            </button>
+            <div class="sidebar-subnav" id="bookingsSubnav">
+              <button id="bookingsTransactionsBtn" class="sidebar-subnav-btn active" type="button">Transaktionen</button>
+              <button id="bookingsOrdersBtn" class="sidebar-subnav-btn" type="button">Bestellungen</button>
+              <button id="bookingsTemplatesBtn" class="sidebar-subnav-btn" type="button">Templates</button>
+              <button id="bookingsAccountsBtn" class="sidebar-subnav-btn" type="button">Konten</button>
+              <button id="bookingsDocumentsBtn" class="sidebar-subnav-btn" type="button">Belege</button>
+            </div>
+            <button id="tabGoogleAdsBtn" class="sidebar-nav-btn" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9.5 8.5c0 .83-.67 1.5-1.5 1.5H7v2H5.5V9H8c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V9H13c.83 0 1.5.67 1.5 1.5v3zm4-3H17v1h1.5V11H17v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z"/></svg>
+              <span>Google Ads</span>
+            </button>
+            <button id="tabEbayBtn" class="sidebar-nav-btn" type="button" role="tab">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.5 12c0 .83-.67 1.5-1.5 1.5S4.5 12.83 4.5 12s.67-1.5 1.5-1.5 1.5.67 1.5 1.5zm12 0c0 .83-.67 1.5-1.5 1.5s-1.5-.67-1.5-1.5.67-1.5 1.5-1.5 1.5.67 1.5 1.5zM6 7.5h12v9H6v-9z"/></svg>
+              <span>eBay</span>
+            </button>
+          </div>
         </div>
-      </div>
+      </nav>
 
-      <div class="tabbar-row top-tabbar-row">
-        <div class="tabbar" role="tablist" aria-label="Dashboard Bereiche">
-          <button id="tabAnalyticsBtn" class="tab-btn active" type="button" role="tab">Analytics</button>
-          <button id="tabOrdersBtn" class="tab-btn" type="button" role="tab">Orders</button>
-          <button id="tabCustomersBtn" class="tab-btn" type="button" role="tab">Kunden</button>
-          <button id="tabBookingsBtn" class="tab-btn" type="button" role="tab">Buchungen</button>
-          <button id="tabGoogleAdsBtn" class="tab-btn" type="button" role="tab">Google Ads</button>
-          <button id="tabEbayBtn" class="tab-btn" type="button" role="tab">eBay</button>
-        </div>
-      </div>
-
-    </section>
+      <main class="main-content">
 
     <div id="analyticsPanel" class="tab-panel active">
       <section class="kpi-grid" data-drag-group="kpi" data-section-id="sec-kpi">
@@ -1436,6 +1459,8 @@
       </div>
     </div>
 
+      </main>
+    </div>
 
   <!-- Application Scripts -->
   <script src="static/js/core.js"></script>

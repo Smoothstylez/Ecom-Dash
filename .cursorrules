@@ -1,0 +1,3 @@
+# Cursor Rules for E-Commerce Dashboard
+
+CRITICAL: At the start of EVERY session, you MUST read the files in the `.ai/` directory before writing any code. At the end of every task, you MUST update `.ai/state.md` to reflect the new progress and next steps.
