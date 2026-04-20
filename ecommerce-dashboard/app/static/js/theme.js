@@ -289,6 +289,9 @@ function applyChartThemeColors() {
 /* ── Theme Modal ── */
 
 function openThemeModal() {
+  if (typeof closeSettingsPanel === "function") {
+    closeSettingsPanel();
+  }
   var m = document.getElementById("themeModal");
   if (m) { m.classList.add("active"); m.setAttribute("aria-hidden", "false"); }
   setSourcePanelOpen(false);

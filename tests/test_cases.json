@@ -1,0 +1,403 @@
+{
+  "test_suite": {
+    "name": "Ecommerce Dashboard - Comprehensive Test Matrix",
+    "version": "1.0",
+    "date_created": "2026-03-14",
+    "categories": [
+      {
+        "id": "ORD",
+        "name": "Orders Management",
+        "tests": [
+          {
+            "id": "ORD-01",
+            "title": "Create Order",
+            "input": {
+              "customer": "John Doe",
+              "email": "john@example.com",
+              "items": [{"sku": "PROD-001", "qty": 2, "price": 29.99}],
+              "source": "shopify"
+            },
+            "expected_output": {
+              "order_id": "exists",
+              "status": "pending",
+              "total": 59.98
+            },
+            "notes": "Verify order auto-links to customer"
+          },
+          {
+            "id": "ORD-02",
+            "title": "Filter Orders by Date Range",
+            "input": {
+              "date_from": "2026-03-01",
+              "date_to": "2026-03-14",
+              "source": "all"
+            },
+            "expected_output": {
+              "result_count": "> 0",
+              "all_dates_in_range": true
+            },
+            "notes": "Test date filtering accuracy"
+          },
+          {
+            "id": "ORD-03",
+            "title": "Update Order Status",
+            "input": {
+              "order_id": "existing",
+              "new_status": "shipped"
+            },
+            "expected_output": {
+              "status": "shipped",
+              "timestamp_updated": "current"
+            },
+            "notes": "Verify timestamp is updated"
+          },
+          {
+            "id": "ORD-04",
+            "title": "Search Orders by Customer Name",
+            "input": {
+              "search_term": "John"
+            },
+            "expected_output": {
+              "results": "contains John orders",
+              "accuracy": "high"
+            },
+            "notes": "Partial match search"
+          },
+          {
+            "id": "ORD-05",
+            "title": "Multi-Source Order Merge",
+            "input": {
+              "sources": ["shopify", "ebay", "kaufland"]
+            },
+            "expected_output": {
+              "total_orders": "union of all sources",
+              "deduplicated": true
+            },
+            "notes": "Verify no order duplication across sources"
+          }
+        ]
+      },
+      {
+        "id": "INV",
+        "name": "Invoices & Bookkeeping",
+        "tests": [
+          {
+            "id": "INV-01",
+            "title": "Generate Invoice from Order",
+            "input": {
+              "order_id": "ORD-123",
+              "template": "default"
+            },
+            "expected_output": {
+              "invoice_id": "exists",
+              "pdf_generated": true,
+              "contains_items": true
+            },
+            "notes": "Verify invoice links to order"
+          },
+          {
+            "id": "INV-02",
+            "title": "Calculate Fees (Platform + Shipping)",
+            "input": {
+              "order_total": 100.00,
+              "source": "ebay",
+              "shipping_cost": 5.00
+            },
+            "expected_output": {
+              "ebay_fee_percent": 0.12,
+              "ebay_fee_amount": 12.00,
+              "total_with_fees": 117.00
+            },
+            "notes": "Verify fee structure per platform"
+          },
+          {
+            "id": "INV-03",
+            "title": "Invoice Overview / Report",
+            "input": {
+              "period": "2026-03",
+              "group_by": "source"
+            },
+            "expected_output": {
+              "invoice_count": "> 0",
+              "grouped_by_source": true,
+              "totals_calculated": true
+            },
+            "notes": "Verify summary calculations are correct"
+          },
+          {
+            "id": "INV-04",
+            "title": "Link Invoice to Multiple Orders",
+            "input": {
+              "invoice_id": "new",
+              "order_ids": ["ORD-001", "ORD-002", "ORD-003"]
+            },
+            "expected_output": {
+              "invoice_linked_count": 3,
+              "sum_order_totals": "invoice_total"
+            },
+            "notes": "Bulk invoice for multiple orders"
+          }
+        ]
+      },
+      {
+        "id": "CUST",
+        "name": "Customers Management",
+        "tests": [
+          {
+            "id": "CUST-01",
+            "title": "Create / Register Customer",
+            "input": {
+              "name": "Jane Smith",
+              "email": "jane@example.com",
+              "address": "123 Main St",
+              "phone": "+49123456789"
+            },
+            "expected_output": {
+              "customer_id": "exists",
+              "email_stored": "jane@example.com",
+              "source_of_truth": true
+            },
+            "notes": "Verify customer deduplication"
+          },
+          {
+            "id": "CUST-02",
+            "title": "Link Customer to Orders",
+            "input": {
+              "customer_id": "CUST-001",
+              "order_ids": ["ORD-001", "ORD-002"]
+            },
+            "expected_output": {
+              "customer_order_count": 2,
+              "customer_lifetime_value": "sum_of_orders"
+            },
+            "notes": "Auto-link on order creation"
+          },
+          {
+            "id": "CUST-03",
+            "title": "Customer Data Validation",
+            "input": {
+              "email": "invalid-email",
+              "phone": "not-a-number"
+            },
+            "expected_output": {
+              "validation_error": true,
+              "field_errors": ["email", "phone"]
+            },
+            "notes": "Verify input validation"
+          },
+          {
+            "id": "CUST-04",
+            "title": "Export Customers List (CSV)",
+            "input": {
+              "format": "csv"
+            },
+            "expected_output": {
+              "file_created": true,
+              "contains_headers": ["ID", "Name", "Email", "Phone", "Orders"],
+              "row_count": "> 0"
+            },
+            "notes": "Verify CSV structure"
+          }
+        ]
+      },
+      {
+        "id": "BOOK",
+        "name": "Bookings Management",
+        "tests": [
+          {
+            "id": "BOOK-01",
+            "title": "Create Booking from Order",
+            "input": {
+              "order_id": "ORD-001",
+              "booking_type": "automated"
+            },
+            "expected_output": {
+              "booking_id": "exists",
+              "linked_to_order": true,
+              "status": "confirmed"
+            },
+            "notes": "Verify auto-sync from orders"
+          },
+          {
+            "id": "BOOK-02",
+            "title": "Sync Bookings to Bookkeeping",
+            "input": {
+              "booking_ids": ["BOOK-001", "BOOK-002", "BOOK-003"]
+            },
+            "expected_output": {
+              "synced_count": 3,
+              "bookkeeping_entries_created": true
+            },
+            "notes": "Verify data consistency after sync"
+          },
+          {
+            "id": "BOOK-03",
+            "title": "Validate Booking Totals",
+            "input": {
+              "booking_id": "BOOK-001"
+            },
+            "expected_output": {
+              "total_matches_orders": true,
+              "fees_included": true
+            },
+            "notes": "Verify math correctness"
+          }
+        ]
+      },
+      {
+        "id": "IMPORT",
+        "name": "Import / Export",
+        "tests": [
+          {
+            "id": "IMPORT-01",
+            "title": "Import Orders from CSV",
+            "input": {
+              "file": "orders_sample.csv",
+              "format": "csv",
+              "mapping": "auto"
+            },
+            "expected_output": {
+              "imported_count": "> 0",
+              "validation_errors": 0,
+              "orders_created": true
+            },
+            "notes": "Verify CSV parsing and schema matching"
+          },
+          {
+            "id": "IMPORT-02",
+            "title": "Import with Schema Validation",
+            "input": {
+              "file": "orders_invalid.csv",
+              "validation": "strict"
+            },
+            "expected_output": {
+              "error_count": "> 0",
+              "error_details": "field_level",
+              "import_blocked": true
+            },
+            "notes": "Invalid data should be rejected"
+          },
+          {
+            "id": "IMPORT-03",
+            "title": "Export Filtered Orders (JSON)",
+            "input": {
+              "filter": {
+                "date_from": "2026-03-01",
+                "source": "shopify"
+              },
+              "format": "json"
+            },
+            "expected_output": {
+              "file_created": true,
+              "valid_json": true,
+              "all_filtered": true
+            },
+            "notes": "Verify filter applied to export"
+          },
+          {
+            "id": "IMPORT-04",
+            "title": "Bulk Data Export (All Sources)",
+            "input": {
+              "sources": ["shopify", "ebay", "kaufland"],
+              "include": ["orders", "invoices", "customers"]
+            },
+            "expected_output": {
+              "files_created": 3,
+              "total_records": "> 0",
+              "export_complete": true
+            },
+            "notes": "Multi-source, multi-entity export"
+          }
+        ]
+      },
+      {
+        "id": "DATA",
+        "name": "Data Management & Integrity",
+        "tests": [
+          {
+            "id": "DATA-01",
+            "title": "Duplicate Detection (Orders)",
+            "input": {
+              "order_data": "same_customer_same_items",
+              "time_delta": "5 minutes"
+            },
+            "expected_output": {
+              "duplicate_detected": true,
+              "merge_suggested": true
+            },
+            "notes": "Prevent duplicate orders from multi-source imports"
+          },
+          {
+            "id": "DATA-02",
+            "title": "Data Consistency Check",
+            "input": {
+              "check_type": "full_audit"
+            },
+            "expected_output": {
+              "orphaned_records": 0,
+              "referential_integrity": "valid",
+              "inconsistencies": 0
+            },
+            "notes": "Run DB integrity check"
+          },
+          {
+            "id": "DATA-03",
+            "title": "Archive Old Orders",
+            "input": {
+              "before_date": "2026-01-01"
+            },
+            "expected_output": {
+              "archived_count": "> 0",
+              "still_queryable": true
+            },
+            "notes": "Archive for performance"
+          },
+          {
+            "id": "DATA-04",
+            "title": "Restore from Archive",
+            "input": {
+              "archive_id": "archived_set"
+            },
+            "expected_output": {
+              "restored_count": "matches_archived",
+              "queryable_in_main": true
+            },
+            "notes": "Verify restore functionality"
+          }
+        ]
+      },
+      {
+        "id": "PERFORM",
+        "name": "Performance & Scaling",
+        "tests": [
+          {
+            "id": "PERFORM-01",
+            "title": "Load Test: 1000 Orders Query",
+            "input": {
+              "query": "all orders",
+              "record_count": 1000
+            },
+            "expected_output": {
+              "response_time_ms": "< 1000",
+              "no_timeout": true
+            },
+            "notes": "Verify dashboard responsiveness at scale"
+          },
+          {
+            "id": "PERFORM-02",
+            "title": "Bulk Import (500 records)",
+            "input": {
+              "import_count": 500,
+              "format": "csv"
+            },
+            "expected_output": {
+              "import_time_sec": "< 10",
+              "success_rate": "100%"
+            },
+            "notes": "Bulk operation performance"
+          }
+        ]
+      }
+    ]
+  }
+}

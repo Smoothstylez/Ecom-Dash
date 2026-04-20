@@ -1,0 +1,129 @@
+{
+  "run_started": "2026-03-14T15:01:22.240398+00:00",
+  "run_completed": "2026-03-14T15:01:22.410621+00:00",
+  "total_tests": 7,
+  "passed": 7,
+  "failed": 0,
+  "tests": [
+    {
+      "test_id": "test_001",
+      "test_name": "Order Write and Read Validation",
+      "status": "PASS",
+      "details": "Order written and read successfully: smoke_test_ord_9440feb2",
+      "metrics": {
+        "order_id": "smoke_test_ord_9440feb2",
+        "total_price": "99.99"
+      },
+      "timestamp": "2026-03-14T15:01:22.255505+00:00"
+    },
+    {
+      "test_id": "test_002",
+      "test_name": "Multi-Source Data Merge",
+      "status": "PASS",
+      "details": "Multiple source databases available and accessible",
+      "metrics": {
+        "sources": {
+          "shopify": 154,
+          "kaufland": 99,
+          "ebay": 0
+        }
+      },
+      "timestamp": "2026-03-14T15:01:22.256762+00:00"
+    },
+    {
+      "test_id": "test_003",
+      "test_name": "Fee Calculation Validation",
+      "status": "PASS",
+      "details": "Fee calculations correct for all platforms",
+      "metrics": {
+        "fee_results": {
+          "shopify": {
+            "total": 100.0,
+            "fee_rate": 0.03,
+            "expected_fee": 3.0,
+            "calculated_fee": 3.0,
+            "correct": true
+          },
+          "ebay": {
+            "total": 100.0,
+            "fee_rate": 0.12,
+            "expected_fee": 12.0,
+            "calculated_fee": 12.0,
+            "correct": true
+          },
+          "kaufland": {
+            "total": 100.0,
+            "fee_rate": 0.08,
+            "expected_fee": 8.0,
+            "calculated_fee": 8.0,
+            "correct": true
+          }
+        }
+      },
+      "timestamp": "2026-03-14T15:01:22.256777+00:00"
+    },
+    {
+      "test_id": "test_004",
+      "test_name": "Automatic Booking Creation",
+      "status": "PASS",
+      "details": "Auto-booking sync completed: 253 orders, 517 transactions",
+      "metrics": {
+        "db_available": true,
+        "selected_orders": 253,
+        "orders_inserted": 0,
+        "orders_updated": 253,
+        "transactions_inserted": 0,
+        "transactions_updated": 517,
+        "transactions_deleted": 0,
+        "documents_inserted": 0,
+        "documents_updated": 10,
+        "documents_skipped": 0
+      },
+      "timestamp": "2026-03-14T15:01:22.409170+00:00"
+    },
+    {
+      "test_id": "test_005",
+      "test_name": "Bookkeeping Integrity Validation",
+      "status": "PASS",
+      "details": "Bookkeeping integrity verified: 601 transactions",
+      "metrics": {
+        "total_sales_cents": 6461078,
+        "total_fees_cents": 900100,
+        "total_cogs_cents": 194014,
+        "total_transactions": 601,
+        "net_position_cents": 5366964
+      },
+      "timestamp": "2026-03-14T15:01:22.409952+00:00"
+    },
+    {
+      "test_id": "test_006",
+      "test_name": "Combined Database Validation",
+      "status": "PASS",
+      "details": "Combined DB structure valid",
+      "metrics": {
+        "tables": [
+          "order_purchase_documents",
+          "order_enrichments",
+          "google_ads_import_batches",
+          "google_ads_daily_costs",
+          "google_ads_product_assignments",
+          "customer_geo_cache"
+        ],
+        "enrichment_count": 14,
+        "documents_count": 16
+      },
+      "timestamp": "2026-03-14T15:01:22.410172+00:00"
+    },
+    {
+      "test_id": "test_007",
+      "test_name": "Order Fee Data Presence",
+      "status": "PASS",
+      "details": "Fee data checked in 10 orders",
+      "metrics": {
+        "orders_checked": 10,
+        "orders_with_fees": 0
+      },
+      "timestamp": "2026-03-14T15:01:22.410605+00:00"
+    }
+  ]
+}

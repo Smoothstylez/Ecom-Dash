@@ -54,7 +54,7 @@ function renderGoogleAds() {
   }
 
   /* ── Import status info ── */
-  if (els.googleAdsStatusInfo instanceof HTMLElement) {
+  if (els.googleAdsPanelStatusInfo instanceof HTMLElement) {
     const lines = [
       `Report: <strong>${escapeHtml(reportFilename)}</strong>`,
       `Zeitraum: <strong>${escapeHtml(reportRangeLabel)}</strong>`,
@@ -63,7 +63,7 @@ function renderGoogleAds() {
       `Import: <strong>${escapeHtml(reportImportedAt)}</strong>`,
       `Zuweisung: <strong>${escapeHtml(assignmentFilename)}</strong> (${escapeHtml(NUMBER_FMT.format(assignmentRows))} Zeilen, ${escapeHtml(assignmentImportedAt)})`,
     ];
-    els.googleAdsStatusInfo.innerHTML = lines.join(" &middot; ");
+    els.googleAdsPanelStatusInfo.innerHTML = lines.join(" &middot; ");
   }
 
   /* ── KPIs ── */

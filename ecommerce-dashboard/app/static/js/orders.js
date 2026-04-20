@@ -472,10 +472,9 @@ async function loadOrders() {
 /* ── Render ── */
 
 function filterOrders(orders) {
-  const statusSet = state.filters.orderStatus;
-  const paymentSet = state.filters.orderPayment;
-  const returnsOnly = state.filters.returnsOnly;
-  if (!statusSet.size && !paymentSet.size && !returnsOnly) return orders;
+  const f = state.filters;
+  const statusSet = f.orderStatus;
+  const paymentSet = f.orderPayment;
 
   const returnKeywords = ["cancel", "cancelled", "canceled", "void", "return", "returned", "refund", "refunded", "partially_refunded", "rma", "revoked", "returning"];
   function isReturnLike(val) {
@@ -483,19 +482,41 @@ function filterOrders(orders) {
     if (!t) return false;
     return returnKeywords.some((kw) => t.includes(kw));
   }
+  function isCanceled(order) {
+    return isReturnLike(order.fulfillment_status) || isReturnLike(order.financial_status) || isReturnLike(order.raw_status);
+  }
 
   return orders.filter((order) => {
+    // Default: hide canceled orders (unless explicitly showing returns or canceled status chip active)
+    if (f.hideCanceled && !f.returnsOnly && !statusSet.has("cancelled") && !statusSet.has("refunded") && !statusSet.has("canceled")) {
+      if (isCanceled(order)) return false;
+    }
+
+    // Status chip filter
     if (statusSet.size) {
       const fs = String(order.fulfillment_status || "").trim().toLowerCase();
       if (!statusSet.has(fs)) return false;
     }
+
+    // Payment method filter
     if (paymentSet.size) {
       const pm = String(order.payment_method || "").trim();
       if (!paymentSet.has(pm)) return false;
     }
-    if (returnsOnly) {
-      if (!isReturnLike(order.fulfillment_status) && !isReturnLike(order.financial_status) && !isReturnLike(order.raw_status)) return false;
+
+    // Returns/cancel only
+    if (f.returnsOnly) {
+      if (!isCanceled(order)) return false;
     }
+
+    // Purchase cost filters (mutually exclusive)
+    if (f.hasPurchaseCost && !(Number(order.purchase_cost_cents) > 0)) return false;
+    if (f.noPurchaseCost && Number(order.purchase_cost_cents) > 0) return false;
+
+    // Invoice filters (mutually exclusive)
+    if (f.hasInvoice && !order.invoice) return false;
+    if (f.noInvoice && order.invoice) return false;
+
     return true;
   });
 }
@@ -553,6 +574,9 @@ function renderOrders() {
     els.ordersMeta.textContent = `${NUMBER_FMT.format(shown)} / ${NUMBER_FMT.format(total)} Zeilen`;
   } else {
     els.ordersMeta.textContent = `${NUMBER_FMT.format(shown)} Zeilen`;
+  }
+  if (typeof syncOrdersTableViewportHeight === "function") {
+    window.requestAnimationFrame(() => syncOrdersTableViewportHeight());
   }
 }
 

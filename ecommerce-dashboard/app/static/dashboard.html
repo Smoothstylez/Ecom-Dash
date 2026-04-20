@@ -12,8 +12,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
   <script src="https://unpkg.com/topojson-client@3"></script>
   <script src="https://cdn.jsdelivr.net/npm/globe.gl@2.41.6/dist/globe.gl.min.js"></script>
-  <link rel="stylesheet" href="static/css/themes.css">
-  <link rel="stylesheet" href="static/css/main.css">
+  <link rel="stylesheet" href="static/css/themes.css?v=20260409-settings-modal-fix-1">
+  <link rel="stylesheet" href="static/css/main.css?v=20260409-settings-modal-fix-1">
   <script>
     // Early theme application — prevents flash of unstyled content
     (function() {
@@ -85,9 +85,14 @@
     </div>
 
     <div class="page-layout">
-      <nav class="sidebar">
+      <nav class="sidebar" id="mainSidebar">
         <div class="sidebar-inner">
-          <div class="sidebar-logo">E-Com</div>
+          <div class="sidebar-header">
+            <span class="sidebar-logo">E-Com</span>
+            <button id="sidebarToggleBtn" class="sidebar-toggle-btn" type="button" aria-label="Sidebar einklappen" title="Einklappen">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z"/></svg>
+            </button>
+          </div>
           <div class="sidebar-controls">
             <div class="sidebar-control sidebar-control-menu">
               <button id="channelMenuBtn" class="sidebar-control-btn" type="button" aria-expanded="false" aria-controls="channelMenu">Alle</button>
@@ -134,10 +139,26 @@
               <span>eBay</span>
             </button>
           </div>
+          
+          <div class="sidebar-footer">
+            <button id="sidebarStatusBtn" class="sidebar-footer-btn" type="button" title="Status">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+              <span>Status</span>
+            </button>
+            <button id="sidebarSettingsBtn" class="sidebar-footer-btn" type="button" title="Einstellungen">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+              <span>Einstellungen</span>
+            </button>
+            <button id="sidebarSyncBtn" class="sidebar-footer-btn" type="button" title="Synchronisieren">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg>
+              <span>Sync</span>
+            </button>
+          </div>
         </div>
       </nav>
 
-      <main class="main-content">
+      <div class="main-content-wrapper">
+        <main class="main-content">
 
     <div id="analyticsPanel" class="tab-panel active">
       <section class="kpi-grid" data-drag-group="kpi" data-section-id="sec-kpi">
@@ -369,6 +390,21 @@
                   <div class="ofd-section-title">Sonstiges</div>
                   <div class="ofd-chips">
                     <button class="ofd-chip" data-filter-group="returns" data-value="returns" type="button">Retouren / Cancel</button>
+                    <button class="ofd-chip active" data-filter-group="hidecanceled" data-value="hidecanceled" type="button">Stornierte ausblenden</button>
+                  </div>
+                </div>
+                <div class="ofd-section">
+                  <div class="ofd-section-title">Einkaufspreis</div>
+                  <div class="ofd-chips">
+                    <button class="ofd-chip" data-filter-group="purchasecost" data-value="has" type="button">Preis eingetragen</button>
+                    <button class="ofd-chip" data-filter-group="purchasecost" data-value="missing" type="button">Preis fehlt</button>
+                  </div>
+                </div>
+                <div class="ofd-section">
+                  <div class="ofd-section-title">Rechnung</div>
+                  <div class="ofd-chips">
+                    <button class="ofd-chip" data-filter-group="invoice" data-value="has" type="button">Rechnung vorhanden</button>
+                    <button class="ofd-chip" data-filter-group="invoice" data-value="missing" type="button">Rechnung fehlt</button>
                   </div>
                 </div>
                 <div class="ofd-footer">
@@ -926,7 +962,7 @@
               <button id="googleAdsResetBtn" class="btn-inline danger google-ads-upload-btn" type="button">Zuruecksetzen</button>
             </div>
           </div>
-          <div id="googleAdsStatusInfo" class="google-ads-status-info"></div>
+          <div id="googleAdsPanelStatusInfo" class="google-ads-status-info"></div>
         </div>
       </section>
 
@@ -1034,11 +1070,10 @@
                 <th>Tage</th>
               </tr>
             </thead>
-            <tbody id="googleAdsMissingBody"></tbody>
+            <tbody id="googleAdsMissingBody">              </tbody>
           </table>
         </div>
       </section>
-    </div>
     </div>
 
     <div id="ebayPanel" class="tab-panel">
@@ -1153,58 +1188,6 @@
         </div>
       </section>
     </div>
-
-    <button id="sourcePanelToggleBtn" class="settings-fab" type="button" aria-controls="sourcePanel" aria-expanded="false" aria-label="Einstellungen">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-    </button>
-    <aside id="sourcePanel" class="settings-drawer" aria-hidden="true">
-      <div class="settings-drawer-head">
-        <div class="settings-drawer-title">Einstellungen</div>
-        <button id="sourcePanelCloseBtn" class="settings-drawer-close" type="button" aria-label="Schliessen">&times;</button>
-      </div>
-      <div class="settings-drawer-body">
-        <div class="settings-group">
-          <div class="settings-group-label">Ansicht</div>
-          <button id="layoutEditMenuBtn" class="settings-item" type="button">Layout anpassen</button>
-          <button id="themeModalOpenBtn" class="settings-item" type="button">Design</button>
-        </div>
-        <div class="settings-group">
-          <div class="settings-group-label">Aktionen</div>
-          <button id="refreshBtn" class="settings-item" type="button">Alles neu laden</button>
-          <button id="syncLiveBtn" class="settings-item settings-item-accent" type="button">Live API Sync</button>
-          <button id="syncSourcesBtn" class="settings-item" type="button">Quellen synchronisieren</button>
-          <button id="dataModalOpenBtn" class="settings-item" type="button">Datenverwaltung</button>
-        </div>
-        <div class="settings-group">
-          <div class="settings-group-label">Auto-Aktualisierung</div>
-          <label class="settings-toggle-row">
-            <span class="settings-toggle-label">Aktiv</span>
-            <input id="pollingToggle" type="checkbox" class="settings-toggle-input">
-            <span class="settings-toggle-switch"></span>
-          </label>
-          <label class="settings-inline-row">
-            <span class="settings-toggle-label">Intervall (Sek.)</span>
-            <input id="pollingIntervalInput" type="number" min="5" max="3600" value="30" class="settings-inline-input">
-          </label>
-        </div>
-        <div class="settings-group">
-          <div class="settings-group-label">System</div>
-          <div id="lastSyncInfo" class="settings-status-line">Letzter Sync: -</div>
-          <div class="settings-source-row">
-            <span class="settings-source-label">Datenquellen</span>
-            <div id="sourceInfo" class="settings-source-detail">Lade Quellenstatus...</div>
-          </div>
-          <div class="settings-source-row">
-            <span class="settings-source-label">Google Ads</span>
-            <div id="googleAdsStatusInfo" class="settings-source-detail">Lade Google Ads Status...</div>
-          </div>
-          <div class="settings-source-row">
-            <span class="settings-source-label">Kunden-Geo</span>
-            <div id="customerGeoStatusInfo" class="settings-source-detail">Noch nicht geladen.</div>
-          </div>
-        </div>
-      </div>
-    </aside>
 
     <!-- Theme Modal -->
     <div id="themeModal" class="modal" role="dialog" aria-modal="true" aria-hidden="true">
@@ -1457,20 +1440,104 @@
 
         </div>
       </div>
-    </div>
+        </div>
 
       </main>
+      </div>
+    </div>
+
+    <!-- Status Panel -->
+    <div id="statusPanel" class="sidebar-modal" aria-hidden="true">
+      <div class="sidebar-modal-content">
+        <div class="sidebar-modal-header">
+          <h2>Status</h2>
+          <button id="closeStatusBtn" class="sidebar-modal-close" type="button">&times;</button>
+        </div>
+        <div class="sidebar-modal-body">
+          <div class="settings-group">
+            <div class="settings-group-label">System</div>
+            <div class="status-item"><span>Version:</span> <span id="statusVersion">0.3.0</span></div>
+            <div id="lastSyncInfo" class="settings-status-line">Letzter Sync: -</div>
+            <div class="settings-source-row">
+              <span class="settings-source-label">Datenquellen</span>
+              <div id="sourceInfo" class="settings-source-detail">Lade Quellenstatus...</div>
+            </div>
+            <div class="settings-source-row">
+              <span class="settings-source-label">Google Ads</span>
+              <div id="googleAdsStatusInfo" class="settings-source-detail">Lade Google Ads Status...</div>
+            </div>
+            <div class="settings-source-row">
+              <span class="settings-source-label">Kunden-Geo</span>
+              <div id="customerGeoStatusInfo" class="settings-source-detail">Noch nicht geladen.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div id="settingsPanel" class="sidebar-modal" aria-hidden="true">
+      <div class="sidebar-modal-content">
+        <div class="sidebar-modal-header">
+          <h2>Einstellungen</h2>
+          <button id="closeSettingsBtn" class="sidebar-modal-close" type="button">&times;</button>
+        </div>
+        <div class="sidebar-modal-body">
+          <div class="settings-group">
+            <div class="settings-group-label">Ansicht</div>
+            <button id="layoutEditMenuBtn" class="settings-item" type="button">Layout anpassen</button>
+            <button id="themeModalOpenBtn" class="settings-item" type="button">Design</button>
+          </div>
+          <div class="settings-group">
+            <div class="settings-group-label">Aktionen</div>
+            <button id="refreshBtn" class="settings-item" type="button">Alles neu laden</button>
+            <button id="syncLiveBtn" class="settings-item settings-item-accent" type="button">Live API Sync</button>
+            <button id="syncSourcesBtn" class="settings-item" type="button">Quellen synchronisieren</button>
+            <button id="dataModalOpenBtn" class="settings-item" type="button">Datenverwaltung</button>
+          </div>
+          <div class="settings-group">
+            <div class="settings-group-label">Auto-Aktualisierung</div>
+            <label class="settings-toggle-row">
+              <span class="settings-toggle-label">Aktiv</span>
+              <input id="pollingToggle" type="checkbox" class="settings-toggle-input">
+              <span class="settings-toggle-switch"></span>
+            </label>
+            <label class="settings-inline-row">
+              <span class="settings-toggle-label">Intervall (Sek.)</span>
+              <input id="pollingIntervalInput" type="number" min="5" max="3600" value="30" class="settings-inline-input">
+            </label>
+          </div>
+          <div class="settings-section">
+            <h3>API Credentials</h3>
+            <div class="credentials-form">
+              <div class="credentials-group">
+                <h4>Shopify</h4>
+                <input type="text" id="credShopifyDomain" class="credentials-input" placeholder="shopname.myshopify.com">
+                <input type="text" id="credShopifyClientId" class="credentials-input" placeholder="Client ID">
+                <input type="password" id="credShopifyClientSecret" class="credentials-input" placeholder="Client Secret">
+              </div>
+              <div class="credentials-group">
+                <h4>Kaufland</h4>
+                <input type="text" id="credKauflandClientKey" class="credentials-input" placeholder="Client Key">
+                <input type="password" id="credKauflandSecretKey" class="credentials-input" placeholder="Secret Key">
+              </div>
+              <button id="btnSaveCredentials" class="btn-inline primary" type="button">Credentials speichern</button>
+              <div id="credentialsStatus" class="credentials-status"></div>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
   <!-- Application Scripts -->
-  <script src="static/js/core.js"></script>
-  <script src="static/js/theme.js"></script>
-  <script src="static/js/analytics.js"></script>
-  <script src="static/js/orders.js"></script>
-  <script src="static/js/customers.js"></script>
-  <script src="static/js/bookings.js"></script>
-  <script src="static/js/google-ads.js"></script>
-  <script src="static/js/ebay.js"></script>
-  <script src="static/js/init.js"></script>
+  <script src="static/js/core.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/theme.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/analytics.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/orders.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/customers.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/bookings.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/google-ads.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/ebay.js?v=20260409-settings-modal-fix-1"></script>
+  <script src="static/js/init.js?v=20260409-settings-modal-fix-1"></script>
 </body>
 </html>

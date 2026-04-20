@@ -122,10 +122,21 @@ def _load_env_file_values(path: Path) -> dict[str, str]:
             continue
         key, raw_value = stripped.split("=", 1)
         key = key.strip()
-        value = raw_value.strip().strip("\"").strip("'")
+        value = raw_value.strip().strip('"').strip("'")
         if key:
             parsed[key] = value
     return parsed
+
+
+def _load_credentials_file() -> dict[str, str]:
+    from app.config import PROJECT_ROOT
+    creds_file = PROJECT_ROOT / "data" / "credentials.json"
+    if not creds_file.exists():
+        return {}
+    try:
+        return json.loads(creds_file.read_text())
+    except Exception:
+        return {}
 
 
 def _get_env_value(key: str, defaults: dict[str, str]) -> str:
@@ -154,6 +165,9 @@ def _resolve_ssl_verify(defaults: dict[str, str]) -> Any:
 
 def load_shopify_live_config() -> tuple[Optional[ShopifyLiveConfig], list[str], dict[str, Any]]:
     fallback_env = _load_env_file_values(SHOPIFY_BOOTSTRAP_ENV_PATH)
+    
+    credentials_env = _load_credentials_file()
+    fallback_env.update(credentials_env)
 
     domain = _get_env_value("SHOPIFY_SHOP_DOMAIN", fallback_env)
     client_id = _get_env_value("SHOPIFY_CLIENT_ID", fallback_env)

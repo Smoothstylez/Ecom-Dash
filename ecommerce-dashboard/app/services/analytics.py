@@ -344,6 +344,16 @@ def build_analytics(
         is_return_like = any(
             _is_return_like_status(value) for value in (fulfillment_status, financial_status, raw_status)
         )
+        # Partial refunds stay in the revenue (net amount already deducted at SQL level)
+        # Full cancels/refunds/voids are zeroed out so they don't inflate KPIs
+        is_partial_refund = "partial" in str(financial_status or raw_status or "").lower()
+        if is_return_like and not is_partial_refund:
+            total = 0
+            fees = 0
+            after_fees = 0
+            profit = 0
+            shipping = 0
+
         if is_return_like:
             returns_order_count += 1
 

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import changestamp
@@ -39,6 +39,8 @@ from app.services.source_sync import build_sync_status, sync_all_sources
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "app" / "static"
+WORKSPACE_DIR = BASE_DIR.parent
+FRONTEND_DIST_DIR = WORKSPACE_DIR / "frontend" / "dist"
 LOGGER = logging.getLogger("combined_dashboard")
 
 
@@ -129,25 +131,103 @@ def on_shutdown() -> None:
         LOGGER.exception("shutdown live sync background worker failed: %s", exc)
 
 
-@app.get("/", include_in_schema=False)
-def root() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html")
+def _frontend_unavailable() -> HTMLResponse:
+    html = """
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>React Frontend</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #f7f3ee; color: #1a2233; margin: 0; }
+    .wrap { max-width: 760px; margin: 56px auto; padding: 24px; }
+    .card { background: white; border: 1px solid #dccfc0; border-radius: 18px; padding: 24px; box-shadow: 0 10px 30px rgba(22, 29, 46, 0.08); }
+    code { background: #f4efe8; padding: 2px 6px; border-radius: 6px; }
+    pre { background: #f4efe8; padding: 14px; border-radius: 12px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>React Frontend ist noch nicht gebaut</h1>
+      <p>Bitte im Repository-Root zuerst das Frontend bauen.</p>
+      <pre>cd /home/luis/projects/Ecom-Dash/frontend
+npm install
+npm run build</pre>
+      <p>Danach ist die neue Anwendung direkt unter <code>/analytics</code>, <code>/orders</code> usw. verfuegbar.</p>
+    </div>
+  </div>
+</body>
+</html>
+""".strip()
+    return HTMLResponse(html)
 
 
-@app.get("/bookings", include_in_schema=False)
+def _frontend_index_response() -> Response:
+    index_path = FRONTEND_DIST_DIR / "index.html"
+    if not index_path.exists():
+        return _frontend_unavailable()
+    return FileResponse(index_path)
+
+
+@app.get("/", include_in_schema=False, response_model=None)
+def root() -> Response:
+    return RedirectResponse(url="/analytics", status_code=307)
+
+
+@app.get("/bookings", include_in_schema=False, response_model=None)
+@app.get("/orders", include_in_schema=False, response_model=None)
+@app.get("/analytics", include_in_schema=False, response_model=None)
+@app.get("/ebay", include_in_schema=False, response_model=None)
+@app.get("/google-ads", include_in_schema=False, response_model=None)
+@app.get("/customers", include_in_schema=False, response_model=None)
+def frontend_route_alias() -> Response:
+    return _frontend_index_response()
+
+
 @app.get("/bookings/full", include_in_schema=False)
-@app.get("/orders", include_in_schema=False)
-@app.get("/analytics", include_in_schema=False)
-@app.get("/ebay", include_in_schema=False)
-@app.get("/google-ads", include_in_schema=False)
-@app.get("/customers", include_in_schema=False)
-def dashboard_alias() -> FileResponse:
-    return FileResponse(STATIC_DIR / "dashboard.html")
+def bookings_full_alias() -> RedirectResponse:
+    return RedirectResponse(url="/bookings", status_code=307)
 
 
 @app.get("/bookings/module", include_in_schema=False)
 def deprecated_bookings_module() -> RedirectResponse:
-    return RedirectResponse(url="bookings/full?subtab=transactions", status_code=307)
+    return RedirectResponse(url="/bookings", status_code=307)
+
+
+@app.get("/app-preview", include_in_schema=False, response_model=None)
+@app.get("/app-preview/{frontend_path:path}", include_in_schema=False, response_model=None)
+def frontend_preview(frontend_path: str = "") -> Response:
+    normalized = frontend_path.strip("/")
+    target = f"/{normalized}" if normalized else "/analytics"
+    return RedirectResponse(url=target, status_code=307)
+
+
+@app.get("/legacy", include_in_schema=False)
+def legacy_dashboard() -> FileResponse:
+    return FileResponse(STATIC_DIR / "dashboard.html")
+
+
+@app.get("/legacy/", include_in_schema=False)
+def legacy_dashboard_trailing() -> RedirectResponse:
+    return RedirectResponse(url="/legacy", status_code=307)
+
+
+@app.get("/legacy/{legacy_path:path}", include_in_schema=False)
+def legacy_dashboard_alias(legacy_path: str) -> RedirectResponse:
+    normalized = legacy_path.strip("/").lower()
+    mapping = {
+        "analytics": "/legacy?tab=analytics",
+        "orders": "/legacy?tab=orders",
+        "customers": "/legacy?tab=customers",
+        "google-ads": "/legacy?tab=googleads",
+        "ebay": "/legacy?tab=ebay",
+        "bookings": "/legacy?tab=bookings&subtab=transactions",
+        "bookings/full": "/legacy?tab=bookings&subtab=transactions&full=1",
+        "bookings/module": "/legacy?tab=bookings&subtab=transactions&full=1",
+    }
+    return RedirectResponse(url=mapping.get(normalized, "/legacy"), status_code=307)
 
 
 @app.get("/api/health")
@@ -184,3 +264,4 @@ def health() -> dict[str, object]:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets", check_dir=False), name="frontend_assets")

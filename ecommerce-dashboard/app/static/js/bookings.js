@@ -405,6 +405,9 @@ function renderBookings() {
   const suffix = filterHints.length ? ` (${filterHints.join(" | ")})` : "";
   els.bookingsMeta.textContent = `${NUMBER_FMT.format(state.bookingsTotal)} Zeilen${suffix}`;
   renderBookingTxLegend();
+  if (typeof syncOrdersTableViewportHeight === "function") {
+    window.requestAnimationFrame(() => syncOrdersTableViewportHeight());
+  }
 }
 
 function renderBookingOrders() {
@@ -442,6 +445,9 @@ function renderBookingOrders() {
 
   els.bookingOrdersBody.innerHTML = rows || "<tr><td colspan=\"9\">Keine Bestellungen fuer aktuellen Filter.</td></tr>";
   els.bookingOrdersMeta.textContent = `${NUMBER_FMT.format(state.bookingOrdersTotal)} Zeilen`;
+  if (typeof syncOrdersTableViewportHeight === "function") {
+    window.requestAnimationFrame(() => syncOrdersTableViewportHeight());
+  }
 }
 
 function renderBookingTemplates() {
@@ -1338,6 +1344,10 @@ function setBookingsSubtab(tab) {
   els.bookingsTemplatesPanel.classList.toggle("active", templatesActive);
   els.bookingsAccountsPanel.classList.toggle("active", accountsActive);
   els.bookingsDocumentsPanel.classList.toggle("active", documentsActive);
+
+  if (typeof syncOrdersTableViewportHeight === "function") {
+    window.requestAnimationFrame(() => syncOrdersTableViewportHeight());
+  }
 
   /* close any open tools panel when switching subtabs */
   document.querySelectorAll(".bookings-tools.open").forEach((p) => p.classList.remove("open"));

@@ -318,6 +318,12 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
 
     total_cents = _to_eur_cents(row["total_price"]) or 0
 
+    # For partially refunded orders: subtract the refunded amount from the total
+    financial_status_raw = str(row["financial_status"] or "").strip().lower()
+    if financial_status_raw == "partially_refunded":
+        refund_cents = _to_eur_cents(row["refund_amount_sum"]) or 0
+        total_cents = max(total_cents - refund_cents, 0)
+
     # ── Fee resolution chain with source tracking ──
     fee_cents = _to_eur_cents(row["fee_total"])
     fee_source: str = "api"  # real transaction data from Shopify API
@@ -508,7 +514,16 @@ def _load_shopify_orders() -> list[dict[str, Any]]:
                     SELECT ROUND(SUM(CAST(NULLIF(t.net_amount, '') AS REAL)), 2)
                     FROM order_transactions t
                     WHERE t.order_id = o.id AND COALESCE(t.net_amount, '') <> ''
-                ) AS net_total
+                ) AS net_total,
+                (
+                    SELECT COALESCE(SUM(
+                        CAST(NULLIF(json_extract(t2.value, '$.amount'), '') AS REAL)
+                    ), 0)
+                    FROM order_refunds r, json_each(r.transactions_json) t2
+                    WHERE r.order_id = o.id
+                      AND json_extract(t2.value, '$.kind') = 'refund'
+                      AND json_extract(t2.value, '$.status') = 'success'
+                ) AS refund_amount_sum
             FROM orders o
             ORDER BY COALESCE(o.created_at, '') DESC, o.id DESC
             """
@@ -532,16 +547,25 @@ def _load_kaufland_orders() -> list[dict[str, Any]]:
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.price, ''), 0) AS REAL)), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS units_price_sum,
                 (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
+                          - COALESCE((
+                              SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
+                              FROM order_unit_refunds ref
+                              JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                              WHERE ou2.id_order = o.id_order
+                          ), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS revenue_gross_sum,
                 (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.shipping_rate, ''), 0) AS REAL)), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS shipping_sum,
                 (
                     SELECT ou.product_title

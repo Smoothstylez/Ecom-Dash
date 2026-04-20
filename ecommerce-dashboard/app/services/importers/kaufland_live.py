@@ -142,6 +142,18 @@ def _load_env_file_values(path: Path) -> dict[str, str]:
     return parsed
 
 
+def _load_credentials_file() -> dict[str, str]:
+    from app.config import PROJECT_ROOT
+    import json
+    creds_file = PROJECT_ROOT / "data" / "credentials.json"
+    if not creds_file.exists():
+        return {}
+    try:
+        return json.loads(creds_file.read_text())
+    except Exception:
+        return {}
+
+
 def _get_env_value(key: str, defaults: dict[str, str]) -> str:
     direct = os.getenv(key)
     if direct is not None and str(direct).strip() != "":
@@ -168,6 +180,9 @@ def _resolve_ssl_verify(defaults: dict[str, str]) -> Any:
 
 def load_kaufland_live_config() -> tuple[Optional[KauflandLiveConfig], list[str], dict[str, Any]]:
     fallback_env = _load_env_file_values(KAUFLAND_BOOTSTRAP_ENV_PATH)
+    
+    credentials_env = _load_credentials_file()
+    fallback_env.update(credentials_env)
 
     client_key = _get_env_value("SHOP_CLIENT_KEY", fallback_env)
     secret_key = _get_env_value("SHOP_SECRET_KEY", fallback_env)

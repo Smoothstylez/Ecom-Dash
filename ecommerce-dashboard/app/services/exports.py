@@ -704,6 +704,37 @@ def _validate_backup_manifest(manifest_raw: bytes) -> dict[str, Any]:
     return manifest
 
 
+def _normalize_archive_prefix(prefix: str) -> str:
+    token = str(prefix or "").strip("/")
+    return f"{token}/" if token else ""
+
+
+def _join_archive_path(prefix: str, relative_path: str) -> str:
+    normalized_prefix = _normalize_archive_prefix(prefix)
+    return f"{normalized_prefix}{relative_path}"
+
+
+def _resolve_backup_manifest_path(zf: ZipFile) -> tuple[str, str]:
+    names = zf.namelist()
+    if "manifest.json" in names:
+        return "manifest.json", ""
+
+    nested_candidates = [
+        name for name in names
+        if name.endswith("/manifest.json") and not name.startswith("__MACOSX/")
+    ]
+    if len(nested_candidates) == 1:
+        manifest_path = nested_candidates[0]
+        return manifest_path, manifest_path[: -len("manifest.json")]
+
+    if nested_candidates:
+        prefixes = sorted({candidate[: -len("manifest.json")] for candidate in nested_candidates})
+        if len(prefixes) == 1:
+            return nested_candidates[0], prefixes[0]
+
+    raise ValueError("manifest.json fehlt in der ZIP-Datei")
+
+
 def _create_pre_restore_safety_backup() -> Path:
     """Create a safety backup of all current databases and storage before restore."""
     timestamp = _utc_now()
@@ -757,12 +788,12 @@ def _atomic_file_replace(source: Path, target: Path) -> None:
         shutil.copy2(source, target)
 
 
-def _restore_databases_from_zip(zf: ZipFile, extract_dir: Path) -> dict[str, Any]:
+def _restore_databases_from_zip(zf: ZipFile, extract_dir: Path, archive_prefix: str = "") -> dict[str, Any]:
     """Extract and replace runtime database files from the backup ZIP."""
     db_results: dict[str, Any] = {}
 
     for db_name, target_path in _DB_RESTORE_MAP.items():
-        arc_path = f"databases/{db_name}.sqlite3"
+        arc_path = _join_archive_path(archive_prefix, f"databases/{db_name}.sqlite3")
         entry = {
             "target": str(target_path),
             "restored": False,
@@ -795,14 +826,18 @@ def _restore_databases_from_zip(zf: ZipFile, extract_dir: Path) -> dict[str, Any
     return db_results
 
 
-def _restore_storage_from_zip(zf: ZipFile, extract_dir: Path) -> dict[str, Any]:
+def _restore_storage_from_zip(zf: ZipFile, extract_dir: Path, archive_prefix: str = "") -> dict[str, Any]:
     """Extract and restore storage files (invoices, documents) from the backup ZIP."""
     storage_results: dict[str, Any] = {}
 
     all_names = zf.namelist()
 
     for arc_prefix, target_dir in _STORAGE_RESTORE_MAP.items():
-        matching = [n for n in all_names if n.startswith(arc_prefix + "/") and not n.endswith("/")]
+        archive_storage_prefix = _join_archive_path(archive_prefix, arc_prefix)
+        matching = [
+            n for n in all_names
+            if n.startswith(archive_storage_prefix + "/") and not n.endswith("/")
+        ]
         entry: dict[str, Any] = {
             "target_dir": str(target_dir),
             "files_in_archive": len(matching),
@@ -819,7 +854,7 @@ def _restore_storage_from_zip(zf: ZipFile, extract_dir: Path) -> dict[str, Any]:
 
         for arc_name in matching:
             # Compute the relative path within the storage directory
-            relative = arc_name[len(arc_prefix) + 1:]  # strip "storage/invoices/"
+            relative = arc_name[len(archive_storage_prefix) + 1:]
             if not relative:
                 continue
 
@@ -866,14 +901,16 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
         )
 
     try:
-        if "manifest.json" not in zf.namelist():
+        try:
+            manifest_path, archive_prefix = _resolve_backup_manifest_path(zf)
+        except ValueError as exc:
             return RestoreResult(
                 success=False,
-                summary={"error": "manifest.json fehlt in der ZIP-Datei", "timestamp": _iso_utc(timestamp)},
+                summary={"error": str(exc), "timestamp": _iso_utc(timestamp)},
             )
 
         try:
-            manifest = _validate_backup_manifest(zf.read("manifest.json"))
+            manifest = _validate_backup_manifest(zf.read(manifest_path))
         except ValueError as exc:
             return RestoreResult(
                 success=False,
@@ -922,10 +959,10 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
         extract_dir = Path(tempfile.mkdtemp(prefix="restore-extract-"))
         try:
             LOGGER.info("Restore: extracting and replacing databases...")
-            db_results = _restore_databases_from_zip(zf, extract_dir)
+            db_results = _restore_databases_from_zip(zf, extract_dir, archive_prefix=archive_prefix)
 
             LOGGER.info("Restore: extracting and restoring storage files...")
-            storage_results = _restore_storage_from_zip(zf, extract_dir)
+            storage_results = _restore_storage_from_zip(zf, extract_dir, archive_prefix=archive_prefix)
         finally:
             # Clean up extraction temp dir
             try:
@@ -947,6 +984,7 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
             "backup_generated_at": manifest.get("generated_at", "unknown"),
             "backup_app_version": manifest.get("app_version", "unknown"),
             "backup_schema_version": manifest.get("schema_version"),
+            "archive_prefix": _normalize_archive_prefix(archive_prefix),
             "current_app_version": APP_VERSION,
             "current_schema_version": SCHEMA_VERSION,
             "safety_backup_path": str(safety_path),

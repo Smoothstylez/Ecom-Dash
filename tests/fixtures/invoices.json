@@ -1,0 +1,115 @@
+[
+  {
+    "id": "INV-001",
+    "order_id": "ORD-001",
+    "invoice_number": "INV-2026-001",
+    "date_created": "2026-03-14T10:05:00Z",
+    "customer_name": "John Doe",
+    "customer_email": "john@example.com",
+    "items": [
+      {"sku": "PROD-001", "name": "Widget A", "qty": 2, "unit_price": 29.99, "subtotal": 59.98}
+    ],
+    "subtotal": 59.98,
+    "shipping": 5.00,
+    "tax": 4.80,
+    "platform_fees": {
+      "shopify_fee_percent": 0.03,
+      "shopify_fee_amount": 1.80,
+      "payment_processor_fee": 2.15
+    },
+    "total_fees": 3.95,
+    "total_gross": 73.73,
+    "status": "issued",
+    "notes": "Standard order invoice"
+  },
+  {
+    "id": "INV-002",
+    "order_id": "ORD-002",
+    "invoice_number": "INV-2026-002",
+    "date_created": "2026-03-13T15:35:00Z",
+    "customer_name": "Jane Smith",
+    "customer_email": "jane@example.com",
+    "items": [
+      {"sku": "PROD-002", "name": "Gadget B", "qty": 1, "unit_price": 49.99, "subtotal": 49.99}
+    ],
+    "subtotal": 49.99,
+    "shipping": 3.50,
+    "tax": 4.00,
+    "platform_fees": {
+      "ebay_fee_percent": 0.12,
+      "ebay_fee_amount": 6.00,
+      "payment_processor_fee": 1.80
+    },
+    "total_fees": 7.80,
+    "total_gross": 65.29,
+    "status": "issued"
+  },
+  {
+    "id": "INV-003",
+    "order_id": "ORD-003",
+    "invoice_number": "INV-2026-003",
+    "date_created": "2026-03-14T08:20:00Z",
+    "customer_name": "John Doe",
+    "customer_email": "john@example.com",
+    "items": [
+      {"sku": "PROD-003", "name": "Tool C", "qty": 3, "unit_price": 15.50, "subtotal": 46.50}
+    ],
+    "subtotal": 46.50,
+    "shipping": 7.00,
+    "tax": 4.25,
+    "platform_fees": {
+      "kaufland_fee_percent": 0.08,
+      "kaufland_fee_amount": 3.72,
+      "payment_processor_fee": 1.60
+    },
+    "total_fees": 5.32,
+    "total_gross": 63.07,
+    "status": "issued"
+  },
+  {
+    "id": "INV-004",
+    "order_id": "ORD-004",
+    "invoice_number": "INV-2026-004",
+    "date_created": "2026-03-12T12:05:00Z",
+    "customer_name": "Bob Wilson",
+    "customer_email": "bob@example.com",
+    "items": [
+      {"sku": "PROD-001", "name": "Widget A", "qty": 1, "unit_price": 29.99, "subtotal": 29.99},
+      {"sku": "PROD-004", "name": "Accessory D", "qty": 2, "unit_price": 9.99, "subtotal": 19.98}
+    ],
+    "subtotal": 49.97,
+    "shipping": 4.50,
+    "tax": 4.45,
+    "platform_fees": {
+      "shopify_fee_percent": 0.03,
+      "shopify_fee_amount": 1.50,
+      "payment_processor_fee": 2.00
+    },
+    "total_fees": 3.50,
+    "total_gross": 62.42,
+    "status": "issued"
+  },
+  {
+    "id": "INV-005",
+    "order_id": "ORD-005",
+    "invoice_number": "INV-2026-005",
+    "date_created": "2026-03-10T14:25:00Z",
+    "customer_name": "Jane Smith",
+    "customer_email": "jane@example.com",
+    "items": [
+      {"sku": "PROD-005", "name": "Bundle E", "qty": 1, "unit_price": 99.99, "subtotal": 99.99}
+    ],
+    "subtotal": 99.99,
+    "shipping": 8.00,
+    "tax": 8.80,
+    "platform_fees": {
+      "ebay_fee_percent": 0.12,
+      "ebay_fee_amount": 12.00,
+      "payment_processor_fee": 4.50
+    },
+    "total_fees": 16.50,
+    "total_gross": 133.29,
+    "status": "issued",
+    "payment_status": "received"
+  }
+]

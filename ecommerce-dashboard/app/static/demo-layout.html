@@ -1,0 +1,692 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ecom Dashboard - Demo Layout</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --font-heading: "Space Grotesk", sans-serif;
+      --font-body: "IBM Plex Sans", sans-serif;
+      --sidebar-width: 64px;
+      --topbar-height: 56px;
+      --page-v-pad: 20px;
+      --page-x-pad: 20px;
+      --radius: 16px;
+      --radius-sm: 10px;
+      --shadow: 0 4px 20px rgba(0,0,0,0.06);
+      --shadow-lg: 0 8px 32px rgba(0,0,0,0.08);
+      --glow-1: rgba(217, 96, 57, 0.12);
+      --glow-2: rgba(13, 139, 138, 0.1);
+      --page-bg: #f4efe8;
+      --panel: #fffbf4;
+      --surface: #fffdf9;
+      --surface-white: #ffffff;
+      --ink: #1a2233;
+      --ink-2: #3f4d67;
+      --ink-3: #556078;
+      --ink-4: #65708a;
+      --border: rgba(26, 34, 51, 0.08);
+      --border-active: rgba(26, 34, 51, 0.2);
+      --accent: #d96039;
+      --accent-2: #0d8b8a;
+      --accent-3: #1f5cb8;
+      --accent-gradient: linear-gradient(145deg, #1a6cc6, #1f4ea5);
+      --accent-2-gradient: linear-gradient(145deg, #1a9d91, #117b7e);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scrollbar-gutter: stable; }
+    body {
+      font-family: var(--font-body);
+      color: var(--ink);
+      background: var(--page-bg);
+      overflow: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background:
+        radial-gradient(800px 400px at 108% -15%, var(--glow-1), transparent 55%),
+        radial-gradient(900px 500px at -8% -12%, var(--glow-2), transparent 60%),
+        linear-gradient(145deg, var(--page-bg) 0%, #e9e4dc 35%, #e0dcd4 100%);
+    }
+    .app-layout {
+      display: grid;
+      grid-template-columns: var(--sidebar-width) 1fr;
+      grid-template-rows: var(--topbar-height) 1fr;
+      height: 100vh;
+      padding: var(--page-v-pad) var(--page-x-pad);
+      gap: var(--page-v-pad);
+      padding-top: 12px;
+      padding-left: 12px;
+    }
+    /* Sidebar (links, schmal) */
+    .sidebar {
+      grid-row: 1 / -1;
+      grid-column: 1;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      padding: 12px 10px;
+      gap: 6px;
+    }
+    .sidebar-logo {
+      width: 36px;
+      height: 36px;
+      margin: 0 auto 8px;
+      background: var(--accent-gradient);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-family: var(--font-heading);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+    .sidebar-nav-btn {
+      width: 44px;
+      height: 44px;
+      margin: 0 auto;
+      border: none;
+      border-radius: 12px;
+      background: transparent;
+      color: var(--ink-3);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .sidebar-nav-btn:hover { background: rgba(0,0,0,0.04); color: var(--ink); }
+    .sidebar-nav-btn.active {
+      background: var(--accent-gradient);
+      color: white;
+    }
+    .sidebar-nav-btn svg { width: 22px; height: 22px; }
+    .sidebar-footer {
+      margin-top: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    /* Top Bar (horizontal) */
+    .topbar {
+      grid-row: 1;
+      grid-column: 2;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+    }
+    .topbar-title {
+      font-family: var(--font-heading);
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--ink);
+    }
+    .topbar-divider {
+      width: 1px;
+      height: 24px;
+      background: var(--border);
+    }
+    .topbar-filter {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .topbar-filter-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink-2);
+      font-size: 0.84rem;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .topbar-filter-btn:hover { border-color: var(--border-active); }
+    .topbar-search {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink-3);
+      font-size: 0.84rem;
+    }
+    .topbar-search input {
+      border: none;
+      background: transparent;
+      outline: none;
+      color: var(--ink);
+      width: 180px;
+    }
+    /* Main Container */
+    .main-container {
+      grid-row: 2;
+      grid-column: 2;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    /* Tabs */
+    .tabbar {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 12px 20px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .tab-btn {
+      padding: 10px 18px;
+      border: none;
+      border-radius: 10px 10px 0 0;
+      background: transparent;
+      color: var(--ink-3);
+      font-size: 0.88rem;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .tab-btn:hover { color: var(--ink-2); }
+    .tab-btn.active {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: 0 -2px 8px rgba(0,0,0,0.03);
+    }
+    /* Content Area */
+    .content-area {
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+    /* KPI Mini Row */
+    .kpi-mini-row {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .kpi-mini {
+      text-align: center;
+      padding: 16px;
+      background: var(--surface);
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border);
+    }
+    .kpi-mini-name {
+      font-size: 0.7rem;
+      color: var(--ink-3);
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .kpi-mini-value {
+      font-family: var(--font-heading);
+      font-size: 1.3rem;
+      font-weight: 600;
+      color: var(--ink);
+      margin-top: 4px;
+    }
+    .kpi-mini-trend {
+      font-size: 0.72rem;
+      margin-top: 2px;
+    }
+    .kpi-mini-trend.positive { color: var(--accent-2); }
+    .kpi-mini-trend.negative { color: var(--accent); }
+    /* Table */
+    .data-table-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+    }
+    .data-table-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table-title {
+      font-family: var(--font-heading);
+      font-size: 0.95rem;
+      font-weight: 600;
+    }
+    .data-table-meta {
+      font-size: 0.8rem;
+      color: var(--ink-3);
+    }
+    .data-table-wrap {
+      overflow-x: auto;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 12px 18px;
+      background: rgba(0,0,0,0.02);
+      color: var(--ink-3);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+    .data-table td {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: rgba(0,0,0,0.015); }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 0.72rem;
+      font-weight: 500;
+    }
+    .status-badge.fulfilled { background: rgba(13, 139, 138, 0.1); color: var(--accent-2); }
+    .status-badge.pending { background: rgba(217, 96, 57, 0.1); color: var(--accent); }
+    .status-badge.sent { background: rgba(31, 92, 184, 0.1); color: var(--accent-3); }
+    .status-badge.cancelled { background: rgba(0,0,0,0.06); color: var(--ink-3); }
+    /* Stats Cards */
+    .stats-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 18px;
+    }
+    .stat-card h3 {
+      font-family: var(--font-heading);
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .stat-metrics {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .stat-metric {
+      text-align: center;
+    }
+    .stat-metric .label {
+      font-size: 0.68rem;
+      color: var(--ink-3);
+      text-transform: uppercase;
+    }
+    .stat-metric .value {
+      font-family: var(--font-heading);
+      font-size: 1.2rem;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+    /* Chart */
+    .chart-panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 18px;
+      margin-bottom: 20px;
+    }
+    .chart-panel-title {
+      font-family: var(--font-heading);
+      font-size: 0.9rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    .chart-canvas-wrap {
+      height: 200px;
+    }
+    /* Simple list */
+    .list-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .list-item:last-child { border-bottom: none; }
+    .list-item-info { display: flex; flex-direction: column; }
+    .list-item-title { font-weight: 500; color: var(--ink); }
+    .list-item-sub { font-size: 0.78rem; color: var(--ink-3); margin-top: 2px; }
+    .list-item-value { font-family: var(--font-heading); font-weight: 600; }
+    /* Responsive */
+    @media (max-width: 1100px) {
+      .app-layout { grid-template-columns: var(--sidebar-width) 1fr; }
+      .kpi-mini-row { grid-template-columns: repeat(3, 1fr); }
+      .stats-row { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .app-layout { grid-template-columns: 1fr; grid-template-rows: var(--topbar-height) 1fr; padding: 12px; gap: 12px; }
+      .sidebar { display: none; }
+      .topbar { grid-column: 1; }
+      .main-container { grid-column: 1; grid-row: 2; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar (links, schmal) -->
+    <nav class="sidebar">
+      <div class="sidebar-logo">EC</div>
+      <button class="sidebar-nav-btn active" title="Analytics">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z"/></svg>
+      </button>
+      <button class="sidebar-nav-btn" title="Orders">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 14H7v-2h5v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      </button>
+      <button class="sidebar-nav-btn" title="Kunden">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+      </button>
+      <button class="sidebar-nav-btn" title="Buchungen">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg>
+      </button>
+      <button class="sidebar-nav-btn" title="Google Ads">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9.5 8.5c0 .83-.67 1.5-1.5 1.5H7v2H5.5V9H8c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V9H13c.83 0 1.5.67 1.5 1.5v3zm4-3H17v1h1.5V11H17v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z"/></svg>
+      </button>
+      <div class="sidebar-footer">
+        <button class="sidebar-nav-btn" title="Status">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        </button>
+        <button class="sidebar-nav-btn" title="Einstellungen">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+        </button>
+      </div>
+    </nav>
+
+    <!-- Top Bar (horizontal) -->
+    <header class="topbar">
+      <div class="topbar-title">Analytics</div>
+      <div class="topbar-divider"></div>
+      <div class="topbar-filter">
+        <button class="topbar-filter-btn">
+          <span>Alle Channels</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 4l4 4 4-4"/></svg>
+        </button>
+        <button class="topbar-filter-btn">
+          <span>Letzte 30 Tage</span>
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2 4l4 4 4-4"/></svg>
+        </button>
+      </div>
+      <div class="topbar-search">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" placeholder="Suche...">
+      </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="main-container">
+      <!-- Tab Bar -->
+      <div class="tabbar">
+        <button class="tab-btn active" data-tab="analytics">Analytics</button>
+        <button class="tab-btn" data-tab="orders">Orders</button>
+        <button class="tab-btn" data-tab="customers">Kunden</button>
+      </div>
+
+      <!-- Content Area -->
+      <div class="content-area">
+        <!-- Analytics Tab -->
+        <div id="analyticsPanel" class="tab-panel active">
+          <!-- KPI Mini Row -->
+          <div class="kpi-mini-row">
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">Orders</div>
+              <div class="kpi-mini-value">172</div>
+              <div class="kpi-mini-trend positive">+12%</div>
+            </div>
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">Umsatz</div>
+              <div class="kpi-mini-value">€37.874</div>
+              <div class="kpi-mini-trend positive">+8%</div>
+            </div>
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">Gewinn</div>
+              <div class="kpi-mini-value">€19.775</div>
+              <div class="kpi-mini-trend positive">+14%</div>
+            </div>
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">Marge</div>
+              <div class="kpi-mini-value">52,2%</div>
+              <div class="kpi-mini-trend positive">+3%</div>
+            </div>
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">AOV</div>
+              <div class="kpi-mini-value">€220</div>
+              <div class="kpi-mini-trend negative">-2%</div>
+            </div>
+            <div class="kpi-mini">
+              <div class="kpi-mini-name">Retouren</div>
+              <div class="kpi-mini-value">4</div>
+              <div class="kpi-mini-trend positive">-1</div>
+            </div>
+          </div>
+
+          <!-- Stats Row -->
+          <div class="stats-row">
+            <div class="stat-card">
+              <h3>Performance Snapshot</h3>
+              <div class="stat-metrics">
+                <div class="stat-metric">
+                  <div class="label">Gewinn/Order</div>
+                  <div class="value">€115</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">Fee Quote</div>
+                  <div class="value">14,4%</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">Einkauf</div>
+                  <div class="value">89%</div>
+                </div>
+              </div>
+            </div>
+            <div class="stat-card">
+              <h3>Channel Split</h3>
+              <div class="stat-metrics">
+                <div class="stat-metric">
+                  <div class="label">Shopify</div>
+                  <div class="value">€28.355</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">Kaufland</div>
+                  <div class="value">€9.519</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">eBay</div>
+                  <div class="value">-</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Chart -->
+          <div class="chart-panel">
+            <div class="chart-panel-title">Verlauf - Umsatz & Gewinn</div>
+            <div class="chart-canvas-wrap">
+              <canvas id="trendChart"></canvas>
+            </div>
+          </div>
+
+          <!-- Top Articles Table -->
+          <div class="data-table-card">
+            <div class="data-table-head">
+              <div class="data-table-title">Top Artikel</div>
+              <div class="data-table-meta">5 Einträge</div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Artikel</th><th>Orders</th><th>Umsatz</th><th>Gewinn</th><th>Marge</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Premium Widget Pro</td><td>34</td><td>€7.480</td><td>€3.740</td><td>50%</td></tr>
+                  <tr><td>Basic Essentials</td><td>28</td><td>€4.960</td><td>€2.480</td><td>50%</td></tr>
+                  <tr><td>Starter Kit</td><td>22</td><td>€3.520</td><td>€1.760</td><td>50%</td></tr>
+                  <tr><td>Deluxe Bundle</td><td>18</td><td>€5.940</td><td>€2.970</td><td>50%</td></tr>
+                  <tr><td>Mini Pack</td><td>15</td><td>€2.250</td><td>€1.125</td><td>50%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Orders Tab -->
+        <div id="ordersPanel" class="tab-panel">
+          <div class="data-table-card">
+            <div class="data-table-head">
+              <div class="data-table-title">Alle Orders</div>
+              <div class="data-table-meta">172 Zeilen</div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Datum</th><th>Channel</th><th>Order</th><th>Kunde</th><th>Umsatz</th><th>Status</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>17.04.2026</td><td>Shopify</td><td>#1042</td><td>Max M.</td><td>€249,00</td><td><span class="status-badge fulfilled">Fulfilled</span></td></tr>
+                  <tr><td>17.04.2026</td><td>Shopify</td><td>#1041</td><td>Anna S.</td><td>€89,00</td><td><span class="status-badge sent">Sent</span></td></tr>
+                  <tr><td>16.04.2026</td><td>Kaufland</td><td>#8902</td><td>Tom B.</td><td>€159,00</td><td><span class="status-badge pending">Pending</span></td></tr>
+                  <tr><td>16.04.2026</td><td>Shopify</td><td>#1040</td><td>Lisa K.</td><td>€299,00</td><td><span class="status-badge fulfilled">Fulfilled</span></td></tr>
+                  <tr><td>15.04.2026</td><td>Shopify</td><td>#1039</td><td>Jan D.</td><td>€45,00</td><td><span class="status-badge cancelled">Cancelled</span></td></tr>
+                  <tr><td>15.04.2026</td><td>Kaufland</td><td>#8901</td><td>Maria W.</td><td>€129,00</td><td><span class="status-badge fulfilled">Fulfilled</span></td></tr>
+                  <tr><td>14.04.2026</td><td>Shopify</td><td>#1038</td><td>Chris P.</td><td>€379,00</td><td><span class="status-badge fulfilled">Fulfilled</span></td></tr>
+                  <tr><td>14.04.2026</td><td>Shopify</td><td>#1037</td><td>Sarah L.</td><td>€199,00</td><td><span class="status-badge sent">Sent</span></td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Customers Tab -->
+        <div id="customersPanel" class="tab-panel">
+          <div class="stats-row">
+            <div class="stat-card">
+              <h3>Kunden Overview</h3>
+              <div class="stat-metrics">
+                <div class="stat-metric">
+                  <div class="label">Unique</div>
+                  <div class="value">156</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">Repeat</div>
+                  <div class="value">29</div>
+                </div>
+                <div class="stat-metric">
+                  <div class="label">Rate</div>
+                  <div class="value">18,6%</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="data-table-card">
+            <div class="data-table-head">
+              <div class="data-table-title">Top Kunden</div>
+              <div class="data-table-meta">5 Einträge</div>
+            </div>
+            <div class="data-table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr><th>Kunde</th><th>Channel</th><th>Orders</th><th>Umsatz</th><th>Letzte Bestellung</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Max Mustermann</td><td>Shopify</td><td>12</td><td>€2.840</td><td>17.04.2026</td></tr>
+                  <tr><td>Anna Schmidt</td><td>Shopify + Kaufland</td><td>9</td><td>€2.120</td><td>16.04.2026</td></tr>
+                  <tr><td>Thomas Becker</td><td>Kaufland</td><td>7</td><td>€1.450</td><td>15.04.2026</td></tr>
+                  <tr><td>Lisa Klein</td><td>Shopify</td><td>6</td><td>€980</td><td>14.04.2026</td></tr>
+                  <tr><td>Jan Weber</td><td>Shopify</td><td>5</td><td>€890</td><td>13.04.2026</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Tab switching
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(btn.dataset.tab + 'Panel').classList.add('active');
+      });
+    });
+
+    // Trend Chart
+    const trendCtx = document.getElementById('trendChart').getContext('2d');
+    new Chart(trendCtx, {
+      type: 'line',
+      data: {
+        labels: ['26.11', '28.11', '30.11', '02.12', '04.12', '06.12', '08.12', '10.12', '12.12', '14.12', '16.12', '18.12'],
+        datasets: [{
+          label: 'Umsatz',
+          data: [1200, 890, 1450, 2100, 1850, 920, 1100, 1680, 2300, 1950, 1450, 1200],
+          borderColor: '#d96039',
+          backgroundColor: 'rgba(217, 96, 57, 0.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 0
+        }, {
+          label: 'Gewinn',
+          data: [620, 420, 750, 1100, 920, 420, 520, 820, 1200, 980, 720, 580],
+          borderColor: '#0d8b8a',
+          backgroundColor: 'rgba(13, 139, 138, 0.08)',
+          fill: true,
+          tension: 0.4,
+          pointRadius: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'top', align: 'end', labels: { boxWidth: 12, padding: 14, usePointStyle: true, font: { size: 11 } } }
+        },
+        scales: {
+          x: { grid: { display: false }, ticks: { font: { size: 10 } } },
+          y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.04)' }, ticks: { font: { size: 10 }, callback: v => '€' + v } }
+        }
+      }
+    });
+  </script>
+</body>
+</html>

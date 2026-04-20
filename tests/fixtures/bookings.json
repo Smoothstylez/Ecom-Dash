@@ -1,0 +1,67 @@
+[
+  {
+    "id": "BOOK-001",
+    "order_id": "ORD-001",
+    "booking_date": "2026-03-14",
+    "booking_type": "order_sync",
+    "revenue": 69.78,
+    "cost_of_goods": 25.00,
+    "platform_fees": 3.95,
+    "net_profit": 40.83,
+    "status": "confirmed",
+    "synced_to_bookkeeping": true,
+    "sync_date": "2026-03-14T10:15:00Z"
+  },
+  {
+    "id": "BOOK-002",
+    "order_id": "ORD-002",
+    "booking_date": "2026-03-13",
+    "booking_type": "order_sync",
+    "revenue": 57.49,
+    "cost_of_goods": 20.00,
+    "platform_fees": 7.80,
+    "net_profit": 29.69,
+    "status": "confirmed",
+    "synced_to_bookkeeping": true,
+    "sync_date": "2026-03-13T15:45:00Z"
+  },
+  {
+    "id": "BOOK-003",
+    "order_id": "ORD-003",
+    "booking_date": "2026-03-14",
+    "booking_type": "order_sync",
+    "revenue": 57.75,
+    "cost_of_goods": 15.00,
+    "platform_fees": 5.32,
+    "net_profit": 37.43,
+    "status": "confirmed",
+    "synced_to_bookkeeping": true,
+    "sync_date": "2026-03-14T08:30:00Z"
+  },
+  {
+    "id": "BOOK-004",
+    "order_id": "ORD-004",
+    "booking_date": "2026-03-12",
+    "booking_type": "order_sync",
+    "revenue": 58.92,
+    "cost_of_goods": 22.50,
+    "platform_fees": 3.50,
+    "net_profit": 32.92,
+    "status": "pending",
+    "synced_to_bookkeeping": false,
+    "sync_date": null
+  },
+  {
+    "id": "BOOK-005",
+    "order_id": "ORD-005",
+    "booking_date": "2026-03-10",
+    "booking_type": "order_sync",
+    "revenue": 116.79,
+    "cost_of_goods": 40.00,
+    "platform_fees": 16.50,
+    "net_profit": 60.29,
+    "status": "confirmed",
+    "synced_to_bookkeeping": true,
+    "sync_date": "2026-03-10T14:35:00Z"
+  }
+]

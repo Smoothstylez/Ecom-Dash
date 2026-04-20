@@ -1,0 +1,72 @@
+[
+  {
+    "id": "CUST-001",
+    "name": "John Doe",
+    "email": "john@example.com",
+    "phone": "+49123456789",
+    "address": "123 Main Street, 10115 Berlin, Germany",
+    "country": "DE",
+    "customer_since": "2026-02-01",
+    "lifetime_value": 127.53,
+    "total_orders": 2,
+    "order_ids": ["ORD-001", "ORD-003"],
+    "preferred_source": "shopify",
+    "notes": "Regular customer"
+  },
+  {
+    "id": "CUST-002",
+    "name": "Jane Smith",
+    "email": "jane@example.com",
+    "phone": "+49987654321",
+    "address": "456 Oak Avenue, 20095 Hamburg, Germany",
+    "country": "DE",
+    "customer_since": "2026-01-15",
+    "lifetime_value": 174.28,
+    "total_orders": 2,
+    "order_ids": ["ORD-002", "ORD-005"],
+    "preferred_source": "ebay",
+    "notes": "VIP customer - high-value orders"
+  },
+  {
+    "id": "CUST-003",
+    "name": "Bob Wilson",
+    "email": "bob@example.com",
+    "phone": "+4915112345678",
+    "address": "789 Pine Road, 80331 Munich, Germany",
+    "country": "DE",
+    "customer_since": "2026-03-01",
+    "lifetime_value": 58.92,
+    "total_orders": 1,
+    "order_ids": ["ORD-004"],
+    "preferred_source": "shopify",
+    "notes": "New customer"
+  },
+  {
+    "id": "CUST-004",
+    "name": "Alice Johnson",
+    "email": "alice@example.com",
+    "phone": "+49301234567",
+    "address": "321 Elm Street, 10623 Berlin, Germany",
+    "country": "DE",
+    "customer_since": "2026-02-20",
+    "lifetime_value": 0.00,
+    "total_orders": 0,
+    "order_ids": [],
+    "preferred_source": null,
+    "notes": "Prospect - no orders yet"
+  },
+  {
+    "id": "CUST-005",
+    "name": "Charlie Brown",
+    "email": "charlie@example.com",
+    "phone": "+49711123456",
+    "address": "654 Birch Lane, 70173 Stuttgart, Germany",
+    "country": "DE",
+    "customer_since": "2025-12-10",
+    "lifetime_value": 450.25,
+    "total_orders": 5,
+    "order_ids": ["ORD-101", "ORD-102", "ORD-103", "ORD-104", "ORD-105"],
+    "preferred_source": "kaufland",
+    "notes": "Loyal customer - bulk buyer"
+  }
+]

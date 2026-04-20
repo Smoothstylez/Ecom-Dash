@@ -612,10 +612,10 @@ function applyCustomerGlobeBaseLayer(features) {
       state.customerGlobe.hexPolygonsData(features);
     }
     if (typeof state.customerGlobe.hexPolygonResolution === "function") {
-      state.customerGlobe.hexPolygonResolution(3);
+      state.customerGlobe.hexPolygonResolution(4);
     }
     if (typeof state.customerGlobe.hexPolygonMargin === "function") {
-      state.customerGlobe.hexPolygonMargin(0.22);
+      state.customerGlobe.hexPolygonMargin(0.12);
     }
     if (typeof state.customerGlobe.hexPolygonAltitude === "function") {
       state.customerGlobe.hexPolygonAltitude(0.0036);
@@ -655,7 +655,7 @@ function ensureCustomerGlobeBaseLayer() {
   }
 
   appendCustomerGeoLog("Kontinent-Hexlayer wird geladen...");
-  state.customerGlobeWorldLoadPromise = fetch("https://unpkg.com/world-atlas@2/countries-110m.json")
+  state.customerGlobeWorldLoadPromise = fetch("https://unpkg.com/world-atlas@2/countries-50m.json")
     .then((response) => {
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
@@ -760,7 +760,7 @@ function renderCustomerGeoGlobe(points) {
         state.customerGlobe.showGraticules(true);
       }
       if (typeof state.customerGlobe.hexBinResolution === "function") {
-        state.customerGlobe.hexBinResolution(3);
+        state.customerGlobe.hexBinResolution(4);
       }
       if (typeof state.customerGlobe.hexMargin === "function") {
         state.customerGlobe.hexMargin(0.22);

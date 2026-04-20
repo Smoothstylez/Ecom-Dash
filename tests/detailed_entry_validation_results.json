@@ -1,0 +1,99 @@
+{
+  "orders": {
+    "shopify": {
+      "passed": 140,
+      "failed": 14,
+      "errors": [
+        {
+          "entry_id": "7409979359571",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 319.8, got 333.79"
+        },
+        {
+          "entry_id": "7399183221075",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 428.32, got 442.65"
+        },
+        {
+          "entry_id": "7384515871059",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 429.9, got 443.89"
+        },
+        {
+          "entry_id": "7376332292435",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 428.39, got 442.68"
+        },
+        {
+          "entry_id": "7185959256403",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 49.9, got 54.49"
+        },
+        {
+          "entry_id": "7176456503635",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 189.9, got 203.89"
+        },
+        {
+          "entry_id": "7148531286355",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 219.9, got 233.89"
+        },
+        {
+          "entry_id": "7135042208083",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 199.9, got 213.89"
+        },
+        {
+          "entry_id": "7133998317907",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 124.9, got 138.89"
+        },
+        {
+          "entry_id": "7097487982931",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 189.9, got 203.89"
+        },
+        {
+          "entry_id": "7469627212115",
+          "type": "order_shopify",
+          "error": "total_price mismatch: expected 530.31, got 544.63"
+        },
+        {
+          "entry_id": "smoke_test_ord_c16c0390",
+          "type": "order_shopify",
+          "error": "customer_id missing"
+        },
+        {
+          "entry_id": "smoke_test_ord_0a855ed0",
+          "type": "order_shopify",
+          "error": "customer_id missing"
+        },
+        {
+          "entry_id": "smoke_test_ord_9440feb2",
+          "type": "order_shopify",
+          "error": "customer_id missing"
+        }
+      ]
+    },
+    "kaufland": {
+      "passed": 99,
+      "failed": 0,
+      "errors": []
+    }
+  },
+  "invoices": {
+    "passed": 1,
+    "failed": 0,
+    "errors": []
+  },
+  "bookkeeping": {
+    "passed": 601,
+    "failed": 0,
+    "errors": []
+  },
+  "summary": {
+    "total_passed": 841,
+    "total_failed": 14
+  }
+}

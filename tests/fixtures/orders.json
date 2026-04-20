@@ -1,0 +1,88 @@
+[
+  {
+    "id": "ORD-001",
+    "customer_id": "CUST-001",
+    "customer_name": "John Doe",
+    "customer_email": "john@example.com",
+    "source": "shopify",
+    "items": [
+      {"sku": "PROD-001", "name": "Widget A", "qty": 2, "unit_price": 29.99, "subtotal": 59.98}
+    ],
+    "subtotal": 59.98,
+    "shipping": 5.00,
+    "tax": 4.80,
+    "total": 69.78,
+    "status": "pending",
+    "date_created": "2026-03-14T10:00:00Z",
+    "date_updated": "2026-03-14T10:00:00Z"
+  },
+  {
+    "id": "ORD-002",
+    "customer_id": "CUST-002",
+    "customer_name": "Jane Smith",
+    "customer_email": "jane@example.com",
+    "source": "ebay",
+    "items": [
+      {"sku": "PROD-002", "name": "Gadget B", "qty": 1, "unit_price": 49.99, "subtotal": 49.99}
+    ],
+    "subtotal": 49.99,
+    "shipping": 3.50,
+    "tax": 4.00,
+    "total": 57.49,
+    "status": "shipped",
+    "date_created": "2026-03-13T15:30:00Z",
+    "date_updated": "2026-03-14T09:00:00Z"
+  },
+  {
+    "id": "ORD-003",
+    "customer_id": "CUST-001",
+    "customer_name": "John Doe",
+    "customer_email": "john@example.com",
+    "source": "kaufland",
+    "items": [
+      {"sku": "PROD-003", "name": "Tool C", "qty": 3, "unit_price": 15.50, "subtotal": 46.50}
+    ],
+    "subtotal": 46.50,
+    "shipping": 7.00,
+    "tax": 4.25,
+    "total": 57.75,
+    "status": "pending",
+    "date_created": "2026-03-14T08:15:00Z",
+    "date_updated": "2026-03-14T08:15:00Z"
+  },
+  {
+    "id": "ORD-004",
+    "customer_id": "CUST-003",
+    "customer_name": "Bob Wilson",
+    "customer_email": "bob@example.com",
+    "source": "shopify",
+    "items": [
+      {"sku": "PROD-001", "name": "Widget A", "qty": 1, "unit_price": 29.99, "subtotal": 29.99},
+      {"sku": "PROD-004", "name": "Accessory D", "qty": 2, "unit_price": 9.99, "subtotal": 19.98}
+    ],
+    "subtotal": 49.97,
+    "shipping": 4.50,
+    "tax": 4.45,
+    "total": 58.92,
+    "status": "processing",
+    "date_created": "2026-03-12T12:00:00Z",
+    "date_updated": "2026-03-14T11:00:00Z"
+  },
+  {
+    "id": "ORD-005",
+    "customer_id": "CUST-002",
+    "customer_name": "Jane Smith",
+    "customer_email": "jane@example.com",
+    "source": "ebay",
+    "items": [
+      {"sku": "PROD-005", "name": "Bundle E", "qty": 1, "unit_price": 99.99, "subtotal": 99.99}
+    ],
+    "subtotal": 99.99,
+    "shipping": 8.00,
+    "tax": 8.80,
+    "total": 116.79,
+    "status": "delivered",
+    "date_created": "2026-03-10T14:20:00Z",
+    "date_updated": "2026-03-14T10:30:00Z"
+  }
+]

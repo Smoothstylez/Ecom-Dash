@@ -17,6 +17,11 @@ const state = {
     returnsOnly: false,
     orderStatus: new Set(),
     orderPayment: new Set(),
+    hideCanceled: true,       // default: canceled orders hidden
+    hasPurchaseCost: false,   // only orders with purchase cost entered
+    noPurchaseCost: false,    // only orders missing purchase cost
+    hasInvoice: false,        // only orders with invoice uploaded
+    noInvoice: false,         // only orders missing invoice
   },
   dateRangeUi: {
     anchorMonth: "",
@@ -152,6 +157,11 @@ const els = {
   tabBookingsBtn: document.getElementById("tabBookingsBtn"),
   tabGoogleAdsBtn: document.getElementById("tabGoogleAdsBtn"),
   tabEbayBtn: document.getElementById("tabEbayBtn"),
+  sidebarToggleBtn: document.getElementById("sidebarToggleBtn"),
+  mainSidebar: document.getElementById("mainSidebar"),
+  sidebarStatusBtn: document.getElementById("sidebarStatusBtn"),
+  sidebarSettingsBtn: document.getElementById("sidebarSettingsBtn"),
+  sidebarSyncBtn: document.getElementById("sidebarSyncBtn"),
 
   analyticsPanel: document.getElementById("analyticsPanel"),
   ordersPanel: document.getElementById("ordersPanel"),
@@ -337,7 +347,7 @@ const els = {
   pollingToggle: document.getElementById("pollingToggle"),
   pollingIntervalInput: document.getElementById("pollingIntervalInput"),
   googleAdsImportMeta: document.getElementById("googleAdsImportMeta"),
-  googleAdsStatusInfo: document.getElementById("googleAdsStatusInfo"),
+  googleAdsPanelStatusInfo: document.getElementById("googleAdsPanelStatusInfo"),
   googleAdsKpiCostTotal: document.getElementById("googleAdsKpiCostTotal"),
   googleAdsKpiCostSplit: document.getElementById("googleAdsKpiCostSplit"),
   googleAdsKpiRevenue: document.getElementById("googleAdsKpiRevenue"),
@@ -1034,7 +1044,16 @@ function setOrdersFilterOpen(isOpen) {
 }
 
 function getActiveOrdersFilterCount() {
-  return state.filters.orderStatus.size + state.filters.orderPayment.size + (state.filters.returnsOnly ? 1 : 0);
+  const f = state.filters;
+  return f.orderStatus.size
+    + f.orderPayment.size
+    + (f.returnsOnly ? 1 : 0)
+    + (f.hasPurchaseCost ? 1 : 0)
+    + (f.noPurchaseCost ? 1 : 0)
+    + (f.hasInvoice ? 1 : 0)
+    + (f.noInvoice ? 1 : 0)
+    // hideCanceled is the default so it doesn't count toward the active-filter badge
+    + (f.hideCanceled ? 0 : 1);
 }
 
 function updateOrdersFilterBadge() {
@@ -1234,15 +1253,55 @@ function animateKpiValue(key, targetValue, renderValue, duration = 700) {
 }
 
 /* ── Download Helper ── */
-function triggerDownload(url) {
+function getDownloadFilename(response, fallbackName = "download.bin") {
+  const header = response.headers.get("content-disposition") || "";
+  const utf8Match = header.match(/filename\*=UTF-8''([^;]+)/i);
+  if (utf8Match && utf8Match[1]) {
+    try {
+      return decodeURIComponent(utf8Match[1]);
+    } catch (error) {
+      return utf8Match[1];
+    }
+  }
+  const plainMatch = header.match(/filename="?([^";]+)"?/i);
+  if (plainMatch && plainMatch[1]) {
+    return plainMatch[1];
+  }
+  return fallbackName;
+}
+
+async function triggerDownload(url, fallbackName = "download.bin") {
+  const response = await fetch(url, { method: "GET" });
+  if (!response.ok) {
+    let errorMessage = `Download fehlgeschlagen (${response.status})`;
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    try {
+      if (contentType.includes("application/json")) {
+        const payload = await response.json();
+        errorMessage = payload?.detail || payload?.error || errorMessage;
+      } else {
+        const text = await response.text();
+        if (text) {
+          errorMessage = text;
+        }
+      }
+    } catch (error) {
+      // Keep the generic message when the body cannot be parsed.
+    }
+    throw new Error(errorMessage);
+  }
+
+  const blob = await response.blob();
+  const filename = getDownloadFilename(response, fallbackName);
+  const blobUrl = URL.createObjectURL(blob);
   const link = document.createElement("a");
-  link.href = url;
-  link.target = "_blank";
-  link.rel = "noreferrer";
+  link.href = blobUrl;
+  link.download = filename;
   link.style.display = "none";
   document.body.appendChild(link);
   link.click();
   link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
 }
 
 /* ── Return Status Helpers ── */
@@ -1474,6 +1533,9 @@ function initAnalyticsDragReorder() {
   const layoutMenuBtn = document.getElementById("layoutEditMenuBtn");
   if (layoutMenuBtn) {
     layoutMenuBtn.addEventListener("click", () => {
+      if (typeof closeSettingsPanel === "function") {
+        closeSettingsPanel();
+      }
       setSourcePanelOpen(false);
       setEditing(true);
     });

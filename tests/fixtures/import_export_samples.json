@@ -1,0 +1,70 @@
+{
+  "import_export_samples": {
+    "orders_import_sample_csv": {
+      "file": "orders_sample.csv",
+      "headers": ["order_id", "customer_name", "customer_email", "total", "source", "status", "date"],
+      "sample_rows": [
+        ["ORD-101", "Michael Davis", "michael@example.com", "75.50", "shopify", "pending", "2026-03-14"],
+        ["ORD-102", "Sarah Wilson", "sarah@example.com", "120.00", "ebay", "shipped", "2026-03-13"],
+        ["ORD-103", "Tom Brown", "tom@example.com", "89.99", "kaufland", "processing", "2026-03-12"]
+      ],
+      "notes": "Valid CSV for import testing"
+    },
+    "orders_invalid_csv": {
+      "file": "orders_invalid.csv",
+      "issues": [
+        "Missing required field: customer_email",
+        "Invalid total (negative value): -50.00",
+        "Invalid source: 'unknown_platform'",
+        "Invalid date format: not-a-date"
+      ],
+      "sample_rows": [
+        ["ORD-201", "Invalid User", "", "-50.00", "unknown_platform", "pending", "not-a-date"],
+        ["ORD-202", "Bad Data", "test@example.com", "abc", "shopify", "invalid_status", "2026-03-14"]
+      ],
+      "notes": "Should be rejected in strict validation mode"
+    },
+    "export_sample_json": {
+      "file": "orders_export.json",
+      "format": "json",
+      "structure": {
+        "metadata": {
+          "export_date": "2026-03-14T12:00:00Z",
+          "total_records": 5,
+          "filters_applied": {
+            "date_from": "2026-03-01",
+            "date_to": "2026-03-14",
+            "sources": ["shopify", "ebay", "kaufland"]
+          }
+        },
+        "orders": [
+          {
+            "id": "ORD-001",
+            "customer_name": "John Doe",
+            "total": 69.78,
+            "source": "shopify",
+            "status": "pending"
+          }
+        ]
+      }
+    },
+    "customers_export_csv": {
+      "file": "customers_export.csv",
+      "headers": ["customer_id", "name", "email", "phone", "total_orders", "lifetime_value"],
+      "sample_rows": [
+        ["CUST-001", "John Doe", "john@example.com", "+49123456789", "2", "127.53"],
+        ["CUST-002", "Jane Smith", "jane@example.com", "+49987654321", "2", "174.28"],
+        ["CUST-003", "Bob Wilson", "bob@example.com", "+4915112345678", "1", "58.92"]
+      ]
+    },
+    "invoices_bulk_export": {
+      "file": "invoices_bulk_export.json",
+      "format": "json",
+      "total_records": 5,
+      "date_range": "2026-03-10 to 2026-03-14",
+      "total_revenue": 354.74,
+      "total_fees": 35.57,
+      "sample_structure": "See invoices.json"
+    }
+  }
+}

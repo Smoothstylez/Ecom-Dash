@@ -48,21 +48,23 @@ async function loadHealth() {
     );
   }
 
-  els.sourceInfo.innerHTML = [
-    `Local Shopify DB: <strong>${shopifyFlag}</strong>`,
-    `Local Kaufland DB: <strong>${kauflandFlag}</strong>`,
-    `Local Buchungen DB: <strong>${bookkeepingFlag}</strong>`,
-    `Bootstrap Shopify: <strong>${shopifyBootstrap}</strong>`,
-    `Bootstrap Kaufland: <strong>${kauflandBootstrap}</strong>`,
-    `Bootstrap Buchungen: <strong>${bookkeepingBootstrap}</strong>`,
-    `Live Shopify: <strong>${shopifyLiveReady}</strong>`,
-    `Live Kaufland: <strong>${kauflandLiveReady}</strong>`,
-    `Auto Live Sync: <strong>${autoLiveState}</strong> (alle ${NUMBER_FMT.format(autoLiveInterval)}s)`,
-    `Auto Live Last: <strong>${autoLiveStatus}</strong> [${autoLiveMode}] — Zyklus ${cycleCount}`,
-    ...(nextReconcileIn > 0 ? [`Nächster Reconcile: in ${nextReconcileIn} Zyklen`] : []),
-    ...(providerLines.length > 0 ? ["Letzte Ergebnisse:", ...providerLines] : []),
-    `Buchungen Modus: <strong>${moduleStatus}</strong>`
-  ].join("<br>");
+  if (els.sourceInfo instanceof HTMLElement) {
+    els.sourceInfo.innerHTML = [
+      `Local Shopify DB: <strong>${shopifyFlag}</strong>`,
+      `Local Kaufland DB: <strong>${kauflandFlag}</strong>`,
+      `Local Buchungen DB: <strong>${bookkeepingFlag}</strong>`,
+      `Bootstrap Shopify: <strong>${shopifyBootstrap}</strong>`,
+      `Bootstrap Kaufland: <strong>${kauflandBootstrap}</strong>`,
+      `Bootstrap Buchungen: <strong>${bookkeepingBootstrap}</strong>`,
+      `Live Shopify: <strong>${shopifyLiveReady}</strong>`,
+      `Live Kaufland: <strong>${kauflandLiveReady}</strong>`,
+      `Auto Live Sync: <strong>${autoLiveState}</strong> (alle ${NUMBER_FMT.format(autoLiveInterval)}s)`,
+      `Auto Live Last: <strong>${autoLiveStatus}</strong> [${autoLiveMode}] — Zyklus ${cycleCount}`,
+      ...(nextReconcileIn > 0 ? [`Nächster Reconcile: in ${nextReconcileIn} Zyklen`] : []),
+      ...(providerLines.length > 0 ? ["Letzte Ergebnisse:", ...providerLines] : []),
+      `Buchungen Modus: <strong>${moduleStatus}</strong>`
+    ].join("<br>");
+  }
   if (lastSyncAt) {
     const modeLabel = autoLiveMode === "DELTA" ? "Delta" : autoLiveMode === "RECONCILE" ? "Reconcile" : autoLiveMode;
     setLastSyncInfo(`Letzter Sync: ${formatDate(lastSyncAt, "-")} (${autoLiveStatus}, ${modeLabel})`);
@@ -132,6 +134,62 @@ function setActiveTab(tab) {
       }
     }, 0);
   }
+
+  window.requestAnimationFrame(() => {
+    if (typeof syncOrdersTableViewportHeight === "function") {
+      syncOrdersTableViewportHeight();
+    }
+  });
+}
+
+function syncSingleTableWrapViewportHeight(panel, tableWrap) {
+  if (!(panel instanceof HTMLElement) || !(tableWrap instanceof HTMLElement)) {
+    return;
+  }
+  const mainWrapper = document.querySelector(".main-content-wrapper");
+  if (!panel.classList.contains("active")) {
+    tableWrap.style.removeProperty("height");
+    tableWrap.style.removeProperty("max-height");
+    return;
+  }
+
+  const rootStyle = getComputedStyle(document.documentElement);
+  const pageGap = parseFloat(rootStyle.getPropertyValue("--page-v-pad")) || 24;
+  const bottomGap = pageGap + 2;
+  const rect = tableWrap.getBoundingClientRect();
+  const wrapperBottom = mainWrapper instanceof HTMLElement
+    ? mainWrapper.getBoundingClientRect().bottom
+    : window.innerHeight;
+  const sidebarBottom = els.mainSidebar instanceof HTMLElement
+    ? els.mainSidebar.getBoundingClientRect().bottom
+    : window.innerHeight;
+  const targetBottom = Math.min(wrapperBottom, sidebarBottom);
+  const availableHeight = Math.max(320, Math.floor(targetBottom - rect.top - 2));
+  tableWrap.style.height = `${availableHeight}px`;
+  tableWrap.style.maxHeight = `${availableHeight}px`;
+}
+
+function syncOrdersTableViewportHeight() {
+  if (els.ordersPanel instanceof HTMLElement) {
+    syncSingleTableWrapViewportHeight(
+      els.ordersPanel,
+      els.ordersPanel.querySelector(".table-wrap")
+    );
+  }
+
+  if (els.bookingsTransactionsPanel instanceof HTMLElement && els.bookingsBody instanceof HTMLElement) {
+    syncSingleTableWrapViewportHeight(
+      els.bookingsTransactionsPanel,
+      els.bookingsBody.closest(".table-wrap")
+    );
+  }
+
+  if (els.bookingsOrdersPanel instanceof HTMLElement && els.bookingOrdersBody instanceof HTMLElement) {
+    syncSingleTableWrapViewportHeight(
+      els.bookingsOrdersPanel,
+      els.bookingOrdersBody.closest(".table-wrap")
+    );
+  }
 }
 
 function normalizeTab(value) {
@@ -157,7 +215,7 @@ function applyInitialViewFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const path = String(window.location.pathname || "").toLowerCase();
   let initialTab = normalizeTab(params.get("tab"));
-  state.bookingsFullView = path === "/bookings/full";
+  state.bookingsFullView = path === "/bookings/full" || params.get("full") === "1";
 
   if (path === "/bookings" || state.bookingsFullView) {
     initialTab = "bookings";
@@ -392,8 +450,19 @@ async function runLiveSync() {
 
 /* ── Datenverwaltung Modal ── */
 
+function closeSettingsPanel() {
+  const panel = document.getElementById("settingsPanel");
+  if (panel instanceof HTMLElement) {
+    panel.classList.remove("active");
+  }
+  if (els.sidebarSettingsBtn instanceof HTMLElement) {
+    els.sidebarSettingsBtn.classList.remove("active");
+  }
+}
+
 function openDataModal() {
   if (!(els.dataModal instanceof HTMLElement)) return;
+  closeSettingsPanel();
   resetRestoreUI();
   els.dataModal.classList.add("active");
   els.dataModal.setAttribute("aria-hidden", "false");
@@ -569,7 +638,7 @@ async function executeRestore() {
   }
 }
 
-function runPeriodExport() {
+async function runPeriodExport() {
   const fromDate = String(state.filters.from || "").trim();
   const toDate = String(state.filters.to || "").trim();
   if (!fromDate || !toDate) {
@@ -587,18 +656,262 @@ function runPeriodExport() {
     params.set("q", state.filters.q);
   }
 
-  triggerDownload(`${API_BASE}/exports/period?${params.toString()}`);
-  setStatus("Zeitraum-Export gestartet (ZIP mit CSV + Belegen).", "info");
+  try {
+    await triggerDownload(`${API_BASE}/exports/period?${params.toString()}`, "combined_period_export.zip");
+    setStatus("Zeitraum-Export heruntergeladen (ZIP mit CSV + Belegen).", "ok");
+  } catch (error) {
+    setStatus(`Zeitraum-Export fehlgeschlagen: ${error.message}`, "error");
+  }
 }
 
-function runFullBackupExport() {
-  triggerDownload(`${API_BASE}/exports/backup`);
-  setStatus("Vollbackup gestartet (ZIP Snapshot).", "info");
+async function runFullBackupExport() {
+  try {
+    await triggerDownload(`${API_BASE}/exports/backup`, "combined_full_backup.zip");
+    setStatus("Vollbackup heruntergeladen (ZIP Snapshot).", "ok");
+  } catch (error) {
+    setStatus(`Vollbackup fehlgeschlagen: ${error.message}`, "error");
+  }
 }
 
 /* ── Event Binding & Boot ── */
 
 function bindEvents() {
+  /* Sidebar toggle */
+  if (els.sidebarToggleBtn) {
+    els.sidebarToggleBtn.addEventListener("click", () => {
+      if (els.mainSidebar) {
+        els.mainSidebar.classList.toggle("collapsed");
+        const isCollapsed = els.mainSidebar.classList.contains("collapsed");
+        els.sidebarToggleBtn.setAttribute("aria-label", isCollapsed ? "Sidebar ausklappen" : "Sidebar einklappen");
+        els.sidebarToggleBtn.title = isCollapsed ? "Ausklappen" : "Einklappen";
+        
+        const pageLayout = document.querySelector(".page-layout");
+        if (pageLayout) {
+          pageLayout.classList.toggle("sidebar-collapsed", isCollapsed);
+        }
+      }
+    });
+  }
+
+  /* Status panel */
+  if (els.sidebarStatusBtn) {
+    els.sidebarStatusBtn.addEventListener("click", async () => {
+      const panel = document.getElementById("statusPanel");
+      if (panel) {
+        panel.classList.toggle("active");
+        const isActive = panel.classList.contains("active");
+        els.sidebarStatusBtn.classList.toggle("active", isActive);
+        
+        if (isActive) {
+          try {
+            await loadHealth();
+            await Promise.allSettled([
+              loadGoogleAds(),
+              ensureCustomersDataLoaded(false),
+            ]);
+            rerender();
+          } catch (e) {
+            console.error("Failed to load status:", e);
+          }
+        }
+      }
+    });
+  }
+
+  if (document.getElementById("closeStatusBtn")) {
+    document.getElementById("closeStatusBtn").addEventListener("click", () => {
+      const panel = document.getElementById("statusPanel");
+      if (panel) {
+        panel.classList.remove("active");
+        if (els.sidebarStatusBtn) els.sidebarStatusBtn.classList.remove("active");
+      }
+    });
+  }
+
+  /* Settings panel */
+  if (els.sidebarSettingsBtn) {
+    els.sidebarSettingsBtn.addEventListener("click", () => {
+      const panel = document.getElementById("settingsPanel");
+      if (panel) {
+        panel.classList.toggle("active");
+        const isActive = panel.classList.contains("active");
+        els.sidebarSettingsBtn.classList.toggle("active", isActive);
+      }
+    });
+  }
+
+  if (document.getElementById("closeSettingsBtn")) {
+    document.getElementById("closeSettingsBtn").addEventListener("click", () => {
+      closeSettingsPanel();
+    });
+  }
+
+  /* Close modals on backdrop click */
+  document.addEventListener("click", (e) => {
+    if (e.target.classList.contains("sidebar-modal")) {
+      e.target.classList.remove("active");
+      if (els.sidebarStatusBtn) els.sidebarStatusBtn.classList.remove("active");
+      if (els.sidebarSettingsBtn) els.sidebarSettingsBtn.classList.remove("active");
+    }
+  });
+
+  /* Sync button - trigger source sync */
+  const syncBtnEl = document.getElementById("sidebarSyncBtn");
+  if (syncBtnEl) {
+    syncBtnEl.addEventListener("click", async () => {
+      syncBtnEl.disabled = true;
+      syncBtnEl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true" class="spinning"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg><span>Sync...</span>';
+      try {
+        const resp = await fetch("/api/sync/run", { method: "POST", headers: { "Content-Type": "application/json" } });
+        const data = await resp.json();
+        if (data.ok || data.results) {
+          setStatus("Quellen synchronisiert", "ok");
+          setTimeout(() => refreshAll(), 500);
+        } else {
+          setStatus("Sync fehlgeschlagen", "error");
+        }
+      } catch (err) {
+        setStatus("Sync Fehler: " + err.message, "error");
+      }
+      syncBtnEl.disabled = false;
+      syncBtnEl.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4V1L8 5l4 4V6c3.31 0 6 2.69 6 6 0 1.01-.25 1.97-.7 2.8l1.46 1.46C19.54 15.03 20 13.57 20 12c0-4.42-3.58-8-8-8zm0 14c-3.31 0-6-2.69-6-6 0-1.01.25-1.97.7-2.8L5.24 7.74C4.46 8.97 4 10.43 4 12c0 4.42 3.58 8 8 8v3l4-4-4-4v3z"/></svg><span>Sync</span>';
+    });
+  }
+
+  /* Settings buttons */
+  const btnSyncSources = document.getElementById("btnSyncSources");
+  if (btnSyncSources) {
+    btnSyncSources.addEventListener("click", async () => {
+      btnSyncSources.disabled = true;
+      btnSyncSources.textContent = "Syncing...";
+      try {
+        const resp = await fetchJson("/api/sync/run", { method: "POST" });
+        if (resp.ok) {
+          setStatus("Quellen synchronisiert", "ok");
+          setTimeout(() => refreshAll(), 500);
+        } else {
+          setStatus("Sync fehlgeschlagen", "error");
+        }
+      } catch (err) {
+        setStatus("Sync Fehler", "error");
+      }
+      btnSyncSources.disabled = false;
+      btnSyncSources.textContent = "Quellen synchronisieren";
+    });
+  }
+
+  const btnSyncLive = document.getElementById("btnSyncLive");
+  if (btnSyncLive) {
+    btnSyncLive.addEventListener("click", async () => {
+      btnSyncLive.disabled = true;
+      btnSyncLive.textContent = "Live Sync...";
+      try {
+        const resp = await fetchJson("/api/sync/live/run", { method: "POST" });
+        if (resp.ok) {
+          setStatus("Live Sync gestartet", "ok");
+        } else {
+          setStatus("Live Sync fehlgeschlagen", "error");
+        }
+      } catch (err) {
+        setStatus("Live Sync Fehler", "error");
+      }
+      btnSyncLive.disabled = false;
+      btnSyncLive.textContent = "Live-API Sync starten";
+    });
+  }
+
+  const btnReloadData = document.getElementById("btnReloadData");
+  if (btnReloadData) {
+    btnReloadData.addEventListener("click", () => {
+      refreshAll();
+      setStatus("Daten neu geladen", "ok");
+    });
+  }
+
+  const btnBackupData = document.getElementById("btnBackupData");
+  if (btnBackupData) {
+    btnBackupData.addEventListener("click", async () => {
+      btnBackupData.disabled = true;
+      btnBackupData.textContent = "Backup...";
+      try {
+        const resp = await fetchJson("/api/exports/backup", { method: "POST" });
+        if (resp.ok) {
+          setStatus("Backup erstellt", "ok");
+        } else {
+          setStatus("Backup fehlgeschlagen", "error");
+        }
+      } catch (err) {
+        setStatus("Backup Fehler", "error");
+      }
+      btnBackupData.disabled = false;
+      btnBackupData.textContent = "Backup erstellen";
+    });
+  }
+
+  /* Credentials save */
+  const btnSaveCredentials = document.getElementById("btnSaveCredentials");
+  if (btnSaveCredentials) {
+    btnSaveCredentials.addEventListener("click", async () => {
+      const domain = document.getElementById("credShopifyDomain")?.value?.trim();
+      const clientId = document.getElementById("credShopifyClientId")?.value?.trim();
+      const clientSecret = document.getElementById("credShopifyClientSecret")?.value?.trim();
+      const kauflandClientKey = document.getElementById("credKauflandClientKey")?.value?.trim();
+      const kauflandSecretKey = document.getElementById("credKauflandSecretKey")?.value?.trim();
+      
+      try {
+        const resp = await fetch("/api/sync/credentials", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            shopify_domain: domain,
+            shopify_client_id: clientId,
+            shopify_client_secret: clientSecret,
+            shopify_api_version: "2025-01",
+            kaufland_client_key: kauflandClientKey,
+            kaufland_secret_key: kauflandSecretKey,
+          }),
+        });
+        const data = await resp.json();
+        
+        const statusEl = document.getElementById("credentialsStatus");
+        if (statusEl) {
+          if (data.ok) {
+            statusEl.textContent = "Credentials gespeichert!";
+            statusEl.className = "credentials-status success";
+          } else {
+            statusEl.textContent = "Fehler: " + (data.message || "");
+            statusEl.className = "credentials-status error";
+          }
+          setTimeout(() => {
+            statusEl.textContent = "";
+            statusEl.className = "credentials-status";
+          }, 3000);
+        }
+        
+        setStatus(data.ok ? "Credentials gespeichert!" : "Fehler beim Speichern", data.ok ? "ok" : "error");
+      } catch (err) {
+        setStatus("Fehler: " + err.message, "error");
+      }
+    });
+  }
+
+  /* Load saved credentials on page load */
+  (async function loadSavedCredentials() {
+    try {
+      const resp = await fetch("/api/sync/credentials");
+      const data = await resp.json();
+      if (data.ok && data.has_credentials) {
+        const domainEl = document.getElementById("credShopifyDomain");
+        const clientIdEl = document.getElementById("credShopifyClientId");
+        const kauflandKeyEl = document.getElementById("credKauflandClientKey");
+        
+        if (domainEl) domainEl.placeholder = data.shopify_configured ? "Shopify konfiguriert" : "";
+        if (clientIdEl) clientIdEl.placeholder = data.shopify_configured ? "Client ID gesetzt" : "";
+        if (kauflandKeyEl) kauflandKeyEl.placeholder = data.kaufland_configured ? "Kaufland konfiguriert" : "";
+      }
+    } catch (e) {}
+  })();
+
   if (els.dateRangeBtn) {
     els.dateRangeBtn.addEventListener("click", () => {
       const open = els.dateRangeMenu instanceof HTMLElement && els.dateRangeMenu.classList.contains("active");
@@ -702,15 +1015,15 @@ function bindEvents() {
     });
   }
   if (els.dataExportPeriodBtn) {
-    els.dataExportPeriodBtn.addEventListener("click", () => {
+    els.dataExportPeriodBtn.addEventListener("click", async () => {
       closeDataModal();
-      runPeriodExport();
+      await runPeriodExport();
     });
   }
   if (els.dataExportBackupBtn) {
-    els.dataExportBackupBtn.addEventListener("click", () => {
+    els.dataExportBackupBtn.addEventListener("click", async () => {
       closeDataModal();
-      runFullBackupExport();
+      await runFullBackupExport();
     });
   }
   if (els.restoreFileInput) {
@@ -769,6 +1082,9 @@ function bindEvents() {
       if (resizeRafId) return;
       resizeRafId = requestAnimationFrame(() => {
         resizeRafId = 0;
+        if (typeof syncOrdersTableViewportHeight === "function") {
+          syncOrdersTableViewportHeight();
+        }
         if (state.customerLeafletMap) {
           state.customerLeafletMap.invalidateSize();
         }
@@ -873,6 +1189,38 @@ function bindEvents() {
       } else if (group === "returns") {
         state.filters.returnsOnly = !state.filters.returnsOnly;
         chip.classList.toggle("active", state.filters.returnsOnly);
+      } else if (group === "hidecanceled") {
+        state.filters.hideCanceled = !state.filters.hideCanceled;
+        chip.classList.toggle("active", state.filters.hideCanceled);
+      } else if (group === "purchasecost") {
+        if (value === "has") {
+          state.filters.hasPurchaseCost = !state.filters.hasPurchaseCost;
+          if (state.filters.hasPurchaseCost) state.filters.noPurchaseCost = false;
+        } else {
+          state.filters.noPurchaseCost = !state.filters.noPurchaseCost;
+          if (state.filters.noPurchaseCost) state.filters.hasPurchaseCost = false;
+        }
+        // sync chip active states for both purchasecost chips
+        if (els.ordersFilterDropdown) {
+          els.ordersFilterDropdown.querySelectorAll("[data-filter-group='purchasecost']").forEach((c) => {
+            const v = c.getAttribute("data-value");
+            c.classList.toggle("active", v === "has" ? state.filters.hasPurchaseCost : state.filters.noPurchaseCost);
+          });
+        }
+      } else if (group === "invoice") {
+        if (value === "has") {
+          state.filters.hasInvoice = !state.filters.hasInvoice;
+          if (state.filters.hasInvoice) state.filters.noInvoice = false;
+        } else {
+          state.filters.noInvoice = !state.filters.noInvoice;
+          if (state.filters.noInvoice) state.filters.hasInvoice = false;
+        }
+        if (els.ordersFilterDropdown) {
+          els.ordersFilterDropdown.querySelectorAll("[data-filter-group='invoice']").forEach((c) => {
+            const v = c.getAttribute("data-value");
+            c.classList.toggle("active", v === "has" ? state.filters.hasInvoice : state.filters.noInvoice);
+          });
+        }
       }
       updateOrdersFilterBadge();
       renderOrders();
@@ -884,8 +1232,18 @@ function bindEvents() {
       state.filters.orderStatus.clear();
       state.filters.orderPayment.clear();
       state.filters.returnsOnly = false;
+      state.filters.hasPurchaseCost = false;
+      state.filters.noPurchaseCost = false;
+      state.filters.hasInvoice = false;
+      state.filters.noInvoice = false;
+      // Reset hideCanceled to default (true)
+      state.filters.hideCanceled = true;
       if (els.ordersFilterDropdown) {
-        els.ordersFilterDropdown.querySelectorAll(".ofd-chip.active").forEach((c) => c.classList.remove("active"));
+        els.ordersFilterDropdown.querySelectorAll(".ofd-chip").forEach((c) => {
+          const group = c.getAttribute("data-filter-group");
+          const isDefault = group === "hidecanceled";
+          c.classList.toggle("active", isDefault);
+        });
       }
       updateOrdersFilterBadge();
       renderOrders();

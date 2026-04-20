@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -23,33 +24,81 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
+def _sqlite_sidecar_paths(path: Path) -> tuple[Path, Path]:
+    return (Path(f"{path}-wal"), Path(f"{path}-shm"))
+
+
+def _sqlite_latest_mtime_ns(path: Path) -> int:
+    latest = 0
+    for candidate in (path, *_sqlite_sidecar_paths(path)):
+        if not candidate.exists() or not candidate.is_file():
+            continue
+        latest = max(latest, candidate.stat().st_mtime_ns)
+    return latest
+
+
 def _should_copy_source_to_target(source: Path, target: Path, *, force: bool = False) -> bool:
     if force:
         return True
     if not target.exists() or not target.is_file():
         return True
 
-    source_stat = source.stat()
-    target_stat = target.stat()
-
     # Keep newer runtime files. This prevents startup bootstrap sync from
     # overwriting data that was fetched live into runtime DBs.
-    return int(source_stat.st_mtime) > int(target_stat.st_mtime)
+    return _sqlite_latest_mtime_ns(source) > _sqlite_latest_mtime_ns(target)
 
 
 def _atomic_copy(source: Path, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_suffix(f"{target.suffix}.tmp")
+    temp_wal_path, temp_shm_path = _sqlite_sidecar_paths(temp_path)
+    target_wal_path, target_shm_path = _sqlite_sidecar_paths(target)
+    source_conn: sqlite3.Connection | None = None
+    target_conn: sqlite3.Connection | None = None
     try:
-        shutil.copy2(source, temp_path)
+        for candidate in (temp_path, temp_wal_path, temp_shm_path):
+            candidate.unlink(missing_ok=True)
+
+        source_conn = sqlite3.connect(str(source), timeout=30.0)
+        source_conn.execute("PRAGMA busy_timeout = 30000")
+        target_conn = sqlite3.connect(str(temp_path), timeout=30.0)
+        target_conn.execute("PRAGMA busy_timeout = 30000")
+        source_conn.backup(target_conn)
+        target_conn.commit()
+        target_conn.close()
+        target_conn = None
+        source_conn.close()
+        source_conn = None
+        for candidate in (target_wal_path, target_shm_path):
+            candidate.unlink(missing_ok=True)
         os.replace(temp_path, target)
     except PermissionError:
+        if target_conn is not None:
+            target_conn.close()
+            target_conn = None
+        if source_conn is not None:
+            source_conn.close()
+            source_conn = None
         if temp_path.exists():
             try:
                 temp_path.unlink()
             except OSError:
                 pass
-        shutil.copy2(source, target)
+        for candidate in (target_wal_path, target_shm_path):
+            candidate.unlink(missing_ok=True)
+        source_conn = sqlite3.connect(str(source), timeout=30.0)
+        source_conn.execute("PRAGMA busy_timeout = 30000")
+        target_conn = sqlite3.connect(str(target), timeout=30.0)
+        target_conn.execute("PRAGMA busy_timeout = 30000")
+        source_conn.backup(target_conn)
+        target_conn.commit()
+    finally:
+        if target_conn is not None:
+            target_conn.close()
+        if source_conn is not None:
+            source_conn.close()
+        for candidate in (temp_path, temp_wal_path, temp_shm_path):
+            candidate.unlink(missing_ok=True)
 
 
 def _sync_db(source: Path, target: Path, force: bool = False) -> dict[str, Any]:

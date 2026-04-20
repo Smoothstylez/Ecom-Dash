@@ -1516,7 +1516,9 @@ def update_bookkeeping_transaction(transaction_id: str, payload: Any) -> dict[st
         else:
             effective_vat_rate = float(existing["vat_rate"])
 
-        if "vat_amount" not in updates and "vat_rate" in updates:
+        if "vat_amount" not in updates and (
+            "vat_rate" in updates or "amount_gross" in updates
+        ):
             updates["vat_amount"] = _calculate_vat_amount_cents(effective_amount_gross, effective_vat_rate)
 
         effective_vat_amount = updates.get("vat_amount", existing["vat_amount"])
