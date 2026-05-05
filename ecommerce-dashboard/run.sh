@@ -93,6 +93,9 @@ if [ -f "${OPTIONS_FILE}" ]; then
     export SHOP_SECRET_KEY="$(
         python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('shop_secret_key',''))" 2>/dev/null || echo ''
     )"
+    export APP_ADMIN_TOKEN="$(
+        python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('app_admin_token',''))" 2>/dev/null || echo ''
+    )"
 
     export LIVE_SYNC_BACKGROUND_ENABLED="$(
         python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print('1' if o.get('live_sync_enabled', False) else '0')" 2>/dev/null || echo '0'

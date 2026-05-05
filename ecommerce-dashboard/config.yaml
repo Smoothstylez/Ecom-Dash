@@ -1,8 +1,8 @@
 name: "E-Commerce Dashboard"
-description: "Combined e-commerce analytics dashboard (Shopify, Kaufland, eBay) with bookkeeping"
+description: "React-based e-commerce analytics dashboard for Shopify, Kaufland, eBay, and integrated bookkeeping"
 slug: ecommerce-dashboard
 url: "https://github.com/Smoothstylez/Ecom-Dash"
-version: "0.3.4"
+version: "0.4.0"
 
 arch:
   - amd64
@@ -33,6 +33,7 @@ options:
   shopify_shop_domain: ""
   shop_client_key: ""
   shop_secret_key: ""
+  app_admin_token: ""
   live_sync_enabled: false
   live_sync_interval_seconds: 300
 
@@ -42,5 +43,6 @@ schema:
   shopify_shop_domain: "str?"
   shop_client_key: "str?"
   shop_secret_key: "str?"
+  app_admin_token: "password?"
   live_sync_enabled: bool
   live_sync_interval_seconds: "int(10,86400)"

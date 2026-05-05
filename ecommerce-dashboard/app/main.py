@@ -58,7 +58,7 @@ def _source_sync_has_mutation(summary: dict[str, object] | None) -> bool:
     return False
 
 
-app = FastAPI(title="Combined Dropshipping Dashboard", version=APP_VERSION)
+app = FastAPI(title="E-Commerce Dashboard", version=APP_VERSION)
 
 app.add_middleware(
     CORSMiddleware,
