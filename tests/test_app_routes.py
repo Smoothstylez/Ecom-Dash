@@ -22,29 +22,30 @@ class AppRouteTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.client = TestClient(app)
 
-    def test_primary_frontend_routes_return_html(self) -> None:
-        for path in ["/", "/analytics", "/orders", "/customers", "/bookings", "/google-ads", "/ebay"]:
+    def test_dashboard_routes_return_html(self) -> None:
+        for path in ["/", "/analytics", "/orders", "/customers", "/bookings", "/bookings/full", "/google-ads", "/ebay"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
 
                 self.assertEqual(response.status_code, 200)
                 self.assertIn("text/html", response.headers.get("content-type", ""))
 
-    def test_legacy_dashboard_fallback_route_returns_html(self) -> None:
-        for path in ["/legacy", "/legacy?tab=orders", "/legacy?tab=bookings&subtab=transactions&full=1"]:
+    def test_preview_routes_redirect_to_main_routes(self) -> None:
+        for path in [
+            "/app-preview",
+            "/app-preview/analytics",
+            "/app-preview/orders",
+            "/app-preview/customers",
+            "/app-preview/bookings",
+            "/app-preview/bookings/full?subtab=transactions",
+            "/app-preview/google-ads",
+            "/app-preview/ebay",
+        ]:
             with self.subTest(path=path):
-                response = self.client.get(path)
+                response = self.client.get(path, follow_redirects=False)
 
-                self.assertEqual(response.status_code, 200)
-                self.assertIn("text/html", response.headers.get("content-type", ""))
-
-    def test_preview_route_is_available(self) -> None:
-        for path in ["/app-preview", "/app-preview/orders", "/app-preview/analytics", "/app-preview/customers", "/app-preview/bookings", "/app-preview/google-ads", "/app-preview/ebay"]:
-            with self.subTest(path=path):
-                response = self.client.get(path)
-
-                self.assertEqual(response.status_code, 200)
-                self.assertIn("text/html", response.headers.get("content-type", ""))
+                self.assertEqual(response.status_code, 307)
+                self.assertIn("location", response.headers)
 
 
 if __name__ == "__main__":

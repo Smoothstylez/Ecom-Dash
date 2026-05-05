@@ -16,14 +16,14 @@
 - Response dicts: always include `{"ok": True}` or error details
 - Use Pydantic `BaseModel` for request bodies only (responses are plain dicts)
 
-## JavaScript Standards
-- **Style**: Strict mode (`"use strict"`), ES6+ syntax, no TypeScript
-- **State Management**: Single global `state` object in `core.js`, no frameworks
-- **DOM References**: Central `els` object with `document.getElementById` calls
-- **API Calls**: Use `async/await` with `fetchJson()` helper, handle errors with `setStatus(message, "error")`
-- **Formatting**: German locale (`de-DE`), EUR currency, `MONEY_FMT`/`DATE_FMT` formatters
+## Frontend Standards
+- **Style**: React 19 + TypeScript in `frontend/src`, functional components and hooks
+- **State Management**: Prefer React state/context; shared shell/runtime state belongs in `DashboardShellStateProvider` and `DashboardRuntimeProvider`, not in `window` globals or custom DOM events
+- **DOM References**: Prefer JSX and refs; preserve established DOM IDs/classes/data attributes when CSS or Playwright depend on them
+- **API Calls**: Use typed helpers in `frontend/src/**/api.ts` or `dashboard-controls-api.ts`, surface user-facing failures through the shared status UI
+- **Formatting**: German locale (`de-DE`), EUR currency, shared formatter helpers
 - **No Comments**: Self-documenting variable names, no inline comments
-- **HTML Generation**: Use template literals, escape user input with `escapeHtml()`
+- **Plain JS**: Do not add new runtime files under `app/static/js`; the old legacy JS bundle has been removed
 
 ## Database Conventions
 - **Timestamps**: ISO 8601 with Z suffix (e.g., `2026-03-15T12:00:00Z`), stored as TEXT
@@ -33,7 +33,7 @@
 - **Paths**: Store paths relative to PROJECT_ROOT, use POSIX format (`storage/invoices/...`)
 
 ## Naming Conventions
-- **Files**: Snake_case for Python (`orders.py`, `bookkeeping_full.py`), kebab-case for JS (`google-ads.js`)
+- **Files**: Snake_case for Python (`orders.py`, `bookkeeping_full.py`), kebab-case for frontend files (`google-ads-page.tsx`, `dashboard-shell-state.ts`)
 - **Functions**: Snake_case for Python, camelCase for JavaScript
 - **Constants**: UPPER_SNAKE_CASE for true constants, camelCase for config-like values
 - **Database Tables**: Snake_case singular (`transactions`, `orders`, `documents`)

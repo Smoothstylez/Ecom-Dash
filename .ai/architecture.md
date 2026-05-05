@@ -2,7 +2,9 @@
 
 ## Tech Stack
 - **Backend**: Python 3.11, FastAPI 0.116.1
-- **Frontend**: Vanilla JavaScript (no framework), Chart.js 4.4.2, Leaflet 1.9.4, Globe.gl 2.41.6
+- **Frontend**: Vite, React 19, TypeScript, hybrid React shell plus remaining legacy dashboard modules
+- **UI / Viz**: Chart.js 4.4.2, Leaflet 1.9.4, Globe.gl 2.41.6
+- **Testing**: Playwright for route and interaction smoke coverage, `unittest` for backend route checks
 - **Database**: SQLite 3 (multiple databases, combined at runtime)
 - **Server**: Uvicorn ASGI
 - **Deployment**: Docker, Home Assistant add-on (ingress port 8012)
@@ -39,9 +41,13 @@ ecommerce-dashboard/
 │   │       ├── shopify_live.py  # Shopify REST API sync
 │   │       └── kaufland_live.py # Kaufland API sync
 │   └── static/
-│       ├── dashboard.html   # Single-page application shell
-│       ├── css/             # themes.css, main.css
-│       └── js/              # core.js (state, utils), analytics.js, orders.js, customers.js, bookings.js, google-ads.js, ebay.js, theme.js, init.js
+│       └── css/             # themes.css, main.css
+frontend/
+├── src/
+│   ├── main.tsx             # Vite entry
+│   ├── app/                 # React shell, route selection, shared shell state
+│   ├── features/            # Route-owned React screens (analytics, orders, customers, bookings, google-ads, ebay)
+│   └── shared/              # Runtime helpers, theme provider, route resolution
 ├── data/
 │   ├── combined.sqlite3     # Runtime DB (enrichments, invoices, ads costs)
 │   └── sources/             # Runtime source DBs (copied from bootstrap)
@@ -75,13 +81,31 @@ ecommerce-dashboard/
 - `payment_accounts`: id, name, provider, is_active
 - `monthly_invoices`: id, provider, period_from, period_to, invoice_amount_cents, calculated_sum_cents, difference_cents, document_id, status
 
+## Frontend Runtime Layout
+- `frontend/src/app/app.tsx` mounts the React app shell, the shared `DashboardSharedModals`, the shared `OrderDetailRuntime`, and the shared `BookingsGlobalRuntime`; it no longer mounts any hidden legacy dashboard host.
+- `frontend/src/app/app-shell.tsx` owns the outer dashboard chrome, top-level navigation, search, marketplace/date controls, and shell-to-legacy event publication.
+- `frontend/src/shared/runtime/dashboard-route.ts` maps `/analytics`, `/orders`, `/customers`, `/bookings/full`, `/google-ads`, and `/ebay` to route shells.
+- The former `frontend/src/template/*-markup.ts` fragments and `ecommerce-dashboard/app/static/js/*.js` legacy boot bundle were removed in Phase 2; the active app boots only the Vite bundle plus shared CSS.
+
+## Route Ownership Snapshot
+- `analytics`: React-owned route; no route-specific bridge, no `LegacyDashboardHost`, no active legacy JS loader path.
+- `orders`: React-owned route; `orders.js`, `react-orders-bridge.js`, and the old legacy JS boot bundle are removed; shared order-detail/modal coordination now runs through `DashboardRuntimeProvider`.
+- `customers`: React-owned route; `customers.js`, `react-customers-bridge.js`, and the old legacy JS boot bundle are removed; only the external geo libs remain outside the normal React tree.
+- `google-ads`: React-owned route; direct React API/data/actions, `google-ads.js` removed, no active legacy loader path.
+- `ebay`: React-owned route; direct React API/data/filters, `ebay.js` removed, no active legacy loader path.
+- `bookings`: React-owned route; React owns the `/bookings` panel markup, reads, visible mutations for transactions/templates/accounts/documents/monthly invoices, the transactions booking-class bar, unified new-button/tool toggles, monthly-invoice month picker/preview, Bookings table click ownership, and the booking transaction/monthly invoice detail content and mutations inside `#detailsContent`. Shared details, preview, order-detail return paths, and bookings refresh/UI state now flow through `DashboardRuntimeProvider`, `DashboardSharedModals`, `OrderDetailRuntime`, and `BookingsGlobalRuntime` without React-only globals or `ecomdash:*` events.
+
 ## Data Flow
-1. **Bootstrap Sync**: On startup, `source_sync.py` copies source DBs from bootstrap paths (Shopify-API, Kaufland-API, Buchungen-Dashboard) to runtime paths
-2. **Live Sync**: Background worker (`live_sync.py`) polls Shopify/Kaufland APIs, writes to runtime source DBs
-3. **Order Loading**: `orders.py` service reads from runtime source DBs, merges with enrichments from combined.sqlite3
-4. **Analytics**: `analytics.py` aggregates merged order data, computes trends, heatmaps, marketplace comparisons
-5. **Bookkeeping Sync**: `bookings.py` syncs combined orders into bookkeeping DB as transactions
-6. **Frontend**: Single HTML page, JavaScript modules fetch via REST API, render charts/tables
+1. **Bootstrap Sync**: On startup, `source_sync.py` copies source DBs from bootstrap paths (Shopify-API, Kaufland-API, Buchungen-Dashboard) to runtime paths.
+2. **Live Sync**: Background worker (`live_sync.py`) polls Shopify/Kaufland APIs and writes to runtime source DBs.
+3. **Order Loading**: `orders.py` service reads from runtime source DBs and merges with enrichments from `combined.sqlite3`.
+4. **Analytics**: `analytics.py` aggregates merged order data and computes trends, heatmaps, and marketplace comparisons.
+5. **Bookkeeping Sync**: `bookings.py` syncs combined orders into the bookkeeping DB as transactions.
+6. **Frontend Shell**: FastAPI serves `frontend/dist/index.html`; React selects the route shell and renders the shared dashboard chrome.
+7. **Shell State**: Shared shell filters and explicit refresh requests are owned by `DashboardShellStateProvider`; the shell no longer exposes React-only globals or `ecomdash:*` refresh events.
+8. **Shared Runtime Integration**: `DashboardRuntimeProvider` owns the shared details/preview/order/bookings runtime. `DashboardSharedModals`, `OrderDetailRuntime`, and `BookingsGlobalRuntime` register and consume APIs there instead of coordinating through `window.__ECOM_DASH_REACT_*` globals or `ecomdash:*` events.
+9. **Bookings Integration**: On `/bookings`, React owns the route panel markup, visible table click/detail/preview flows, bookings UI filter state, and explicit bookings refresh requests. The order-detail return path back from booking details is covered by Playwright.
+10. **Verification Note**: Because FastAPI serves `frontend/dist/index.html`, frontend `build` and Playwright should be run sequentially when verifying route boots; running them in parallel can transiently serve an incomplete bundle and produce false 500s.
 
 ## External Dependencies
 - **Shopify-API** project: Bootstrap DB at `WORKSPACE_ROOT/Shopify-API/shopify-dashboard/shopify_data.sqlite3`

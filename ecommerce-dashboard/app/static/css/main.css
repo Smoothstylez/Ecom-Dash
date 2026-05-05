@@ -588,10 +588,7 @@ body.bookings-full #bookingsPanel {
   display: grid !important;
 }
 
-/* Hide old horizontal bookings sub-tabs - now in sidebar */
-.bookings-subtab-bar {
-  display: none !important;
-}
+/* Bookings subtabs live in the sidebar; only the shared action button remains here. */
 
 /* ── Card Base ── */
 
@@ -1439,20 +1436,12 @@ button:hover {
 
 /* -- bookings subtab bar: sits above the card, always visible -- */
 .bookings-subtab-bar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 12px;
+  display: flex;
+  justify-content: flex-end;
   margin-bottom: 4px;
 }
 
-.bookings-subtab-bar .subtabbar {
-  grid-column: 2;
-}
-
 .bookings-subtab-bar .bookings-tools-toggle {
-  grid-column: 3;
-  justify-self: end;
   margin-bottom: 0;
 }
 
@@ -4289,15 +4278,7 @@ tbody tr:nth-child(even) {
   }
 
   .bookings-subtab-bar {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 8px;
-  }
-
-  .bookings-subtab-bar .subtabbar,
-  .bookings-subtab-bar .bookings-tools-toggle {
-    grid-column: 1;
-    justify-self: center;
+    justify-content: center;
   }
 
 

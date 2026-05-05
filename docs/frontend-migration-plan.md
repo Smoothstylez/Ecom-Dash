@@ -1,58 +1,33 @@
-# Frontend Migration Plan
+# Frontend Runtime Notes
 
 ## Ziel
 
-Das Backend bleibt vorerst API-seitig unveraendert. Das bestehende statische Frontend wird in kleinen, testbaren Schritten nach `React 19 + Vite + TypeScript + TanStack Query + TanStack Router + shadcn/ui + Tailwind CSS v4` migriert.
+Das Dashboard wird ueber Vite als einzige Frontend-Shell ausgeliefert. Optik und Verhalten bleiben auf dem etablierten alten Layout, waehrend Backend-APIs und bestehende JS-Module weiter genutzt werden.
 
 ## Invarianten
 
-- Das Legacy-Dashboard unter `/`, `/analytics`, `/orders`, `/customers`, `/bookings`, `/bookings/full`, `/google-ads` und `/ebay` bleibt funktionsfaehig, bis die jeweilige Route migriert ist.
-- Neue React-Arbeit laeuft zunaechst separat unter `/app-preview`.
-- Backend-Endpunkte bleiben stabil; neue Frontend-Komponenten konsumieren die bestehenden `/api/*`-Routen.
-- Jede migrierte Route bekommt vor dem Umschalten mindestens Smoke- und Render-Regressionen.
+- Die produktiven Routen `/`, `/analytics`, `/orders`, `/customers`, `/bookings`, `/bookings/full`, `/google-ads` und `/ebay` liefern dieselbe Vite-App aus.
+- Backend-Endpunkte unter `/api/*` bleiben stabil.
+- Die Layout- und Interaktionslogik lebt aktuell in den vorhandenen Dateien unter `ecommerce-dashboard/app/static/js` und `ecommerce-dashboard/app/static/css`.
+- `/app-preview/*` existiert nur noch als Redirect fuer alte Links.
 
-## Migrationsreihenfolge
+## Aktuelle Vereinfachung
 
-1. Fundament: Frontend-Workspace, Router, Query-Client, UI-Primitives, Testbasis
-2. Analytics: Referenz fuer Layout, Karten, Tabellen, Spacing und Interaktionen
-3. Orders: Tabellen, Filter, Mutationen, Uploads
-4. eBay: read-only, geringe Komplexitaet
-5. Google Ads: Uploads, KPIs, Tabellen, Charts
-6. Customers: KPIs, Tabellen, Map/Globe als spezialisierte Visuals
-7. Bookings: zuletzt, wegen der meisten Flows und Detail-Interaktionen
+1. Die alte React-Preview-Struktur wurde entfernt.
+2. Die Frontend-Auslieferung ist auf eine einzige Vite-Shell reduziert.
+3. Alte Preview-Routen leiten auf die Hauptpfade weiter.
+4. Weitere Vereinfachungen sollten schrittweise die Legacy-JS-Module in kleinere, besser wartbare Frontend-Module ueberfuehren.
 
 ## Teststrategie
 
 ### Backend
 
 - API-Smoke-Tests fuer die wichtigsten GET-Endpunkte
-- Route-Smoke-Tests fuer Legacy-HTML-Aliase und `/app-preview`
+- Route-Smoke-Tests fuer die produktiven Dashboard-Pfade
+- Redirect-Tests fuer alte `/app-preview/*`-Links
 - Bestehende Datenintegritaets-Skripte bleiben Teil der Regression
 
-### Frontend
+## Naechster technischer Schritt
 
-- Vitest fuer UI-Primitives, Hilfsfunktionen und Route-Shells
-- Danach pro migrierter Route weitere Komponenten- und Hook-Tests
-- E2E-Suite folgt nach der ersten echten Produktionsroute in React
-
-## UI-Standardisierung
-
-- Analytics ist die visuelle Vorlage fuer neue Komponenten.
-- Ziel ist ein gemeinsames System fuer:
-  - `Button`
-  - `Card`
-  - `KpiCard`
-  - `SectionHeader`
-  - `DataTableShell`
-  - `SegmentedControl`
-  - `Dialog` / `Drawer` / `Popover`
-- Inline-Styles aus `dashboard.html` werden routeweise abgebaut und in wiederverwendbare Komponenten ueberfuehrt.
-
-## Aktuelle Phase
-
-Phase 1 ist aktiv:
-
-1. React-Vite-Workspace anlegen
-2. Preview-Route neben dem Legacy-Dashboard anbieten
-3. Erste Analytics-Ansicht mit echten API-Daten aufbauen
-4. Erste automatisierte Regressionen einziehen
+- Das verbleibende Legacy-Markup und die JS-Module sollten schrittweise in kleinere Frontend-Module zerlegt werden.
+- Ziel ist weniger globaler DOM-Zustand, weniger implizite Abhaengigkeiten und klarere Testbarkeit.

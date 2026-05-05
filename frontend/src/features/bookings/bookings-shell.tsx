@@ -1,0 +1,22 @@
+import { useCallback, useState } from "react";
+
+import { useDashboardShellState } from "@/app/dashboard-shell-state";
+
+import { BookingsPanel } from "./bookings-panel";
+import { BookingsPage } from "./bookings-page";
+
+export function BookingsShell() {
+  const { bookingsSubtab } = useDashboardShellState();
+  const [panelElement, setPanelElement] = useState<HTMLElement | null>(null);
+
+  const handlePanelRef = useCallback((element: HTMLDivElement | null) => {
+    setPanelElement(element);
+  }, []);
+
+  return (
+    <>
+      <BookingsPanel panelRef={handlePanelRef} bookingsSubtab={bookingsSubtab} />
+      {panelElement ? <BookingsPage panelElement={panelElement} /> : null}
+    </>
+  );
+}

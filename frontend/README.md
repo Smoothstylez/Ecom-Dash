@@ -1,4 +1,4 @@
-# Frontend Preview
+# Frontend Shell
 
 ## Starten
 
@@ -10,14 +10,14 @@
    - `npm install`
    - `npm run dev`
 
-## Build fuer FastAPI Preview
+## Build fuer FastAPI
 
 - `npm run build`
-- Danach ist die gebaute App unter `http://localhost:8012/app-preview` verfuegbar.
+- Danach ist die gebaute App unter `http://localhost:8012/analytics` verfuegbar.
 
-## Scope von Phase 1
+## Aktueller Stand
 
-- gemeinsamer Router- und Query-Stack
-- Analytics-Preview mit echten API-Daten
-- Platzhalter-Routen fuer die restlichen Bereiche
-- Vitest-Basis fuer neue Komponenten
+- Vite liefert die Haupt-App unter den produktiven Dashboard-Routen aus.
+- Das alte Dashboard-Layout bleibt bewusst erhalten.
+- Die Interaktionen laufen weiterhin ueber die bestehenden Legacy-JS-Module unter `/static/js`.
+- `/app-preview/*` wird nur noch auf die Hauptpfade weitergeleitet.
