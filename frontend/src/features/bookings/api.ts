@@ -1,3 +1,5 @@
+import { withAdminHeaders } from "@/shared/api/admin-auth";
+
 export type BookingRow = {
   id?: string;
   date?: string;
@@ -183,7 +185,7 @@ function buildBookingsTransactionQuery(query: BookingsQuery) {
     params.set("dateTo", query.to);
   }
   if (query.marketplace) {
-    params.set("provider", query.marketplace);
+    params.set("marketplace", query.marketplace);
   }
   if (query.type) {
     params.set("type", query.type);
@@ -245,13 +247,13 @@ async function readErrorMessage(response: Response) {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(url, withAdminHeaders({
     ...init,
     headers: {
       Accept: "application/json",
       ...(init?.headers || {}),
     },
-  });
+  }));
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
@@ -261,7 +263,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function fetchWithoutJson(url: string, init?: RequestInit) {
-  const response = await fetch(url, init);
+  const response = await fetch(url, withAdminHeaders(init));
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));
   }
@@ -379,14 +381,14 @@ export function updateBookingTemplate(templateId: string, payload: Record<string
 }
 
 export async function runBookingTemplate(templateId: string, payload: Record<string, unknown>) {
-  const response = await fetch(`/api/bookings/templates/${encodeURIComponent(templateId)}/generate-transaction`, {
+  const response = await fetch(`/api/bookings/templates/${encodeURIComponent(templateId)}/generate-transaction`, withAdminHeaders({
     method: "POST",
     headers: {
       Accept: "application/json",
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
-  });
+  }));
   const body = await response.json().catch(() => ({}));
   if (response.ok) {
     return { status: "created" as const, body };

@@ -1,7 +1,7 @@
 # Test Framework Overview
 
 ## Project Analyzed
-- **Dashboard:** `/home/luis/projects/Ecom-Dash/ecommerce-dashboard`
+- **Dashboard:** `ecommerce-dashboard/`
 - **Framework:** FastAPI (Python)
 - **Databases:** SQLite (combined, shopify, kaufland, bookkeeping)
 
@@ -119,7 +119,7 @@
 
 1. **Start Dashboard**
    ```bash
-   cd /home/luis/projects/Ecom-Dash/ecommerce-dashboard
+   cd ecommerce-dashboard
    python -m app.main
    ```
    Default: `http://localhost:8012/`

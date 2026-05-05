@@ -2,16 +2,18 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 
+from app.auth import require_admin_access
 from app.services.google_ads import build_google_ads_analytics, build_google_ads_product_detail, import_google_ads_data, reset_google_ads_data
 from app.services.bookings import sync_google_ads_into_bookkeeping
 
 
 router = APIRouter(prefix="/api/google-ads", tags=["google-ads"])
+ADMIN_ONLY = [Depends(require_admin_access)]
 
 
-@router.post("/upload")
+@router.post("/upload", dependencies=ADMIN_ONLY)
 async def api_google_ads_upload(
     file: Optional[UploadFile] = File(default=None),
     report_file: Optional[UploadFile] = File(default=None),
@@ -73,7 +75,7 @@ def api_google_ads_product_detail(
         raise HTTPException(status_code=500, detail=f"Google Ads Produkt-Detail fehlgeschlagen: {exc}") from exc
 
 
-@router.delete("/reset")
+@router.delete("/reset", dependencies=ADMIN_ONLY)
 def api_google_ads_reset() -> dict[str, Any]:
     try:
         result = reset_google_ads_data()

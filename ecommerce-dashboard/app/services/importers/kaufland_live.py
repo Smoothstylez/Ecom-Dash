@@ -16,7 +16,7 @@ from urllib import error as urlerror
 from urllib import request as urlrequest
 from urllib.parse import quote, urlencode, urlparse
 
-from app.config import KAUFLAND_BOOTSTRAP_ENV_PATH, KAUFLAND_DB_PATH
+from app.config import KAUFLAND_BOOTSTRAP_ENV_PATH, KAUFLAND_DB_PATH, RUNTIME_CREDENTIALS_PATH
 
 
 LOGGER = logging.getLogger(__name__)
@@ -143,10 +143,9 @@ def _load_env_file_values(path: Path) -> dict[str, str]:
 
 
 def _load_credentials_file() -> dict[str, str]:
-    from app.config import PROJECT_ROOT
     import json
-    creds_file = PROJECT_ROOT / "data" / "credentials.json"
-    if not creds_file.exists():
+    creds_file = RUNTIME_CREDENTIALS_PATH
+    if not creds_file.exists() or not creds_file.is_file():
         return {}
     try:
         return json.loads(creds_file.read_text())

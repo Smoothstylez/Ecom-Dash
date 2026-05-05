@@ -1,4 +1,5 @@
 import type { ShellFilters } from "@/app/dashboard-shell-state";
+import { loadAdminToken, persistAdminToken, withAdminHeaders } from "@/shared/api/admin-auth";
 
 export type StatusLevel = "info" | "ok" | "error";
 
@@ -46,20 +47,13 @@ export type StatusSnapshot = {
   customerGeoStatusInfoHtml: string;
 };
 
-export type CredentialsPayload = {
-  shopifyDomain: string;
-  shopifyClientId: string;
-  shopifyClientSecret: string;
-  kauflandClientKey: string;
-  kauflandSecretKey: string;
-};
-
 export type CredentialsResponse = {
   ok?: boolean;
   message?: string;
   has_credentials?: boolean;
   shopify_configured?: boolean;
   kaufland_configured?: boolean;
+  storage?: string;
 };
 
 export type RestoreResultState = {
@@ -71,6 +65,8 @@ export type PollingSettings = {
   enabled: boolean;
   intervalSec: number;
 };
+
+export { loadAdminToken, persistAdminToken };
 
 export const DASHBOARD_VERSION = "0.3.0";
 export const POLLING_STORAGE_KEY = "dash-combined.polling";
@@ -105,13 +101,13 @@ function formatDateTime(value: string | null | undefined) {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(url, withAdminHeaders({
     ...init,
     headers: {
       Accept: "application/json",
       ...(init?.headers || {}),
     },
-  });
+  }));
 
   if (!response.ok) {
     let detail = "";
@@ -128,7 +124,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export async function triggerDownload(url: string, fallbackName: string) {
-  const response = await fetch(url);
+  const response = await fetch(url, withAdminHeaders());
   if (!response.ok) {
     throw new Error(`Download fehlgeschlagen: ${response.status}`);
   }
@@ -393,21 +389,6 @@ export async function fetchCustomerGeoStatusHtml(filters?: Partial<ShellFilters>
   }
 }
 
-export async function saveCredentials(payload: CredentialsPayload) {
-  return fetchJson<CredentialsResponse>(`${API_BASE}/sync/credentials`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      shopify_domain: payload.shopifyDomain,
-      shopify_client_id: payload.shopifyClientId,
-      shopify_client_secret: payload.shopifyClientSecret,
-      shopify_api_version: "2025-01",
-      kaufland_client_key: payload.kauflandClientKey,
-      kaufland_secret_key: payload.kauflandSecretKey,
-    }),
-  });
-}
-
 export async function fetchCredentialsState() {
   return fetchJson<CredentialsResponse>(`${API_BASE}/sync/credentials`);
 }
@@ -417,10 +398,10 @@ export async function runRestore(file: File): Promise<RestoreResultState> {
   formData.append("file", file);
 
   try {
-    const response = await fetch(`${API_BASE}/exports/restore`, {
+    const response = await fetch(`${API_BASE}/exports/restore`, withAdminHeaders({
       method: "POST",
       body: formData,
-    });
+    }));
 
     const payload = await response.json() as {
       success?: boolean;

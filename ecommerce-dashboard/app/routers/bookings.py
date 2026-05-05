@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.auth import require_admin_access
 from app.config import BOOKKEEPING_DB_PATH
-from app.db import clear_purchase_enrichment
 from app.services.bookings import (
     fetch_bookkeeping_document,
     get_order_bookkeeping_breakdown,
@@ -43,6 +43,7 @@ from app.services.bookkeeping_full import (
 
 
 router = APIRouter(prefix="/api/bookings", tags=["bookings"])
+ADMIN_ONLY = [Depends(require_admin_access)]
 
 
 class BookingUpdateRequest(BaseModel):
@@ -89,7 +90,7 @@ def api_list_bookings(
     }
 
 
-@router.patch("/{booking_id}")
+@router.patch("/{booking_id}", dependencies=ADMIN_ONLY)
 def api_update_booking(booking_id: str, payload: BookingUpdateRequest) -> dict[str, Any]:
     try:
         row = update_booking(
@@ -111,6 +112,7 @@ def api_update_booking(booking_id: str, payload: BookingUpdateRequest) -> dict[s
 def api_list_bookkeeping_transactions(
     date_from: Optional[str] = Query(default=None, alias="dateFrom"),
     date_to: Optional[str] = Query(default=None, alias="dateTo"),
+    marketplace: Optional[str] = Query(default=None),
     tx_type: Optional[str] = Query(default=None, alias="type"),
     provider: Optional[str] = Query(default=None),
     direction: Optional[str] = Query(default=None),
@@ -125,6 +127,7 @@ def api_list_bookkeeping_transactions(
             {
                 "dateFrom": date_from,
                 "dateTo": date_to,
+                "marketplace": marketplace,
                 "type": tx_type,
                 "provider": provider,
                 "direction": direction,
@@ -139,7 +142,7 @@ def api_list_bookkeeping_transactions(
         _raise_service_error(exc)
 
 
-@router.post("/transactions")
+@router.post("/transactions", dependencies=ADMIN_ONLY)
 def api_create_bookkeeping_transaction(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         created = create_bookkeeping_transaction(payload)
@@ -164,7 +167,7 @@ def api_sum_automatic_transactions(
         _raise_service_error(exc)
 
 
-@router.patch("/transactions/{transaction_id}")
+@router.patch("/transactions/{transaction_id}", dependencies=ADMIN_ONLY)
 def api_patch_bookkeeping_transaction(transaction_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         updated = update_bookkeeping_transaction(transaction_id, payload)
@@ -182,25 +185,10 @@ def api_get_bookkeeping_transaction(transaction_id: str) -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.delete("/transactions/{transaction_id}")
+@router.delete("/transactions/{transaction_id}", dependencies=ADMIN_ONLY)
 def api_delete_bookkeeping_transaction(transaction_id: str) -> dict[str, Any]:
     try:
         deleted = delete_bookkeeping_transaction(transaction_id)
-
-        # Cascade: if this was an auto-synced COGS transaction, clear the
-        # order enrichment so the purchase price disappears from the order
-        # and the next sync won't re-create the transaction.
-        source_key = str(deleted.get("source_key") or "")
-        if source_key.startswith("combined:") and source_key.endswith(":cogs"):
-            # source_key format: "combined:{marketplace}:{external_order_id}:cogs"
-            parts = source_key.split(":")
-            if len(parts) == 4:
-                marketplace, external_order_id = parts[1], parts[2]
-                clear_purchase_enrichment(
-                    marketplace=marketplace,
-                    order_id=external_order_id,
-                )
-
         return {"ok": True, "deleted": deleted}
     except BookkeepingServiceError as exc:
         _raise_service_error(exc)
@@ -222,7 +210,7 @@ def api_list_payment_accounts() -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.post("/payment-accounts")
+@router.post("/payment-accounts", dependencies=ADMIN_ONLY)
 def api_create_payment_account(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         created = create_payment_account(payload)
@@ -231,7 +219,7 @@ def api_create_payment_account(payload: dict[str, Any]) -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.patch("/payment-accounts/{payment_account_id}")
+@router.patch("/payment-accounts/{payment_account_id}", dependencies=ADMIN_ONLY)
 def api_patch_payment_account(payment_account_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         updated = update_payment_account(payment_account_id, payload)
@@ -248,7 +236,7 @@ def api_list_templates() -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.post("/templates")
+@router.post("/templates", dependencies=ADMIN_ONLY)
 def api_create_template(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         created = create_template(payload)
@@ -257,7 +245,7 @@ def api_create_template(payload: dict[str, Any]) -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.patch("/templates/{template_id}")
+@router.patch("/templates/{template_id}", dependencies=ADMIN_ONLY)
 def api_patch_template(template_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         updated = update_template(template_id, payload)
@@ -266,7 +254,7 @@ def api_patch_template(template_id: str, payload: dict[str, Any]) -> dict[str, A
         _raise_service_error(exc)
 
 
-@router.post("/templates/{template_id}/generate-transaction")
+@router.post("/templates/{template_id}/generate-transaction", dependencies=ADMIN_ONLY)
 def api_generate_template_transaction(
     template_id: str,
     payload: Optional[dict[str, Any]] = None,
@@ -286,7 +274,7 @@ def api_list_documents() -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.post("/documents/upload")
+@router.post("/documents/upload", dependencies=ADMIN_ONLY)
 async def api_upload_document(
     file: UploadFile = File(...),
     notes: Optional[str] = Form(default=None),
@@ -397,7 +385,7 @@ def api_get_monthly_invoice(invoice_id: str) -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.post("/monthly-invoices")
+@router.post("/monthly-invoices", dependencies=ADMIN_ONLY)
 def api_create_monthly_invoice(payload: dict[str, Any]) -> dict[str, Any]:
     try:
         created = create_monthly_invoice(payload)
@@ -406,7 +394,7 @@ def api_create_monthly_invoice(payload: dict[str, Any]) -> dict[str, Any]:
         _raise_service_error(exc)
 
 
-@router.patch("/monthly-invoices/{invoice_id}")
+@router.patch("/monthly-invoices/{invoice_id}", dependencies=ADMIN_ONLY)
 def api_update_monthly_invoice(invoice_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     try:
         updated = update_monthly_invoice(invoice_id, payload)
@@ -415,7 +403,7 @@ def api_update_monthly_invoice(invoice_id: str, payload: dict[str, Any]) -> dict
         _raise_service_error(exc)
 
 
-@router.delete("/monthly-invoices/{invoice_id}")
+@router.delete("/monthly-invoices/{invoice_id}", dependencies=ADMIN_ONLY)
 def api_delete_monthly_invoice(invoice_id: str) -> dict[str, Any]:
     try:
         deleted = delete_monthly_invoice(invoice_id)

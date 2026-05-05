@@ -1,3 +1,5 @@
+import { withAdminHeaders } from "@/shared/api/admin-auth";
+
 export type InvoiceDocument = {
   document_id?: string;
   original_filename?: string;
@@ -98,13 +100,13 @@ async function readErrorMessage(response: Response) {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(url, withAdminHeaders({
     ...init,
     headers: {
       Accept: "application/json",
       ...(init?.headers || {}),
     },
-  });
+  }));
 
   if (!response.ok) {
     throw new Error(await readErrorMessage(response));

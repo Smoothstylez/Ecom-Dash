@@ -60,5 +60,5 @@
 - Maps: Leaflet for 2D, Globe.gl for 3D hexbin visualization
 
 ## Testing
-- Test files located in `/home/luis/projects/Ecom-Dash/tests/` directory
+- Test files located in `tests/`
 - Run tests before committing changes (command TBD based on test framework)

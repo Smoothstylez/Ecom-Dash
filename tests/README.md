@@ -40,7 +40,7 @@ tests/
 ## Starting Dashboard
 
 ```bash
-cd /home/luis/projects/Ecom-Dash/ecommerce-dashboard
+cd ecommerce-dashboard
 # Check config.yaml first (ports, DB paths)
 python -m app.main
 # or: bash run.sh

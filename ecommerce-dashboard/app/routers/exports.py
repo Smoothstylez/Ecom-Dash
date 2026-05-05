@@ -5,11 +5,13 @@ import tempfile
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.background import BackgroundTask
 
+from app.auth import require_admin_access
 from app.services.exports import (
+    MAX_RESTORE_UPLOAD_BYTES,
     cleanup_temp_export,
     create_full_backup_archive,
     create_period_export_archive,
@@ -17,7 +19,7 @@ from app.services.exports import (
 )
 
 
-router = APIRouter(prefix="/api/exports", tags=["exports"])
+router = APIRouter(prefix="/api/exports", tags=["exports"], dependencies=[Depends(require_admin_access)])
 
 
 @router.get("/backup")
@@ -71,11 +73,18 @@ async def api_restore_backup(file: UploadFile) -> JSONResponse:
     temp_zip_path = temp_dir / "upload.zip"
 
     try:
+        total_bytes = 0
         with open(temp_zip_path, "wb") as f:
             while True:
                 chunk = await file.read(1024 * 1024)  # 1MB chunks
                 if not chunk:
                     break
+                total_bytes += len(chunk)
+                if total_bytes > MAX_RESTORE_UPLOAD_BYTES:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="backup file too large",
+                    )
                 f.write(chunk)
 
         result = restore_from_backup_archive(temp_zip_path)

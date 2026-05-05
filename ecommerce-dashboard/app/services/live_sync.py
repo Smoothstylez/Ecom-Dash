@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app import changestamp
 from app.services.importers import (
     build_kaufland_live_status,
     build_shopify_live_status,
@@ -149,6 +150,44 @@ def _compact_live_result(payload: dict[str, Any]) -> dict[str, Any]:
         "requested": payload.get("requested"),
         "providers": provider_statuses,
     }
+
+
+def _sync_result_has_mutation(result: dict[str, Any]) -> bool:
+    results_raw = result.get("results")
+    results = results_raw if isinstance(results_raw, dict) else {}
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        summary_raw = payload.get("summary")
+        summary = summary_raw if isinstance(summary_raw, dict) else {}
+        for key in (
+            "total_inserted",
+            "total_updated",
+            "orders_saved",
+            "order_units_saved",
+            "returns_saved",
+            "return_units_saved",
+        ):
+            if int(summary.get(key) or 0) > 0:
+                return True
+    return False
+
+
+def _bookkeeping_summary_has_mutation(summary: Any) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    for key in (
+        "orders_inserted",
+        "orders_updated",
+        "transactions_inserted",
+        "transactions_updated",
+        "transactions_deleted",
+        "documents_inserted",
+        "documents_updated",
+    ):
+        if int(summary.get(key) or 0) > 0:
+            return True
+    return False
 
 
 def _run_live_sync_inner(
@@ -391,6 +430,7 @@ def _background_worker_loop() -> None:
             cycle_result = _run_background_cycle(mode, cfg)
             live_result = cycle_result["live_result"]
             bookkeeping = cycle_result["bookkeeping"]
+            bookkeeping_summary = bookkeeping.get("summary")
             live_status = str(live_result.get("status") or "error").lower()
             bookkeeping_ok = bool(bookkeeping.get("ok"))
             bookkeeping_error = bookkeeping.get("error")
@@ -407,10 +447,12 @@ def _background_worker_loop() -> None:
                 _BACKGROUND_STATE["last_finished_at"] = finished_at
                 _BACKGROUND_STATE["last_status"] = status
                 _BACKGROUND_STATE["last_live_result"] = _compact_live_result(live_result)
-                _BACKGROUND_STATE["last_bookkeeping_sync"] = bookkeeping.get("summary")
+                _BACKGROUND_STATE["last_bookkeeping_sync"] = bookkeeping_summary
                 _BACKGROUND_STATE["last_error"] = str(bookkeeping_error) if bookkeeping_error else None
                 if status in {"success", "partial", "skipped"} and not bookkeeping_error:
                     _BACKGROUND_STATE["last_success_at"] = finished_at
+            if _sync_result_has_mutation(live_result) or _bookkeeping_summary_has_mutation(bookkeeping_summary):
+                changestamp.bump()
         except Exception as exc:  # pragma: no cover - robustness
             LOGGER.exception("background live sync cycle failed: %s", exc)
             with _BACKGROUND_STATE_LOCK:

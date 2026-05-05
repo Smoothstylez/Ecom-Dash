@@ -170,6 +170,83 @@ def _safe_currency(value: Any) -> str:
     return text
 
 
+def _normalize_status_token(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _is_return_like_status(value: Any) -> bool:
+    token = _normalize_status_token(value)
+    if not token:
+        return False
+    keywords = (
+        "cancel",
+        "cancelled",
+        "canceled",
+        "void",
+        "return",
+        "returned",
+        "refund",
+        "refunded",
+        "partially_refunded",
+        "rma",
+        "revoked",
+        "returning",
+    )
+    return any(keyword in token for keyword in keywords)
+
+
+def _is_partial_refund_order(source_order: dict[str, Any]) -> bool:
+    for value in (
+        source_order.get("financial_status"),
+        source_order.get("raw_status"),
+        source_order.get("fulfillment_status"),
+    ):
+        if "partial" in _normalize_status_token(value):
+            return True
+    return False
+
+
+def _normalized_sync_amounts(source_order: dict[str, Any]) -> tuple[int, int, int, int]:
+    revenue_cents = max(int(source_order.get("total_cents") or 0), 0)
+    fees_cents = max(int(source_order.get("fees_cents") or 0), 0)
+    purchase_cents = max(int(source_order.get("purchase_cost_cents") or 0), 0)
+    revenue_after_fees = max(int(source_order.get("after_fees_cents") or 0), 0)
+
+    is_return_like = any(
+        _is_return_like_status(value)
+        for value in (
+            source_order.get("fulfillment_status"),
+            source_order.get("financial_status"),
+            source_order.get("raw_status"),
+        )
+    )
+    if revenue_cents <= 0 or (is_return_like and not _is_partial_refund_order(source_order)):
+        return 0, 0, 0, 0
+
+    return revenue_cents, fees_cents, purchase_cents, revenue_after_fees
+
+
+def _synced_order_status(source_order: dict[str, Any]) -> str:
+    for value in (
+        source_order.get("financial_status"),
+        source_order.get("raw_status"),
+        source_order.get("fulfillment_status"),
+    ):
+        text = str(value or "").strip()
+        if text and _is_return_like_status(text):
+            return text
+
+    for value in (
+        source_order.get("fulfillment_status"),
+        source_order.get("financial_status"),
+        source_order.get("raw_status"),
+    ):
+        text = str(value or "").strip()
+        if text:
+            return text
+    return "unknown"
+
+
 def _stable_uuid(token: str) -> str:
     return str(uuid.uuid5(COMBINED_SYNC_NAMESPACE, token))
 
@@ -197,8 +274,8 @@ def _upsert_synced_order(
 
     timestamp = _now_iso()
     safe_status = status.strip() or "unknown"
-    safe_revenue_gross = max(int(revenue_gross), 1)
-    safe_revenue_net = int(revenue_net) if isinstance(revenue_net, int) and revenue_net > 0 else None
+    safe_revenue_gross = max(int(revenue_gross), 0)
+    safe_revenue_net = int(revenue_net) if isinstance(revenue_net, int) and revenue_net >= 0 else None
 
     if existing is None:
         order_db_id = _stable_uuid(f"combined-order:{marketplace}:{external_order_id}")
@@ -532,17 +609,11 @@ def sync_combined_orders_into_bookkeeping(
             if not market or not external_order_id:
                 continue
 
-            revenue_cents = int(source_order.get("total_cents") or 0)
-            if revenue_cents <= 0:
-                continue
-
-            fees_cents = max(int(source_order.get("fees_cents") or 0), 0)
-            purchase_cents = max(int(source_order.get("purchase_cost_cents") or 0), 0)
-            revenue_after_fees = int(source_order.get("after_fees_cents") or 0)
-            revenue_net = revenue_after_fees if revenue_after_fees > 0 else None
+            revenue_cents, fees_cents, purchase_cents, revenue_after_fees = _normalized_sync_amounts(source_order)
+            revenue_net = revenue_after_fees
             safe_order_date = _safe_iso(str(source_order.get("order_date") or ""))
             safe_currency = _safe_currency(source_order.get("currency"))
-            safe_status = str(source_order.get("fulfillment_status") or "unknown").strip() or "unknown"
+            safe_status = _synced_order_status(source_order)
 
             bookkeeping_order_id, order_action = _upsert_synced_order(
                 connection,
@@ -687,6 +758,7 @@ def sync_google_ads_into_bookkeeping() -> dict[str, Any]:
         "transactions_updated": 0,
         "transactions_deleted": 0,
         "transactions_skipped": 0,
+        "rows_skipped_non_eur": 0,
     }
 
     if not BOOKKEEPING_DB_PATH.exists():
@@ -698,10 +770,14 @@ def sync_google_ads_into_bookkeeping() -> dict[str, Any]:
     daily_totals: dict[str, int] = defaultdict(int)
     with connect_combined_db() as combined_conn:
         rows = combined_conn.execute(
-            "SELECT day, cost_cents FROM google_ads_daily_costs"
+            "SELECT day, cost_cents, currency FROM google_ads_daily_costs"
         ).fetchall()
         for row in rows:
             day = str(row["day"]).strip()
+            currency = str(row["currency"] or "EUR").strip().upper() or "EUR"
+            if currency != "EUR":
+                result["rows_skipped_non_eur"] += 1
+                continue
             cents = int(row["cost_cents"] or 0)
             if day:
                 daily_totals[day] += cents

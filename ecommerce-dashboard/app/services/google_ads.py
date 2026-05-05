@@ -172,6 +172,7 @@ def _parse_ads_report_csv(content: bytes) -> dict[str, Any]:
     report_days = sorted({day for _, day in date_columns})
     last_non_zero_day = ""
     daily_cost_map: dict[tuple[str, str], dict[str, Any]] = {}
+    seen_non_eur_currencies: set[str] = set()
     for row in rows[header_index + 1 :]:
         article_id = _normalize_article_id(row[id_idx] if id_idx < len(row) else "")
         if not article_id:
@@ -181,6 +182,8 @@ def _parse_ads_report_csv(content: bytes) -> dict[str, Any]:
             maybe_currency = _normalize_text(row[currency_idx]).upper()
             if len(maybe_currency) == 3:
                 currency = maybe_currency
+        if currency != "EUR":
+            seen_non_eur_currencies.add(currency)
         for col_idx, day in date_columns:
             raw_value = row[col_idx] if col_idx < len(row) else ""
             cost_cents = _safe_money_to_cents(raw_value)
@@ -197,6 +200,10 @@ def _parse_ads_report_csv(content: bytes) -> dict[str, Any]:
                 }
             else:
                 entry["cost_cents"] = int(entry["cost_cents"]) + int(cost_cents)
+
+    if seen_non_eur_currencies:
+        currencies = ", ".join(sorted(seen_non_eur_currencies))
+        raise ValueError(f"Google Ads CSV: Nur EUR wird unterstuetzt. Gefunden: {currencies}.")
 
     rows_payload = list(daily_cost_map.values())
     non_zero_rows = sum(1 for row in rows_payload if int(row["cost_cents"]) > 0)
@@ -464,6 +471,9 @@ def build_google_ads_analytics(
     unmapped_ads_cost = 0
 
     for row in daily_rows:
+        currency = str(row["currency"] or "EUR").strip().upper() or "EUR"
+        if currency != "EUR":
+            continue
         article_id = str(row["article_id"])
         day = str(row["day"])
         cost_cents = int(row["cost_cents"] or 0)
@@ -648,6 +658,7 @@ def build_google_ads_product_detail(
                 SELECT day, SUM(cost_cents) AS cost_cents
                 FROM google_ads_daily_costs
                 WHERE article_id IN ({placeholders})
+                  AND UPPER(COALESCE(currency, 'EUR')) = 'EUR'
                   AND (? = '' OR day >= ?)
                   AND (? = '' OR day <= ?)
                 GROUP BY day

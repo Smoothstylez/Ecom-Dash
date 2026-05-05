@@ -116,6 +116,51 @@ def _safe_pct(part: int, total: int) -> float:
     return round((part / total) * 100.0, 2)
 
 
+def _is_partial_refund_order(order: dict[str, Any]) -> bool:
+    for value in (
+        order.get("financial_status"),
+        order.get("raw_status"),
+        order.get("fulfillment_status"),
+    ):
+        if "partial" in _normalize_status_token(value):
+            return True
+    return False
+
+
+def _normalize_order_metrics(order: dict[str, Any]) -> dict[str, Any]:
+    total = int(order.get("total_cents") or 0)
+    fees = int(order.get("fees_cents") or 0)
+    after_fees = int(order.get("after_fees_cents") or 0)
+    purchase = int(order.get("purchase_cost_cents") or 0)
+    profit = int(order.get("profit_cents") or (after_fees - purchase))
+    shipping = max(int(order.get("shipping_cents") or 0), 0)
+
+    is_return_like = any(
+        _is_return_like_status(value)
+        for value in (
+            order.get("fulfillment_status"),
+            order.get("financial_status"),
+            order.get("raw_status"),
+        )
+    )
+    if is_return_like and not _is_partial_refund_order(order):
+        total = 0
+        fees = 0
+        after_fees = 0
+        profit = 0
+        shipping = 0
+
+    return {
+        "total": total,
+        "fees": fees,
+        "after_fees": after_fees,
+        "purchase": purchase,
+        "profit": profit,
+        "shipping": shipping,
+        "is_return_like": is_return_like,
+    }
+
+
 def _normalize_customer_key(value: Any) -> str:
     token = str(value or "").strip().lower()
     if token in {"", "-", "unknown", "unbekannt", "n/a", "na"}:
@@ -330,29 +375,18 @@ def build_analytics(
     heatmap: dict[tuple[int, int], int] = defaultdict(int)
 
     for order in orders:
-        total = int(order.get("total_cents") or 0)
-        fees = int(order.get("fees_cents") or 0)
-        after_fees = int(order.get("after_fees_cents") or 0)
-        purchase = int(order.get("purchase_cost_cents") or 0)
-        profit = int(order.get("profit_cents") or (after_fees - purchase))
-        shipping = int(order.get("shipping_cents") or 0)
-        shipping = max(shipping, 0)
+        metrics = _normalize_order_metrics(order)
+        total = metrics["total"]
+        fees = metrics["fees"]
+        after_fees = metrics["after_fees"]
+        purchase = metrics["purchase"]
+        profit = metrics["profit"]
+        shipping = metrics["shipping"]
+        is_return_like = bool(metrics["is_return_like"])
 
         fulfillment_status = order.get("fulfillment_status")
         financial_status = order.get("financial_status")
         raw_status = order.get("raw_status")
-        is_return_like = any(
-            _is_return_like_status(value) for value in (fulfillment_status, financial_status, raw_status)
-        )
-        # Partial refunds stay in the revenue (net amount already deducted at SQL level)
-        # Full cancels/refunds/voids are zeroed out so they don't inflate KPIs
-        is_partial_refund = "partial" in str(financial_status or raw_status or "").lower()
-        if is_return_like and not is_partial_refund:
-            total = 0
-            fees = 0
-            after_fees = 0
-            profit = 0
-            shipping = 0
 
         if is_return_like:
             returns_order_count += 1
@@ -579,11 +613,12 @@ def build_analytics(
         prev_purchase = 0
         prev_fees = 0
         for prev_order in prev_orders:
-            prev_revenue += int(prev_order.get("total_cents") or 0)
-            p_fees = int(prev_order.get("fees_cents") or 0)
-            p_after = int(prev_order.get("after_fees_cents") or 0)
-            p_purchase = int(prev_order.get("purchase_cost_cents") or 0)
-            p_profit = int(prev_order.get("profit_cents") or (p_after - p_purchase))
+            prev_metrics = _normalize_order_metrics(prev_order)
+            prev_revenue += int(prev_metrics["total"])
+            p_fees = int(prev_metrics["fees"])
+            p_after = int(prev_metrics["after_fees"])
+            p_purchase = int(prev_metrics["purchase"])
+            p_profit = int(prev_metrics["profit"])
             prev_fees += p_fees
             prev_after_fees += p_after
             prev_purchase += p_purchase

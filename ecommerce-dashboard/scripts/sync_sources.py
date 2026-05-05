@@ -22,12 +22,18 @@ def main() -> None:
         action="store_true",
         help="Skip bookkeeping documents sync.",
     )
+    parser.add_argument(
+        "--include-bookkeeping-bootstrap",
+        action="store_true",
+        help="Explicitly copy bookkeeping bootstrap DB/documents into runtime paths.",
+    )
     args = parser.parse_args()
 
     ensure_runtime_dirs()
     result = sync_all_sources(
         force=bool(args.force),
         include_documents=not bool(args.skip_documents),
+        include_bookkeeping_bootstrap=bool(args.include_bookkeeping_bootstrap),
     )
     print(json.dumps(result, indent=2, ensure_ascii=True))
 

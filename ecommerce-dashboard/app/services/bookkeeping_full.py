@@ -60,6 +60,14 @@ def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     return row is not None
 
 
+def _table_sql(connection: sqlite3.Connection, table_name: str) -> str:
+    row = connection.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return str(row["sql"] or "") if row is not None else ""
+
+
 def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_definition: str) -> bool:
     if not _table_exists(connection, table_name):
         return False
@@ -69,8 +77,80 @@ def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name:
     return True
 
 
+def _migrate_orders_allow_zero_revenue(connection: sqlite3.Connection) -> bool:
+    if not _table_exists(connection, "orders"):
+        return False
+
+    table_sql = _table_sql(connection, "orders")
+    if "revenue_gross > 0" not in table_sql:
+        return False
+
+    connection.execute("PRAGMA foreign_keys = OFF")
+    try:
+        connection.execute("DROP TABLE IF EXISTS orders__migrated")
+        connection.execute(
+            """
+            CREATE TABLE orders__migrated (
+                id TEXT PRIMARY KEY,
+                provider TEXT NOT NULL,
+                external_order_id TEXT NOT NULL,
+                order_date TEXT NOT NULL,
+                currency TEXT NOT NULL,
+                revenue_gross INTEGER NOT NULL CHECK (revenue_gross >= 0),
+                revenue_net INTEGER,
+                vat_amount INTEGER,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(provider, external_order_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO orders__migrated (
+                id,
+                provider,
+                external_order_id,
+                order_date,
+                currency,
+                revenue_gross,
+                revenue_net,
+                vat_amount,
+                status,
+                created_at,
+                updated_at
+            )
+            SELECT
+                id,
+                provider,
+                external_order_id,
+                order_date,
+                currency,
+                revenue_gross,
+                revenue_net,
+                vat_amount,
+                status,
+                created_at,
+                updated_at
+            FROM orders
+            """
+        )
+        connection.execute("DROP TABLE orders")
+        connection.execute("ALTER TABLE orders__migrated RENAME TO orders")
+        connection.execute("CREATE INDEX idx_orders_order_date ON orders(order_date)")
+    except Exception:
+        connection.execute("DROP TABLE IF EXISTS orders__migrated")
+        raise
+    finally:
+        connection.execute("PRAGMA foreign_keys = ON")
+
+    return True
+
+
 def _ensure_schema(connection: sqlite3.Connection) -> bool:
     changed = False
+    changed = _migrate_orders_allow_zero_revenue(connection) or changed
     changed = _ensure_column(connection, "recurring_templates", "start_date", "TEXT") or changed
     changed = _ensure_column(connection, "transactions", "booking_class", "TEXT DEFAULT 'single'") or changed
 
@@ -109,7 +189,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
         changed = True
 
     # --- backfill booking_class for existing rows ---
-    if changed:
+    if changed and _table_exists(connection, "transactions"):
         connection.execute("""
             UPDATE transactions SET booking_class = 'automatic'
             WHERE booking_class IS NULL AND source = 'api'
@@ -125,10 +205,11 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
 
     # SUBSCRIPTION transactions should always be classified as 'monthly'
     # regardless of how they were originally created.
-    connection.execute("""
-        UPDATE transactions SET booking_class = 'monthly'
-        WHERE type = 'SUBSCRIPTION' AND booking_class != 'monthly'
-    """)
+    if _table_exists(connection, "transactions"):
+        connection.execute("""
+            UPDATE transactions SET booking_class = 'monthly'
+            WHERE type = 'SUBSCRIPTION' AND booking_class != 'monthly'
+        """)
 
     return changed
 
@@ -650,6 +731,7 @@ def _parse_transaction_filters(raw_filters: dict[str, str | None]) -> dict[str, 
     parsed: dict[str, Any] = {
         "dateFrom": None,
         "dateTo": None,
+        "marketplace": None,
         "type": None,
         "provider": None,
         "direction": None,
@@ -667,6 +749,12 @@ def _parse_transaction_filters(raw_filters: dict[str, str | None]) -> dict[str, 
 
     if parsed["dateFrom"] and parsed["dateTo"] and parsed["dateFrom"] > parsed["dateTo"]:
         raise BookkeepingServiceError(400, "dateFrom must be before dateTo")
+
+    marketplace = str(raw_filters.get("marketplace") or "").strip().lower()
+    if marketplace:
+        if marketplace not in {"shopify", "kaufland"}:
+            raise BookkeepingServiceError(400, "invalid marketplace filter")
+        parsed["marketplace"] = marketplace
 
     tx_type = str(raw_filters.get("type") or "").strip().upper()
     if tx_type:
@@ -1377,6 +1465,15 @@ def list_bookkeeping_transactions(filters: dict[str, str | None]) -> dict[str, A
     if parsed_filters.get("type"):
         clauses.append("t.type = ?")
         args.append(parsed_filters["type"])
+    if parsed_filters.get("marketplace"):
+        clauses.append(
+            "(" \
+            "LOWER(COALESCE(o.provider, '')) = ? "
+            "OR (t.order_id IS NULL AND LOWER(COALESCE(t.provider, '')) = ?)" \
+            ")"
+        )
+        args.append(parsed_filters["marketplace"])
+        args.append(parsed_filters["marketplace"])
     if parsed_filters.get("provider"):
         clauses.append("t.provider = ?")
         args.append(parsed_filters["provider"])
@@ -1516,9 +1613,14 @@ def update_bookkeeping_transaction(transaction_id: str, payload: Any) -> dict[st
         else:
             effective_vat_rate = float(existing["vat_rate"])
 
-        if "vat_amount" not in updates and (
-            "vat_rate" in updates or "amount_gross" in updates
-        ):
+        should_recalculate_vat_amount = False
+        if "vat_amount" not in updates:
+            if "vat_rate" in updates:
+                should_recalculate_vat_amount = True
+            elif "amount_gross" in updates and existing["vat_rate"] is not None:
+                should_recalculate_vat_amount = True
+
+        if should_recalculate_vat_amount:
             updates["vat_amount"] = _calculate_vat_amount_cents(effective_amount_gross, effective_vat_rate)
 
         effective_vat_amount = updates.get("vat_amount", existing["vat_amount"])

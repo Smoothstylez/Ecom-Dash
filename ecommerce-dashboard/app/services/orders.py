@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -87,7 +88,12 @@ def _to_kaufland_cents(value: Any) -> Optional[int]:
     if isinstance(value, int):
         return int(value)
     if isinstance(value, float):
-        return int(round(value))
+        if not math.isfinite(value):
+            return None
+        rounded = round(value)
+        if math.isclose(value, rounded, abs_tol=1e-9):
+            return int(rounded)
+        return int(round(value * 100))
 
     text = str(value).strip()
     if not text:
@@ -98,7 +104,12 @@ def _to_kaufland_cents(value: Any) -> Optional[int]:
             parsed = float(normalized)
         except ValueError:
             return None
-        return int(round(parsed * 100)) if abs(parsed) < 1000 else int(round(parsed))
+        if not math.isfinite(parsed):
+            return None
+        rounded = round(parsed)
+        if math.isclose(parsed, rounded, abs_tol=1e-9):
+            return int(rounded)
+        return int(round(parsed * 100))
     try:
         return int(normalized)
     except ValueError:
@@ -316,13 +327,12 @@ def _estimate_shopify_payments_fee_cents(
 def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     order_payload = _safe_json_load(row["raw_json"])
 
-    total_cents = _to_eur_cents(row["total_price"]) or 0
-
-    # For partially refunded orders: subtract the refunded amount from the total
     financial_status_raw = str(row["financial_status"] or "").strip().lower()
+    gross_total_cents = _to_eur_cents(row["total_price"]) or 0
+    refund_cents = _to_eur_cents(row["refund_amount_sum"]) or 0
+    total_cents = gross_total_cents
     if financial_status_raw == "partially_refunded":
-        refund_cents = _to_eur_cents(row["refund_amount_sum"]) or 0
-        total_cents = max(total_cents - refund_cents, 0)
+        total_cents = max(gross_total_cents - refund_cents, 0)
 
     # ── Fee resolution chain with source tracking ──
     fee_cents = _to_eur_cents(row["fee_total"])
@@ -331,6 +341,9 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     if fee_cents is None:
         fee_cents = _to_eur_cents(row["estimated_paypal_fee"])
         fee_source = "stored_estimate"
+
+    if fee_cents is not None and financial_status_raw == "partially_refunded" and gross_total_cents > 0 and refund_cents > 0:
+        fee_cents = max(int(round(fee_cents * (total_cents / gross_total_cents))), 0)
 
     if fee_cents is None:
         fee_cents = _estimate_shopify_paypal_fee_cents(order_payload, total_cents)
@@ -357,6 +370,8 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     after_fees_cents = _to_eur_cents(row["net_total"])
     if after_fees_cents is None:
         after_fees_cents = _to_eur_cents(row["estimated_net_after_fee"])
+    if after_fees_cents is not None and financial_status_raw == "partially_refunded" and gross_total_cents > 0 and refund_cents > 0:
+        after_fees_cents = max(int(round(after_fees_cents * (total_cents / gross_total_cents))), 0)
     if after_fees_cents is None:
         after_fees_cents = max(total_cents - fee_cents, 0)
 
@@ -552,11 +567,12 @@ def _load_kaufland_orders() -> list[dict[str, Any]]:
                 (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
                           - COALESCE((
-                              SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
-                              FROM order_unit_refunds ref
-                              JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
-                              WHERE ou2.id_order = o.id_order
-                          ), 0)
+                               SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
+                               FROM order_unit_refunds ref
+                               JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                               WHERE ou2.id_order = o.id_order
+                                 AND COALESCE(ou2.status, '') NOT IN ('cancelled', 'canceled')
+                           ), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
                       AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
@@ -906,16 +922,26 @@ def _load_kaufland_order_detail(order_id: str) -> Optional[dict[str, Any]]:
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.price, ''), 0) AS REAL)), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS units_price_sum,
                 (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
+                          - COALESCE((
+                               SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
+                               FROM order_unit_refunds ref
+                               JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                               WHERE ou2.id_order = o.id_order
+                                 AND COALESCE(ou2.status, '') NOT IN ('cancelled', 'canceled')
+                           ), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS revenue_gross_sum,
                 (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.shipping_rate, ''), 0) AS REAL)), 0)
                     FROM order_units ou
                     WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS shipping_sum,
                 (
                     SELECT ou.product_title

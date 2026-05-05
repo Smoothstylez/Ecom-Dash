@@ -1,6 +1,7 @@
 """In-memory changestamp for cross-device polling.
 
-Every mutating API response (non-GET/HEAD with 2xx status) bumps the stamp.
+Most successful mutating API responses bump the stamp immediately. Sync flows
+manage it more precisely and only bump after work that actually changes data.
 Clients poll ``GET /api/sync/changestamp`` and trigger a data reload when the
 value they receive differs from the one they last saw.
 """

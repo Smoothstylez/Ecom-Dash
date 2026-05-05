@@ -1,3 +1,5 @@
+import { withAdminHeaders } from "@/shared/api/admin-auth";
+
 export type GoogleAdsImportMeta = {
   filename?: string;
   imported_at?: string;
@@ -85,13 +87,13 @@ function buildQueryString(query: GoogleAdsQuery) {
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, {
+  const response = await fetch(url, withAdminHeaders({
     ...init,
     headers: {
       Accept: "application/json",
       ...(init?.headers || {}),
     },
-  });
+  }));
 
   if (!response.ok) {
     throw new Error(`Google Ads request failed: ${response.status}`);

@@ -17,13 +17,13 @@ import {
   fetchGoogleAdsPanelStatusHtmlForFilters,
   fetchHealthStatus,
   loadPollingSettings,
+  loadAdminToken,
+  persistAdminToken,
   persistPollingSettings,
   runLiveSyncRequest,
   runRestore,
   runSourceSyncRequest,
-  saveCredentials,
   triggerDownload,
-  type CredentialsPayload,
   type PollingSettings,
   type RestoreResultState,
   type StatusLevel,
@@ -34,8 +34,6 @@ type StatusMessage = {
   text: string;
   level: StatusLevel;
 };
-
-type CredentialsFormState = CredentialsPayload;
 
 type RestoreState = {
   file: File | null;
@@ -53,16 +51,6 @@ function defaultStatusSnapshot(): StatusSnapshot {
     sourceInfoHtml: "Lade Quellenstatus...",
     googleAdsStatusInfoHtml: "Lade Google Ads Status...",
     customerGeoStatusInfoHtml: "Noch nicht geladen.",
-  };
-}
-
-function defaultCredentialsForm(): CredentialsFormState {
-  return {
-    shopifyDomain: "",
-    shopifyClientId: "",
-    shopifyClientSecret: "",
-    kauflandClientKey: "",
-    kauflandSecretKey: "",
   };
 }
 
@@ -98,14 +86,15 @@ export function DashboardControls() {
   const [isDataOpen, setDataOpen] = useState(false);
   const [statusSnapshot, setStatusSnapshot] = useState<StatusSnapshot>(() => defaultStatusSnapshot());
   const [statusMessage, setStatusMessage] = useState<StatusMessage>({ text: "", level: "info" });
-  const [credentialsForm, setCredentialsForm] = useState<CredentialsFormState>(() => defaultCredentialsForm());
   const [credentialsPlaceholderState, setCredentialsPlaceholderState] = useState({
     shopifyConfigured: false,
     kauflandConfigured: false,
+    storage: "environment",
   });
   const [credentialsStatus, setCredentialsStatus] = useState({ text: "", level: "info" as StatusLevel });
   const [restoreState, setRestoreState] = useState<RestoreState>(() => defaultRestoreState());
   const [pollingSettings, setPollingSettings] = useState<PollingSettings>(() => loadPollingSettings());
+  const [adminToken, setAdminToken] = useState(() => loadAdminToken());
   const [syncBusy, setSyncBusy] = useState(false);
 
   const pollingTimerRef = useRef<number | null>(null);
@@ -287,11 +276,13 @@ export function DashboardControls() {
       setCredentialsPlaceholderState({
         shopifyConfigured: Boolean(payload.shopify_configured),
         kauflandConfigured: Boolean(payload.kaufland_configured),
+        storage: String(payload.storage || "environment"),
       });
     } catch (_error) {
       setCredentialsPlaceholderState({
         shopifyConfigured: false,
         kauflandConfigured: false,
+        storage: "environment",
       });
     }
   }, []);
@@ -427,35 +418,23 @@ export function DashboardControls() {
     };
   }, [closeDataModal, closeSettingsPanel, closeStatusPanel]);
 
-  const handleCredentialsChange = useCallback((field: keyof CredentialsPayload, value: string) => {
-    setCredentialsForm((current) => ({
-      ...current,
-      [field]: value,
-    }));
+  const handleCredentialsHelp = useCallback(() => {
+    setCredentialsStatus({
+      text: "Credentials werden nur noch ueber Umgebungsvariablen oder Home-Assistant-Optionen bereitgestellt, nicht mehr im Browser gespeichert.",
+      level: "info",
+    });
+    if (credentialsTimerRef.current) {
+      window.clearTimeout(credentialsTimerRef.current);
+    }
+    credentialsTimerRef.current = window.setTimeout(() => {
+      setCredentialsStatus({ text: "", level: "info" });
+    }, 5000);
   }, []);
 
-  const handleCredentialsSave = useCallback(async () => {
-    try {
-      const payload = await saveCredentials(credentialsForm);
-      const ok = Boolean(payload.ok);
-      setCredentialsStatus({
-        text: ok ? "Credentials gespeichert!" : `Fehler: ${payload.message || "Speichern fehlgeschlagen"}`,
-        level: ok ? "ok" : "error",
-      });
-      applyStatus(ok ? "Credentials gespeichert!" : "Fehler beim Speichern", ok ? "ok" : "error");
-      await loadCredentials();
-      if (credentialsTimerRef.current) {
-        window.clearTimeout(credentialsTimerRef.current);
-      }
-      credentialsTimerRef.current = window.setTimeout(() => {
-        setCredentialsStatus({ text: "", level: "info" });
-      }, 3000);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Speichern fehlgeschlagen";
-      setCredentialsStatus({ text: `Fehler: ${message}`, level: "error" });
-      applyStatus(`Fehler: ${message}`, "error");
-    }
-  }, [applyStatus, credentialsForm, loadCredentials]);
+  const handleAdminTokenSave = useCallback(() => {
+    persistAdminToken(adminToken);
+    applyStatus(adminToken.trim() ? "Admin-Token lokal gespeichert." : "Admin-Token entfernt.", "ok");
+  }, [adminToken, applyStatus]);
 
   const handleRestoreFileChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] || null;
@@ -637,17 +616,35 @@ export function DashboardControls() {
               <div className="credentials-form">
                 <div className="credentials-group">
                   <h4>Shopify</h4>
-                  <input id="credShopifyDomain" className="credentials-input" type="text" placeholder={credentialsPlaceholderState.shopifyConfigured ? "Shopify konfiguriert" : "shopname.myshopify.com"} value={credentialsForm.shopifyDomain} onChange={(event) => handleCredentialsChange("shopifyDomain", event.target.value)} />
-                  <input id="credShopifyClientId" className="credentials-input" type="text" placeholder={credentialsPlaceholderState.shopifyConfigured ? "Client ID gesetzt" : "Client ID"} value={credentialsForm.shopifyClientId} onChange={(event) => handleCredentialsChange("shopifyClientId", event.target.value)} />
-                  <input id="credShopifyClientSecret" className="credentials-input" type="password" placeholder="Client Secret" value={credentialsForm.shopifyClientSecret} onChange={(event) => handleCredentialsChange("shopifyClientSecret", event.target.value)} />
+                  <div className="settings-status-line">{credentialsPlaceholderState.shopifyConfigured ? "Shopify ist ueber die Laufzeitumgebung konfiguriert." : "Shopify ist aktuell nicht ueber die Laufzeitumgebung konfiguriert."}</div>
                 </div>
                 <div className="credentials-group">
                   <h4>Kaufland</h4>
-                  <input id="credKauflandClientKey" className="credentials-input" type="text" placeholder={credentialsPlaceholderState.kauflandConfigured ? "Kaufland konfiguriert" : "Client Key"} value={credentialsForm.kauflandClientKey} onChange={(event) => handleCredentialsChange("kauflandClientKey", event.target.value)} />
-                  <input id="credKauflandSecretKey" className="credentials-input" type="password" placeholder="Secret Key" value={credentialsForm.kauflandSecretKey} onChange={(event) => handleCredentialsChange("kauflandSecretKey", event.target.value)} />
+                  <div className="settings-status-line">{credentialsPlaceholderState.kauflandConfigured ? "Kaufland ist ueber die Laufzeitumgebung konfiguriert." : "Kaufland ist aktuell nicht ueber die Laufzeitumgebung konfiguriert."}</div>
                 </div>
-                <button id="btnSaveCredentials" className="btn-inline primary" type="button" onClick={() => void handleCredentialsSave()}>Credentials speichern</button>
+                <div className="settings-status-line">Quelle: {credentialsPlaceholderState.storage === "environment" ? "Umgebungsvariablen / Home-Assistant-Optionen" : credentialsPlaceholderState.storage}</div>
+                <button id="btnSaveCredentials" className="btn-inline primary" type="button" onClick={() => handleCredentialsHelp()}>Hinweis anzeigen</button>
                 <div id="credentialsStatus" className={classNames("credentials-status", credentialsStatus.level === "ok" && "success", credentialsStatus.level === "error" && "error")}>{credentialsStatus.text}</div>
+              </div>
+            </div>
+            <div className="settings-section">
+              <h3>Admin Zugriff</h3>
+              <div className="credentials-form">
+                <div className="settings-status-line">Gespeichert nur lokal in diesem Browser. Wird fuer geschuetzte Sync-, Backup-, Restore- und Schreibaktionen genutzt.</div>
+                <input
+                  id="adminTokenInput"
+                  type="password"
+                  className="settings-inline-input"
+                  value={adminToken}
+                  placeholder="APP_ADMIN_TOKEN"
+                  onChange={(event) => {
+                    setAdminToken(event.target.value);
+                  }}
+                />
+                <div className="data-restore-actions">
+                  <button id="adminTokenSaveBtn" className="btn-inline primary" type="button" onClick={() => handleAdminTokenSave()}>Token speichern</button>
+                  <button id="adminTokenClearBtn" className="btn-inline ghost" type="button" onClick={() => { setAdminToken(""); persistAdminToken(""); applyStatus("Admin-Token entfernt.", "ok"); }}>Token entfernen</button>
+                </div>
               </div>
             </div>
           </div>

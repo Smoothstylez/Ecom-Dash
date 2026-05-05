@@ -30,7 +30,7 @@
 
 ## Immediate Next Steps
 1. None - all features working as expected
-2. Review test coverage in `/home/luis/projects/Ecom-Dash/tests/`
+2. Review test coverage in `tests/`
 
 ## Configuration
 - Port: 8012 (config.yaml ingress_port)

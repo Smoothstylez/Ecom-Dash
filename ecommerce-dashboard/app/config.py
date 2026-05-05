@@ -34,6 +34,9 @@ def _env_flag(env_name: str, default: str = "1") -> bool:
     return raw in {"1", "true", "yes", "on"}
 
 
+RUNTIME_CREDENTIALS_PATH = _resolve_env_path("RUNTIME_CREDENTIALS_PATH", DATA_DIR / "runtime-credentials.json")
+
+
 COMBINED_DB_PATH = _resolve_env_path("COMBINED_DB_PATH", DATA_DIR / "combined.sqlite3")
 
 # Local runtime source DBs used by the app.

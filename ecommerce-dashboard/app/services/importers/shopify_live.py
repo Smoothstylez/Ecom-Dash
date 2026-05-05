@@ -14,7 +14,7 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
-from app.config import SHOPIFY_DB_PATH, SHOPIFY_BOOTSTRAP_ENV_PATH
+from app.config import RUNTIME_CREDENTIALS_PATH, SHOPIFY_BOOTSTRAP_ENV_PATH, SHOPIFY_DB_PATH
 
 
 LOGGER = logging.getLogger(__name__)
@@ -129,9 +129,8 @@ def _load_env_file_values(path: Path) -> dict[str, str]:
 
 
 def _load_credentials_file() -> dict[str, str]:
-    from app.config import PROJECT_ROOT
-    creds_file = PROJECT_ROOT / "data" / "credentials.json"
-    if not creds_file.exists():
+    creds_file = RUNTIME_CREDENTIALS_PATH
+    if not creds_file.exists() or not creds_file.is_file():
         return {}
     try:
         return json.loads(creds_file.read_text())

@@ -13,7 +13,8 @@ test-results/
 *.sqlite3-shm
 
 # Credentials and data
-data/credentials.json
+ecommerce-dashboard/data/credentials.json
+ecommerce-dashboard/data/runtime-credentials.json
 data/combined.sqlite3
 data/sources/
 data/restore_safety/

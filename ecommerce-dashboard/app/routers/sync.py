@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
-from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from app import changestamp
-from app.config import PROJECT_ROOT
+from app.auth import require_admin_access
 from app.services.bookings import sync_combined_orders_into_bookkeeping
 from app.services.live_sync import (
     build_live_sync_background_status,
@@ -21,11 +19,64 @@ from app.services.source_sync import build_sync_status, sync_all_sources
 
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
+ADMIN_ONLY = [Depends(require_admin_access)]
+
+
+def _source_sync_has_mutation(summary: dict[str, Any]) -> bool:
+    results_raw = summary.get("results") if isinstance(summary, dict) else None
+    results = results_raw if isinstance(results_raw, dict) else {}
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        if bool(payload.get("copied")):
+            return True
+        if int(payload.get("copied_files") or 0) > 0:
+            return True
+    return False
+
+
+def _bookkeeping_sync_has_mutation(summary: dict[str, Any]) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    for key in (
+        "orders_inserted",
+        "orders_updated",
+        "transactions_inserted",
+        "transactions_updated",
+        "transactions_deleted",
+        "documents_inserted",
+        "documents_updated",
+    ):
+        if int(summary.get(key) or 0) > 0:
+            return True
+    return False
+
+
+def _live_sync_has_mutation(summary: dict[str, Any]) -> bool:
+    results_raw = summary.get("results") if isinstance(summary, dict) else None
+    results = results_raw if isinstance(results_raw, dict) else {}
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        provider_summary_raw = payload.get("summary")
+        provider_summary = provider_summary_raw if isinstance(provider_summary_raw, dict) else {}
+        for key in (
+            "total_inserted",
+            "total_updated",
+            "orders_saved",
+            "order_units_saved",
+            "returns_saved",
+            "return_units_saved",
+        ):
+            if int(provider_summary.get(key) or 0) > 0:
+                return True
+    return False
 
 
 class SyncRunRequest(BaseModel):
     force: Optional[bool] = Field(default=False)
     include_documents: Optional[bool] = Field(default=True)
+    bookkeeping_bootstrap: Optional[bool] = Field(default=False)
 
 
 class LiveSyncRunRequest(BaseModel):
@@ -62,14 +113,17 @@ def api_sync_status() -> dict[str, Any]:
     return build_sync_status()
 
 
-@router.post("/run")
+@router.post("/run", dependencies=ADMIN_ONLY)
 def api_sync_run(payload: Optional[SyncRunRequest] = None) -> dict[str, Any]:
     request = payload or SyncRunRequest()
     result = sync_all_sources(
         force=bool(request.force),
         include_documents=bool(request.include_documents),
+        include_bookkeeping_bootstrap=bool(request.bookkeeping_bootstrap),
     )
     result["bookkeeping_order_sync"] = sync_combined_orders_into_bookkeeping()
+    if _source_sync_has_mutation(result) or _bookkeeping_sync_has_mutation(result["bookkeeping_order_sync"]):
+        changestamp.bump()
     return result
 
 
@@ -83,7 +137,7 @@ def api_sync_live_background_status() -> dict[str, Any]:
     return build_live_sync_background_status()
 
 
-@router.post("/live/background/trigger")
+@router.post("/live/background/trigger", dependencies=ADMIN_ONLY)
 def api_sync_live_background_trigger(payload: Optional[LiveSyncTriggerRequest] = None) -> dict[str, Any]:
     request = payload or LiveSyncTriggerRequest()
     background = trigger_live_sync_background_now(reason=str(request.reason or "api"))
@@ -94,7 +148,7 @@ def api_sync_live_background_trigger(payload: Optional[LiveSyncTriggerRequest] =
     }
 
 
-@router.post("/live/run")
+@router.post("/live/run", dependencies=ADMIN_ONLY)
 def api_sync_live_run(payload: Optional[LiveSyncRunRequest] = None) -> dict[str, Any]:
     request = payload or LiveSyncRunRequest()
     result = run_live_sync(
@@ -114,64 +168,19 @@ def api_sync_live_run(payload: Optional[LiveSyncRunRequest] = None) -> dict[str,
         kaufland_include_order_unit_details=bool(request.kaufland_include_order_unit_details),
     )
     result["bookkeeping_order_sync"] = sync_combined_orders_into_bookkeeping()
+    if _live_sync_has_mutation(result) or _bookkeeping_sync_has_mutation(result["bookkeeping_order_sync"]):
+        changestamp.bump()
     return result
-
-
-class CredentialsSaveRequest(BaseModel):
-    shopify_domain: Optional[str] = Field(default=None)
-    shopify_client_id: Optional[str] = Field(default=None)
-    shopify_client_secret: Optional[str] = Field(default=None)
-    shopify_api_version: Optional[str] = Field(default="2025-01")
-    kaufland_client_key: Optional[str] = Field(default=None)
-    kaufland_secret_key: Optional[str] = Field(default=None)
-
-
-@router.post("/credentials")
-def api_save_credentials(payload: CredentialsSaveRequest) -> dict[str, Any]:
-    creds_file = PROJECT_ROOT / "data" / "credentials.json"
-    creds_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    creds = {}
-    if creds_file.exists():
-        try:
-            creds = json.loads(creds_file.read_text())
-        except Exception:
-            pass
-    
-    if payload.shopify_domain:
-        creds["SHOPIFY_SHOP_DOMAIN"] = payload.shopify_domain
-    if payload.shopify_client_id:
-        creds["SHOPIFY_CLIENT_ID"] = payload.shopify_client_id
-    if payload.shopify_client_secret:
-        creds["SHOPIFY_CLIENT_SECRET"] = payload.shopify_client_secret
-    if payload.shopify_api_version:
-        creds["SHOPIFY_API_VERSION"] = payload.shopify_api_version
-    if payload.kaufland_client_key:
-        creds["SHOP_CLIENT_KEY"] = payload.kaufland_client_key
-    if payload.kaufland_secret_key:
-        creds["SHOP_SECRET_KEY"] = payload.kaufland_secret_key
-    
-    creds_file.write_text(json.dumps(creds, indent=2))
-    
-    return {"ok": True, "message": "Credentials gespeichert"}
 
 
 @router.get("/credentials")
 def api_get_credentials() -> dict[str, Any]:
-    creds_file = PROJECT_ROOT / "data" / "credentials.json"
-    
-    if not creds_file.exists():
-        return {"ok": True, "has_credentials": False}
-    
-    try:
-        creds = json.loads(creds_file.read_text())
-        has_shopify = bool(creds.get("SHOPIFY_SHOP_DOMAIN"))
-        has_kaufland = bool(creds.get("SHOP_CLIENT_KEY"))
-        return {
-            "ok": True,
-            "has_credentials": has_shopify or has_kaufland,
-            "shopify_configured": has_shopify,
-            "kaufland_configured": has_kaufland,
-        }
-    except Exception:
-        return {"ok": True, "has_credentials": False}
+    shopify_configured = bool(os.getenv("SHOPIFY_SHOP_DOMAIN") and os.getenv("SHOPIFY_CLIENT_ID") and os.getenv("SHOPIFY_CLIENT_SECRET"))
+    kaufland_configured = bool(os.getenv("SHOP_CLIENT_KEY") and os.getenv("SHOP_SECRET_KEY"))
+    return {
+        "ok": True,
+        "has_credentials": shopify_configured or kaufland_configured,
+        "shopify_configured": shopify_configured,
+        "kaufland_configured": kaufland_configured,
+        "storage": "environment",
+    }

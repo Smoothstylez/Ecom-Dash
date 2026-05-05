@@ -31,8 +31,13 @@ from app.config import (
 from app.db import fetch_enrichment_map, sanitize_filename
 from app.services.bookkeeping_full import get_document_resolved_path, list_bookkeeping_transactions
 from app.services.orders import list_all_orders_without_pagination
+from app.services.runtime_reconcile import reconcile_runtime_state
 
 LOGGER = logging.getLogger(__name__)
+
+MAX_RESTORE_UPLOAD_BYTES = 128 * 1024 * 1024
+MAX_RESTORE_TOTAL_UNCOMPRESSED_BYTES = 512 * 1024 * 1024
+MAX_RESTORE_ARCHIVE_ENTRIES = 5000
 
 
 @dataclass
@@ -714,23 +719,98 @@ def _join_archive_path(prefix: str, relative_path: str) -> str:
     return f"{normalized_prefix}{relative_path}"
 
 
+def _validate_archive_member_name(name: str) -> None:
+    normalized = str(name or "").strip()
+    if not normalized:
+        raise ValueError("ZIP enthaelt einen leeren Dateipfad")
+    if normalized.startswith("/"):
+        raise ValueError(f"ZIP enthaelt ungueltigen absoluten Pfad: {normalized}")
+    if "\\" in normalized:
+        raise ValueError(f"ZIP enthaelt ungueltigen Pfad mit Backslashes: {normalized}")
+
+    pure = PurePosixPath(normalized)
+    if any(part in {".", ".."} for part in pure.parts):
+        raise ValueError(f"ZIP enthaelt unsicheren Pfad: {normalized}")
+
+
+def _is_zipinfo_symlink(info: Any) -> bool:
+    mode = (int(getattr(info, "external_attr", 0)) >> 16) & 0o170000
+    return mode == 0o120000
+
+
+def _archive_member_output_path(base_dir: Path, archive_name: str) -> Path:
+    _validate_archive_member_name(archive_name)
+    pure = PurePosixPath(archive_name)
+    relative = Path(*pure.parts)
+    destination = (base_dir / relative).resolve()
+    destination.relative_to(base_dir.resolve())
+    return destination
+
+
+def _copy_zip_member_to_path(zf: ZipFile, archive_name: str, destination: Path) -> None:
+    info = zf.getinfo(archive_name)
+    if info.is_dir():
+        return
+
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = destination.with_suffix(f"{destination.suffix}.tmp")
+    try:
+        with zf.open(info, "r") as source, open(temp_path, "wb") as target:
+            shutil.copyfileobj(source, target)
+        os.replace(temp_path, destination)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def _validate_restore_archive(zf: ZipFile) -> dict[str, int]:
+    infos = zf.infolist()
+    if len(infos) > MAX_RESTORE_ARCHIVE_ENTRIES:
+        raise ValueError(
+            f"ZIP enthaelt zu viele Eintraege ({len(infos)} > {MAX_RESTORE_ARCHIVE_ENTRIES})"
+        )
+
+    total_uncompressed = 0
+    file_entries = 0
+    for info in infos:
+        _validate_archive_member_name(info.filename)
+        if _is_zipinfo_symlink(info):
+            raise ValueError(f"ZIP enthaelt einen nicht erlaubten Symlink: {info.filename}")
+        if info.is_dir():
+            continue
+        file_entries += 1
+        total_uncompressed += int(info.file_size)
+        if total_uncompressed > MAX_RESTORE_TOTAL_UNCOMPRESSED_BYTES:
+            raise ValueError(
+                "ZIP ist zu gross nach dem Entpacken "
+                f"({total_uncompressed} > {MAX_RESTORE_TOTAL_UNCOMPRESSED_BYTES} Bytes)"
+            )
+
+    return {
+        "entries_total": len(infos),
+        "files_total": file_entries,
+        "total_uncompressed_bytes": total_uncompressed,
+    }
+
+
 def _resolve_backup_manifest_path(zf: ZipFile) -> tuple[str, str]:
     names = zf.namelist()
     if "manifest.json" in names:
         return "manifest.json", ""
 
-    nested_candidates = [
-        name for name in names
-        if name.endswith("/manifest.json") and not name.startswith("__MACOSX/")
-    ]
+    nested_candidates = sorted(
+        {
+            name[: -len("manifest.json")]
+            for name in names
+            if name.endswith("/manifest.json") and not name.startswith("__MACOSX/")
+        }
+    )
     if len(nested_candidates) == 1:
-        manifest_path = nested_candidates[0]
-        return manifest_path, manifest_path[: -len("manifest.json")]
-
-    if nested_candidates:
-        prefixes = sorted({candidate[: -len("manifest.json")] for candidate in nested_candidates})
-        if len(prefixes) == 1:
-            return nested_candidates[0], prefixes[0]
+        archive_prefix = nested_candidates[0]
+        return f"{archive_prefix}manifest.json", archive_prefix
 
     raise ValueError("manifest.json fehlt in der ZIP-Datei")
 
@@ -804,9 +884,14 @@ def _restore_databases_from_zip(zf: ZipFile, extract_dir: Path, archive_prefix: 
             db_results[db_name] = entry
             continue
 
-        # Extract to temp dir first
-        extracted = extract_dir / arc_path
-        zf.extract(arc_path, extract_dir)
+        # Extract to temp dir first using safe member copying.
+        try:
+            extracted = _archive_member_output_path(extract_dir, arc_path)
+            _copy_zip_member_to_path(zf, arc_path, extracted)
+        except Exception as exc:
+            entry["reason"] = f"extraction_failed: {type(exc).__name__}: {exc}"
+            db_results[db_name] = entry
+            continue
 
         if not extracted.exists() or not extracted.is_file():
             entry["reason"] = "extraction_failed"
@@ -858,10 +943,12 @@ def _restore_storage_from_zip(zf: ZipFile, extract_dir: Path, archive_prefix: st
             if not relative:
                 continue
 
-            dest_file = target_dir / relative
             try:
-                zf.extract(arc_name, extract_dir)
-                extracted = extract_dir / arc_name
+                relative_path = Path(*PurePosixPath(relative).parts)
+                dest_file = (target_dir / relative_path).resolve()
+                dest_file.relative_to(target_dir.resolve())
+                extracted = _archive_member_output_path(extract_dir, arc_name)
+                _copy_zip_member_to_path(zf, arc_name, extracted)
                 if extracted.exists() and extracted.is_file():
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(extracted, dest_file)
@@ -886,12 +973,29 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
     3. Create a safety backup of current state
     4. Extract and replace databases (atomic file replacement)
     5. Extract and restore storage files (invoices, documents)
-    6. Restart live sync background worker
-    7. Return detailed summary
+    6. Run the same runtime reconcile lifecycle as startup
+    7. Restart live sync background worker
+    8. Return detailed summary
     """
     timestamp = _utc_now()
 
     # ── 1. Validate the ZIP ──
+    try:
+        zip_size_bytes = zip_file_path.stat().st_size
+    except OSError:
+        zip_size_bytes = 0
+    if zip_size_bytes > MAX_RESTORE_UPLOAD_BYTES:
+        return RestoreResult(
+            success=False,
+            summary={
+                "error": (
+                    "ZIP-Datei ist zu gross "
+                    f"({zip_size_bytes} > {MAX_RESTORE_UPLOAD_BYTES} Bytes)"
+                ),
+                "timestamp": _iso_utc(timestamp),
+            },
+        )
+
     try:
         zf = ZipFile(zip_file_path, "r")
     except BadZipFile as exc:
@@ -911,6 +1015,14 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
 
         try:
             manifest = _validate_backup_manifest(zf.read(manifest_path))
+        except ValueError as exc:
+            return RestoreResult(
+                success=False,
+                summary={"error": str(exc), "timestamp": _iso_utc(timestamp)},
+            )
+
+        try:
+            archive_stats = _validate_restore_archive(zf)
         except ValueError as exc:
             return RestoreResult(
                 success=False,
@@ -970,11 +1082,15 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
             except Exception:
                 pass
 
-        # ── 6. Restart live sync ──
+        # ── 6. Reconcile runtime state ──
+        LOGGER.info("Restore: reconciling runtime state...")
+        reconcile_summary = reconcile_runtime_state()
+
+        # ── 7. Restart live sync ──
         LOGGER.info("Restore: restarting live sync background worker...")
         start_live_sync_background_worker()
 
-        # ── 7. Summary ──
+        # ── 8. Summary ──
         db_restored_count = sum(1 for v in db_results.values() if v.get("restored"))
         storage_restored_count = sum(v.get("files_restored", 0) for v in storage_results.values())
         storage_error_count = sum(len(v.get("errors", [])) for v in storage_results.values())
@@ -985,6 +1101,7 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
             "backup_app_version": manifest.get("app_version", "unknown"),
             "backup_schema_version": manifest.get("schema_version"),
             "archive_prefix": _normalize_archive_prefix(archive_prefix),
+            "archive_stats": archive_stats,
             "current_app_version": APP_VERSION,
             "current_schema_version": SCHEMA_VERSION,
             "safety_backup_path": str(safety_path),
@@ -994,10 +1111,11 @@ def restore_from_backup_archive(zip_file_path: Path) -> RestoreResult:
             "storage": storage_results,
             "storage_files_restored": storage_restored_count,
             "storage_errors": storage_error_count,
+            "reconcile": reconcile_summary,
         }
 
         all_dbs_ok = all(v.get("restored") or v.get("reason") == "not_in_archive" for v in db_results.values())
-        success = all_dbs_ok and storage_error_count == 0
+        success = all_dbs_ok and storage_error_count == 0 and bool(reconcile_summary.get("ok"))
 
         LOGGER.info(
             "Restore complete: success=%s, dbs=%d/%d, storage_files=%d, errors=%d",

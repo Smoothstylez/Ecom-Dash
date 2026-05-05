@@ -3,10 +3,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from app.auth import require_admin_access
 from app.config import ALLOWED_MARKETPLACES, MAX_UPLOAD_BYTES
 from app.db import (
     build_invoice_storage_path,
@@ -21,6 +22,7 @@ from app.services.orders import get_order_detail, list_orders
 
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
+ADMIN_ONLY = [Depends(require_admin_access)]
 
 
 class PurchaseUpdateRequest(BaseModel):
@@ -124,7 +126,7 @@ def api_get_order_detail(marketplace: str, order_id: str) -> dict[str, Any]:
     return detail
 
 
-@router.patch("/{marketplace}/{order_id}/purchase")
+@router.patch("/{marketplace}/{order_id}/purchase", dependencies=ADMIN_ONLY)
 def api_update_purchase(
     marketplace: str,
     order_id: str,
@@ -145,7 +147,7 @@ def api_update_purchase(
     return {"ok": True, "enrichment": updated, "bookkeeping_sync": booking_sync}
 
 
-@router.post("/{marketplace}/{order_id}/invoice")
+@router.post("/{marketplace}/{order_id}/invoice", dependencies=ADMIN_ONLY)
 async def api_upload_invoice(
     marketplace: str,
     order_id: str,

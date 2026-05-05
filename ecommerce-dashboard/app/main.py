@@ -19,7 +19,6 @@ from app.config import (
     SHOPIFY_DB_PATH,
     ensure_runtime_dirs,
 )
-from app.db import init_combined_db
 from app.routers.analytics import router as analytics_router
 from app.routers.bookings import router as bookings_router
 from app.routers.customers import router as customers_router
@@ -28,12 +27,12 @@ from app.routers.exports import router as exports_router
 from app.routers.google_ads import router as google_ads_router
 from app.routers.orders import router as orders_router
 from app.routers.sync import router as sync_router
-from app.services.bookings import sync_combined_orders_into_bookkeeping, sync_google_ads_into_bookkeeping, migrate_bookkeeping_document_paths
 from app.services.live_sync import (
     build_live_sync_status,
     start_live_sync_background_worker,
     stop_live_sync_background_worker,
 )
+from app.services.runtime_reconcile import reconcile_runtime_state
 from app.services.source_sync import build_sync_status, sync_all_sources
 
 
@@ -42,6 +41,21 @@ STATIC_DIR = BASE_DIR / "app" / "static"
 WORKSPACE_DIR = BASE_DIR.parent
 FRONTEND_DIST_DIR = WORKSPACE_DIR / "frontend" / "dist"
 LOGGER = logging.getLogger("combined_dashboard")
+
+
+def _source_sync_has_mutation(summary: dict[str, object] | None) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    results_raw = summary.get("results")
+    results = results_raw if isinstance(results_raw, dict) else {}
+    for payload in results.values():
+        if not isinstance(payload, dict):
+            continue
+        if bool(payload.get("copied")):
+            return True
+        if int(payload.get("copied_files") or 0) > 0:
+            return True
+    return False
 
 
 app = FastAPI(title="Combined Dropshipping Dashboard", version=APP_VERSION)
@@ -66,9 +80,18 @@ app.include_router(sync_router)
 
 @app.middleware("http")
 async def changestamp_middleware(request: Request, call_next) -> Response:
-    """Bump the changestamp on any successful mutating request."""
+    """Bump the changestamp on successful mutating requests.
+
+    Sync endpoints manage changestamp updates based on whether work actually
+    changed data, so the generic middleware must stay out of their way.
+    """
     response: Response = await call_next(request)
-    if request.method not in ("GET", "HEAD", "OPTIONS") and 200 <= response.status_code < 300:
+    path = request.url.path
+    if (
+        request.method not in ("GET", "HEAD", "OPTIONS")
+        and not path.startswith("/api/sync")
+        and 200 <= response.status_code < 300
+    ):
         changestamp.bump()
     return response
 
@@ -76,40 +99,27 @@ async def changestamp_middleware(request: Request, call_next) -> Response:
 @app.on_event("startup")
 def on_startup() -> None:
     ensure_runtime_dirs()
+    should_bump_source_sync = False
     if AUTO_SYNC_ON_STARTUP:
         try:
-            sync_summary = sync_all_sources(force=False, include_documents=True)
+            sync_summary = sync_all_sources(
+                force=False,
+                include_documents=True,
+                include_bookkeeping_bootstrap=True,
+            )
+            should_bump_source_sync = _source_sync_has_mutation(sync_summary)
             LOGGER.info("startup source sync finished: %s", sync_summary.get("timestamp"))
         except Exception as exc:  # pragma: no cover - startup robustness
             LOGGER.exception("startup source sync failed: %s", exc)
-    init_combined_db()
+    reconcile_summary: dict[str, object] = {}
     try:
-        migrated = migrate_bookkeeping_document_paths()
-        if migrated:
-            LOGGER.info("migrated %d bookkeeping document paths to relative", migrated)
+        reconcile_summary = reconcile_runtime_state()
+        if not bool(reconcile_summary.get("ok")):
+            LOGGER.warning("startup runtime reconcile finished with errors: %s", reconcile_summary.get("errors"))
     except Exception as exc:  # pragma: no cover - startup robustness
-        LOGGER.exception("bookkeeping document path migration failed: %s", exc)
-    try:
-        order_sync = sync_combined_orders_into_bookkeeping()
-        LOGGER.info(
-            "startup bookkeeping order sync: selected=%s inserted=%s updated=%s",
-            order_sync.get("selected_orders"),
-            order_sync.get("orders_inserted"),
-            order_sync.get("orders_updated"),
-        )
-    except Exception as exc:  # pragma: no cover - startup robustness
-        LOGGER.exception("startup bookkeeping order sync failed: %s", exc)
-    try:
-        gads_sync = sync_google_ads_into_bookkeeping()
-        LOGGER.info(
-            "startup google ads bookkeeping sync: days=%s inserted=%s updated=%s deleted=%s",
-            gads_sync.get("days_total"),
-            gads_sync.get("transactions_inserted"),
-            gads_sync.get("transactions_updated"),
-            gads_sync.get("transactions_deleted"),
-        )
-    except Exception as exc:  # pragma: no cover - startup robustness
-        LOGGER.exception("startup google ads bookkeeping sync failed: %s", exc)
+        LOGGER.exception("startup runtime reconcile failed: %s", exc)
+    if should_bump_source_sync and not bool(reconcile_summary.get("changestamp_bumped")):
+        changestamp.bump()
     try:
         background_status = start_live_sync_background_worker()
         LOGGER.info(
@@ -120,6 +130,8 @@ def on_startup() -> None:
         )
     except Exception as exc:  # pragma: no cover - startup robustness
         LOGGER.exception("startup live sync background worker failed: %s", exc)
+
+
 @app.on_event("shutdown")
 def on_shutdown() -> None:
     try:
@@ -158,11 +170,15 @@ def _dashboard_shell_response() -> Response:
 @app.head("/app-preview", include_in_schema=False, response_model=None)
 @app.get("/app-preview/{frontend_path:path}", include_in_schema=False, response_model=None)
 @app.head("/app-preview/{frontend_path:path}", include_in_schema=False, response_model=None)
-def frontend_preview(frontend_path: str = "") -> RedirectResponse:
+def frontend_preview(request: Request, frontend_path: str = "") -> RedirectResponse:
     normalized = frontend_path.strip("/")
     target = "/analytics"
     if normalized:
         target = f"/{normalized}"
+    query_string = str(request.url.query or "").strip()
+    if query_string:
+        separator = "&" if "?" in target else "?"
+        target = f"{target}{separator}{query_string}"
     return RedirectResponse(url=target, status_code=307)
 
 

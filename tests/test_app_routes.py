@@ -31,21 +31,22 @@ class AppRouteTests(unittest.TestCase):
                 self.assertIn("text/html", response.headers.get("content-type", ""))
 
     def test_preview_routes_redirect_to_main_routes(self) -> None:
-        for path in [
-            "/app-preview",
-            "/app-preview/analytics",
-            "/app-preview/orders",
-            "/app-preview/customers",
-            "/app-preview/bookings",
-            "/app-preview/bookings/full?subtab=transactions",
-            "/app-preview/google-ads",
-            "/app-preview/ebay",
-        ]:
+        expected_locations = {
+            "/app-preview": "/analytics",
+            "/app-preview/analytics": "/analytics",
+            "/app-preview/orders": "/orders",
+            "/app-preview/customers": "/customers",
+            "/app-preview/bookings": "/bookings",
+            "/app-preview/bookings/full?subtab=transactions": "/bookings/full?subtab=transactions",
+            "/app-preview/google-ads": "/google-ads",
+            "/app-preview/ebay": "/ebay",
+        }
+        for path, expected_location in expected_locations.items():
             with self.subTest(path=path):
                 response = self.client.get(path, follow_redirects=False)
 
                 self.assertEqual(response.status_code, 307)
-                self.assertIn("location", response.headers)
+                self.assertEqual(response.headers.get("location"), expected_location)
 
 
 if __name__ == "__main__":

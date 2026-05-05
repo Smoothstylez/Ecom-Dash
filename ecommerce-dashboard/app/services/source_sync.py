@@ -175,6 +175,10 @@ def _pick_shopify_bootstrap_source() -> Path:
     return SHOPIFY_BOOTSTRAP_DB_PATH_FALLBACK
 
 
+def _should_sync_bookkeeping_bootstrap(*, force: bool) -> bool:
+    return bool(force) or not BOOKKEEPING_DB_PATH.exists()
+
+
 def build_sync_status() -> dict[str, Any]:
     shopify_source = _pick_shopify_bootstrap_source()
     return {
@@ -199,19 +203,60 @@ def build_sync_status() -> dict[str, Any]:
     }
 
 
-def sync_all_sources(*, force: bool = False, include_documents: bool = True) -> dict[str, Any]:
+def sync_all_sources(
+    *,
+    force: bool = False,
+    include_documents: bool = True,
+    include_bookkeeping_bootstrap: bool = False,
+) -> dict[str, Any]:
     shopify_source = _pick_shopify_bootstrap_source()
     shopify = _sync_db(shopify_source, SHOPIFY_DB_PATH, force=force)
     kaufland = _sync_db(KAUFLAND_BOOTSTRAP_DB_PATH, KAUFLAND_DB_PATH, force=force)
-    bookkeeping = _sync_db(BOOKKEEPING_BOOTSTRAP_DB_PATH, BOOKKEEPING_DB_PATH, force=force)
+    sync_bookkeeping = bool(include_bookkeeping_bootstrap) and _should_sync_bookkeeping_bootstrap(force=force)
+    if sync_bookkeeping:
+        bookkeeping = _sync_db(BOOKKEEPING_BOOTSTRAP_DB_PATH, BOOKKEEPING_DB_PATH, force=force)
+    elif not include_bookkeeping_bootstrap:
+        bookkeeping = {
+            "source": str(BOOKKEEPING_BOOTSTRAP_DB_PATH),
+            "target": str(BOOKKEEPING_DB_PATH),
+            "copied": False,
+            "status": "skipped",
+            "reason": "bookkeeping bootstrap is disabled for regular source sync",
+        }
+    else:
+        bookkeeping = {
+            "source": str(BOOKKEEPING_BOOTSTRAP_DB_PATH),
+            "target": str(BOOKKEEPING_DB_PATH),
+            "copied": False,
+            "status": "skipped",
+            "reason": "bookkeeping bootstrap disabled because runtime data already exists",
+        }
 
     documents: dict[str, Any]
-    if include_documents:
+    if include_documents and sync_bookkeeping:
         documents = _sync_documents_dir(
             BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR,
             BOOKKEEPING_DOCUMENTS_DIR,
             force=force,
         )
+    elif include_documents and not include_bookkeeping_bootstrap:
+        documents = {
+            "source": str(BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR),
+            "target": str(BOOKKEEPING_DOCUMENTS_DIR),
+            "status": "skipped",
+            "reason": "bookkeeping bootstrap is disabled for regular source sync",
+            "copied_files": 0,
+            "total_source_files": len(_iter_files(BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR)),
+        }
+    elif include_documents:
+        documents = {
+            "source": str(BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR),
+            "target": str(BOOKKEEPING_DOCUMENTS_DIR),
+            "status": "skipped",
+            "reason": "bookkeeping bootstrap disabled because runtime data already exists",
+            "copied_files": 0,
+            "total_source_files": len(_iter_files(BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR)),
+        }
     else:
         documents = {
             "source": str(BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR),
@@ -225,6 +270,7 @@ def sync_all_sources(*, force: bool = False, include_documents: bool = True) -> 
         "timestamp": _utc_now(),
         "force": force,
         "include_documents": include_documents,
+        "include_bookkeeping_bootstrap": bool(include_bookkeeping_bootstrap),
         "results": {
             "shopify_db": shopify,
             "kaufland_db": kaufland,
