@@ -24,8 +24,12 @@ export function useRoute(): [DashboardRoute, (path: string) => void] {
   }, []);
 
   const navigate = useCallback((path: string) => {
-    const next = resolveDashboardRoute(path);
-    if (window.location.pathname !== path) {
+    // path may include a query string (e.g. /bookings/full?subtab=transactions)
+    // resolveDashboardRoute only needs the pathname portion
+    const [pathname] = path.split("?");
+    const next = resolveDashboardRoute(pathname);
+    const current = window.location.pathname + window.location.search;
+    if (current !== path) {
       window.history.pushState(null, "", path);
     }
     setRoute(next);
