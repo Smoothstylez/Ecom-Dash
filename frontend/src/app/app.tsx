@@ -12,11 +12,11 @@ import { EbayShell } from "@/features/ebay/ebay-shell";
 import { GoogleAdsShell } from "@/features/google-ads/google-ads-shell";
 import { OrdersShell } from "@/features/orders/orders-shell";
 import { OrderDetailRuntime } from "@/features/orders/order-detail-runtime";
-import { resolveDashboardRoute } from "@/shared/runtime/dashboard-route";
+import { useRoute } from "@/shared/runtime/use-route";
 import { ThemeProvider } from "@/shared/theme/theme-provider";
 
 export function App() {
-  const route = resolveDashboardRoute(window.location.pathname);
+  const [route, navigate] = useRoute();
 
   let content = <AnalyticsShell />;
   if (route === "orders") {
@@ -36,7 +36,7 @@ export function App() {
       <DashboardShellStateProvider>
         <DashboardRuntimeProvider>
           <div className="app-root" data-dashboard-route={route}>
-            <AppShell route={route}>{content}</AppShell>
+            <AppShell route={route} navigate={navigate}>{content}</AppShell>
             <DashboardControls />
             <DashboardSharedModals />
             <DashboardThemeModal />

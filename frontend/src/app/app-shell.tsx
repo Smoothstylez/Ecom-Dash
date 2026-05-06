@@ -160,10 +160,11 @@ function buildCalendarCells(
 
 type AppShellProps = {
   route: DashboardRoute;
+  navigate: (path: string) => void;
   children: ReactNode;
 };
 
-export function AppShell({ route, children }: AppShellProps) {
+export function AppShell({ route, navigate, children }: AppShellProps) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const { filters, setFilters, bookingsSubtab, setBookingsSubtab, requestRefresh } = useDashboardShellState();
   const [isDateRangeMenuOpen, setDateRangeMenuOpen] = useState(false);
@@ -357,10 +358,6 @@ export function AppShell({ route, children }: AppShellProps) {
     window.requestAnimationFrame(() => {
       searchInputRef.current?.focus();
     });
-  }
-
-  function navigate(path: string) {
-    window.location.assign(path);
   }
 
   return (
