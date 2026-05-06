@@ -292,10 +292,6 @@ export function DashboardControls() {
   }, [loadCredentials]);
 
   useEffect(() => {
-    void loadStatusPanel();
-  }, [loadStatusPanel]);
-
-  useEffect(() => {
     if (!isStatusOpen) {
       return;
     }
@@ -388,7 +384,9 @@ export function DashboardControls() {
         if (nextStamp !== pollingLastStampRef.current) {
           pollingLastStampRef.current = nextStamp;
           requestRefresh();
-          await loadStatusPanel();
+          if (isStatusOpen) {
+            await loadStatusPanel();
+          }
         }
       } catch (_error) {
         // Ignore polling errors.
@@ -401,7 +399,7 @@ export function DashboardControls() {
         pollingTimerRef.current = null;
       }
     };
-  }, [loadStatusPanel, pollingSettings.enabled, pollingSettings.intervalSec, requestRefresh]);
+  }, [isStatusOpen, loadStatusPanel, pollingSettings.enabled, pollingSettings.intervalSec, requestRefresh]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

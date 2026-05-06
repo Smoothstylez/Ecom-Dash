@@ -232,6 +232,56 @@ class BookkeepingSyncTests(unittest.TestCase):
         self.assertEqual(amounts["combined:shopify:#1002:fee"], 262)
         self.assertEqual(amounts["combined:shopify:#1002:cogs"], 3000)
 
+    def test_sync_is_idempotent_for_unchanged_orders_and_documents(self) -> None:
+        invoice_path = Path(self.temp_dir.name) / "invoice.pdf"
+        invoice_path.write_bytes(b"%PDF-1.4\n")
+
+        order = {
+            "marketplace": "shopify",
+            "order_id": "3",
+            "external_order_id": "#1003",
+            "order_date": "2026-01-12T10:00:00Z",
+            "currency": "EUR",
+            "total_cents": 10000,
+            "fees_cents": 500,
+            "after_fees_cents": 9500,
+            "purchase_cost_cents": 4000,
+            "customer": "Alice",
+            "fulfillment_status": "fulfilled",
+            "financial_status": "paid",
+            "raw_status": "fulfilled",
+            "payment_method": "Shopify",
+        }
+        enrichment = {
+            ("shopify", "3"): {
+                "supplier_name": "Supplier A",
+                "invoice_document_id": "doc-1003",
+                "original_filename": "invoice.pdf",
+                "stored_filename": "invoice.pdf",
+                "file_path": str(invoice_path),
+                "mime_type": "application/pdf",
+                "uploaded_at": "2026-01-12T10:05:00Z",
+            }
+        }
+
+        with patch("app.db.fetch_enrichment_map", return_value=enrichment):
+            with patch("app.services.orders.list_all_orders_without_pagination", return_value=[order]):
+                first_summary = bookings.sync_combined_orders_into_bookkeeping()
+                second_summary = bookings.sync_combined_orders_into_bookkeeping()
+
+        self.assertEqual(first_summary["orders_inserted"], 1)
+        self.assertEqual(first_summary["transactions_inserted"], 3)
+        self.assertEqual(first_summary["documents_inserted"], 1)
+
+        self.assertEqual(second_summary["orders_inserted"], 0)
+        self.assertEqual(second_summary["orders_updated"], 0)
+        self.assertEqual(second_summary["transactions_inserted"], 0)
+        self.assertEqual(second_summary["transactions_updated"], 0)
+        self.assertEqual(second_summary["transactions_deleted"], 0)
+        self.assertEqual(second_summary["documents_inserted"], 0)
+        self.assertEqual(second_summary["documents_updated"], 0)
+        self.assertEqual(second_summary["documents_skipped"], 0)
+
     def test_schema_migration_allows_zero_revenue_orders(self) -> None:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row

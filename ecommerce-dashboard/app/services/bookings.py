@@ -170,6 +170,20 @@ def _safe_currency(value: Any) -> str:
     return text
 
 
+def _optional_text(value: Any) -> Optional[str]:
+    text = str(value or "").strip()
+    return text or None
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _normalize_status_token(value: Any) -> str:
     return str(value or "").strip().lower()
 
@@ -264,7 +278,7 @@ def _upsert_synced_order(
 ) -> tuple[str, str]:
     existing = connection.execute(
         """
-        SELECT id, created_at
+        SELECT id, provider, external_order_id, order_date, currency, revenue_gross, revenue_net, status
         FROM orders
         WHERE LOWER(COALESCE(provider, '')) = ? AND external_order_id = ?
         LIMIT 1
@@ -303,6 +317,17 @@ def _upsert_synced_order(
         return order_db_id, "inserted"
 
     order_db_id = str(existing["id"])
+    if (
+        str(existing["provider"] or "").strip().lower() == marketplace
+        and str(existing["external_order_id"] or "").strip() == external_order_id
+        and str(existing["order_date"] or "").strip() == order_date
+        and str(existing["currency"] or "").strip().upper() == currency
+        and int(existing["revenue_gross"] or 0) == safe_revenue_gross
+        and _optional_int(existing["revenue_net"]) == safe_revenue_net
+        and str(existing["status"] or "").strip() == safe_status
+    ):
+        return order_db_id, "unchanged"
+
     connection.execute(
         """
         UPDATE orders
@@ -362,7 +387,12 @@ def _upsert_synced_document(
 
     document_id = _stable_uuid(f"combined-document:{external_document_id}")
     existing = connection.execute(
-        "SELECT id FROM documents WHERE id = ? LIMIT 1",
+        """
+        SELECT id, original_filename, stored_filename, file_path, mime_type, uploaded_at, notes
+        FROM documents
+        WHERE id = ?
+        LIMIT 1
+        """,
         (document_id,),
     ).fetchone()
 
@@ -391,6 +421,16 @@ def _upsert_synced_document(
             ),
         )
         return document_id, "inserted"
+
+    if (
+        str(existing["original_filename"] or "") == safe_original
+        and str(existing["stored_filename"] or "") == safe_stored
+        and str(existing["file_path"] or "") == portable_path
+        and str(existing["mime_type"] or "") == safe_mime
+        and str(existing["uploaded_at"] or "") == safe_uploaded_at
+        and _optional_text(existing["notes"]) == _optional_text(notes)
+    ):
+        return document_id, "unchanged"
 
     connection.execute(
         """
@@ -454,7 +494,29 @@ def _upsert_synced_transaction(
     timestamp = _now_iso()
     existing = connection.execute(
         """
-        SELECT id, created_at
+        SELECT
+            id,
+            date,
+            type,
+            direction,
+            amount_gross,
+            currency,
+            vat_rate,
+            vat_amount,
+            amount_net,
+            provider,
+            counterparty_name,
+            category,
+            reference,
+            notes,
+            order_id,
+            document_id,
+            template_id,
+            payment_account_id,
+            period_key,
+            source,
+            status,
+            booking_class
         FROM transactions
         WHERE source_key = ?
         LIMIT 1
@@ -497,6 +559,31 @@ def _upsert_synced_transaction(
         return "inserted"
 
     transaction_id = str(existing["id"])
+    if (
+        str(existing["date"] or "") == date
+        and str(existing["type"] or "") == tx_type
+        and str(existing["direction"] or "") == direction
+        and int(existing["amount_gross"] or 0) == safe_amount
+        and str(existing["currency"] or "") == currency
+        and existing["vat_rate"] is None
+        and existing["vat_amount"] is None
+        and existing["amount_net"] is None
+        and str(existing["provider"] or "") == provider
+        and _optional_text(existing["counterparty_name"]) == _optional_text(counterparty_name)
+        and _optional_text(existing["category"]) == _optional_text(category)
+        and _optional_text(existing["reference"]) == _optional_text(reference)
+        and _optional_text(existing["notes"]) == _optional_text(notes)
+        and _optional_text(existing["order_id"]) == _optional_text(order_id)
+        and _optional_text(existing["document_id"]) == _optional_text(document_id)
+        and existing["template_id"] is None
+        and existing["payment_account_id"] is None
+        and existing["period_key"] is None
+        and str(existing["source"] or "").strip().lower() == "api"
+        and str(existing["status"] or "").strip().lower() == "confirmed"
+        and str(existing["booking_class"] or "") == booking_class
+    ):
+        return "unchanged"
+
     connection.execute(
         """
         UPDATE transactions
@@ -670,7 +757,7 @@ def sync_combined_orders_into_bookkeeping(
                     summary["documents_inserted"] += 1
                 elif doc_action == "updated":
                     summary["documents_updated"] += 1
-                else:
+                elif doc_action == "skipped":
                     summary["documents_skipped"] += 1
 
             sale_key = f"combined:{market}:{external_order_id}:sale"
