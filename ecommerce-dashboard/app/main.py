@@ -5,7 +5,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from app import changestamp
@@ -175,7 +175,11 @@ def _dashboard_shell_response() -> Response:
             media_type="text/plain",
             status_code=503,
         )
-    return FileResponse(index_path)
+    html = index_path.read_text(encoding="utf-8")
+    version_suffix = f"?v={APP_VERSION}"
+    html = html.replace('/static/css/themes.css', f'/static/css/themes.css{version_suffix}')
+    html = html.replace('/static/css/main.css', f'/static/css/main.css{version_suffix}')
+    return HTMLResponse(content=html)
 
 
 @app.get("/app-preview", include_in_schema=False, response_model=None)
