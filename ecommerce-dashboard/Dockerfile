@@ -31,6 +31,9 @@ RUN python -m pip install --upgrade pip \
 COPY app/ app/
 COPY scripts/ scripts/
 
+# Copy pre-built frontend (React/Vite)
+COPY frontend_dist/ frontend_dist/
+
 # Copy seed data (used on first start)
 COPY data/ data-seed/
 COPY storage/ storage-seed/

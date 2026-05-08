@@ -39,7 +39,13 @@ from app.services.source_sync import build_sync_status, sync_all_sources
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "app" / "static"
 WORKSPACE_DIR = BASE_DIR.parent
-FRONTEND_DIST_DIR = WORKSPACE_DIR / "frontend" / "dist"
+
+# Frontend dist: check in-container path first, then workspace-relative (dev)
+_FRONTEND_DIST_CONTAINER = BASE_DIR / "frontend_dist"
+_FRONTEND_DIST_WORKSPACE = WORKSPACE_DIR / "frontend" / "dist"
+FRONTEND_DIST_DIR = (
+    _FRONTEND_DIST_CONTAINER if _FRONTEND_DIST_CONTAINER.is_dir() else _FRONTEND_DIST_WORKSPACE
+)
 LOGGER = logging.getLogger("combined_dashboard")
 
 
@@ -163,6 +169,12 @@ def deprecated_bookings_module() -> RedirectResponse:
 
 def _dashboard_shell_response() -> Response:
     index_path = FRONTEND_DIST_DIR / "index.html"
+    if not index_path.is_file():
+        return Response(
+            content="Frontend not built. Run 'npm run build' in frontend/ directory.",
+            media_type="text/plain",
+            status_code=503,
+        )
     return FileResponse(index_path)
 
 
@@ -216,4 +228,8 @@ def health() -> dict[str, object]:
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
-app.mount("/assets", StaticFiles(directory=FRONTEND_DIST_DIR / "assets"), name="frontend-assets")
+_frontend_assets_dir = FRONTEND_DIST_DIR / "assets"
+if _frontend_assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=_frontend_assets_dir), name="frontend-assets")
+else:
+    LOGGER.warning("Frontend assets directory not found: %s — /assets route disabled", _frontend_assets_dir)
