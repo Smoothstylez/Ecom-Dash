@@ -849,7 +849,16 @@ def _load_shopify_order_detail(order_id: str) -> Optional[dict[str, Any]]:
                     SELECT ROUND(SUM(CAST(NULLIF(t.net_amount, '') AS REAL)), 2)
                     FROM order_transactions t
                     WHERE t.order_id = o.id AND COALESCE(t.net_amount, '') <> ''
-                ) AS net_total
+                ) AS net_total,
+                (
+                    SELECT COALESCE(SUM(
+                        CAST(NULLIF(json_extract(t2.value, '$.amount'), '') AS REAL)
+                    ), 0)
+                    FROM order_refunds r, json_each(r.transactions_json) t2
+                    WHERE r.order_id = o.id
+                      AND json_extract(t2.value, '$.kind') = 'refund'
+                      AND json_extract(t2.value, '$.status') = 'success'
+                ) AS refund_amount_sum
             FROM orders o
             WHERE o.id = ?
             LIMIT 1

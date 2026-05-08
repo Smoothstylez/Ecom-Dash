@@ -357,6 +357,110 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(detail_summary["after_fees_cents"], list_summary["after_fees_cents"])
         self.assertEqual(detail_summary["shipping_cents"], list_summary["shipping_cents"])
 
+    def test_shopify_order_detail_summary_includes_refund_amount_sum(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "shopify.sqlite3"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE orders (
+                        id TEXT PRIMARY KEY,
+                        order_number INTEGER,
+                        name TEXT,
+                        email TEXT,
+                        created_at TEXT,
+                        updated_at TEXT,
+                        financial_status TEXT,
+                        fulfillment_status TEXT,
+                        total_price TEXT,
+                        subtotal_price TEXT,
+                        total_tax TEXT,
+                        total_discounts TEXT,
+                        currency TEXT,
+                        tags TEXT,
+                        note TEXT,
+                        customer_id TEXT,
+                        customer_email TEXT,
+                        customer_first_name TEXT,
+                        customer_last_name TEXT,
+                        shipping_country TEXT,
+                        shipping_city TEXT,
+                        line_items_count INTEGER,
+                        fulfillments_count INTEGER,
+                        refunds_count INTEGER,
+                        raw_json TEXT NOT NULL,
+                        synced_at TEXT NOT NULL,
+                        estimated_paypal_fee TEXT,
+                        estimated_net_after_fee TEXT,
+                        fee_estimation_note TEXT,
+                        payment_method TEXT
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE TABLE order_line_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, title TEXT, product_id TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_refunds (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, created_at TEXT, transactions_json TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_fulfillments (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, created_at TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_transactions (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, fee_amount TEXT, net_amount TEXT, processed_at TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO orders (id, name, created_at, updated_at, financial_status, fulfillment_status, total_price, currency, customer_email, customer_first_name, customer_last_name, line_items_count, fulfillments_count, refunds_count, raw_json, synced_at, estimated_paypal_fee, estimated_net_after_fee, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "7643540750675",
+                        "#1001",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        "partially_refunded",
+                        "fulfilled",
+                        "100.00",
+                        "EUR",
+                        "max@example.com",
+                        "Max",
+                        "Mustermann",
+                        1,
+                        0,
+                        1,
+                        '{"payment_gateway_names":["paypal"]}',
+                        "2026-01-01T00:00:00Z",
+                        "3.50",
+                        "96.50",
+                        "PayPal",
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO order_line_items (id, order_id, title, product_id, raw_json) VALUES (?, ?, ?, ?, ?)",
+                    ("li-1", "7643540750675", "Artikel A", "prod-1", "{}"),
+                )
+                connection.execute(
+                    "INSERT INTO order_refunds (id, order_id, created_at, transactions_json, raw_json) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        "ref-1",
+                        "7643540750675",
+                        "2026-01-02T00:00:00Z",
+                        '[{"kind":"refund","status":"success","amount":"25.00"}]',
+                        "{}",
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            from app.services import orders as orders_service
+
+            with patch.object(orders_service, "SHOPIFY_DB_PATH", db_path):
+                detail_payload = orders_service.get_order_detail("shopify", "7643540750675")
+
+        assert detail_payload is not None
+        self.assertEqual(detail_payload["summary"]["total_cents"], 7500)
+        self.assertEqual(detail_payload["summary"]["after_fees_cents"], 7238)
+
 
 if __name__ == "__main__":
     unittest.main()
