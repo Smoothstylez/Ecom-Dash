@@ -320,7 +320,11 @@ function destroyCustomerGlobe(globe: CustomerGlobeInstance | null) {
   }
 }
 
-export function CustomersPage() {
+type CustomersPageProps = {
+  isActive: boolean;
+};
+
+export function CustomersPage({ isActive }: CustomersPageProps) {
   const { filters: shellFilters, refreshRequestToken } = useDashboardShellState();
   const { theme, themeVersion } = useTheme();
   const [overview, setOverview] = useState<CustomersOverview>(INITIAL_OVERVIEW);
@@ -348,6 +352,7 @@ export function CustomersPage() {
   const globeRef = useRef<CustomerGlobeInstance | null>(null);
   const globeWorldFeaturesRef = useRef<unknown[] | null>(null);
   const globeWorldLoadPromiseRef = useRef<Promise<void> | null>(null);
+  const globeAtlasAbortRef = useRef<AbortController | null>(null);
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
 
   const query = useMemo(() => ({
@@ -440,6 +445,9 @@ export function CustomersPage() {
   }, [geo.summary, geoStatus]);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     const nextOverviewRequest = fetchCustomersOverview(query)
       .then((payload) => {
         setOverview(normalizeOverview(payload));
@@ -497,10 +505,13 @@ export function CustomersPage() {
 
     void nextOverviewRequest;
     void nextGeoRequest;
-  }, [query]);
+  }, [isActive, query]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
+      return;
+    }
+    if (!isActive) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
@@ -553,7 +564,7 @@ export function CustomersPage() {
       .finally(() => {
         setLoadingGeo(false);
       });
-  }, [query, refreshRequestToken]);
+  }, [isActive, query, refreshRequestToken]);
 
   useEffect(() => {
     applyGlobeThemeColors(globeRef.current);
@@ -577,6 +588,8 @@ export function CustomersPage() {
 
   useEffect(() => {
     return () => {
+      globeAtlasAbortRef.current?.abort();
+      globeAtlasAbortRef.current = null;
       destroyCustomerGlobe(globeRef.current);
       globeRef.current = null;
       leafletMapRef.current?.remove();
@@ -584,6 +597,44 @@ export function CustomersPage() {
       leafletLayerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      const renderer = globeRef.current?.renderer?.();
+      const controls = globeRef.current?.controls?.();
+      if (document.hidden) {
+        renderer?.setAnimationLoop?.(null);
+        if (controls) {
+          controls.enabled = false;
+        }
+        return;
+      }
+      if (!isActive || geoMode !== "globe") {
+        return;
+      }
+      const globeView = globeViewRef.current;
+      if (globeRef.current && globeView instanceof HTMLElement) {
+        globeRef.current.width?.(globeView.clientWidth || 640);
+        globeRef.current.height?.(globeView.clientHeight || 420);
+      }
+      const scene = globeRef.current?.scene?.();
+      const camera = globeRef.current?.camera?.();
+      if (renderer?.setAnimationLoop && scene && camera) {
+        renderer.setAnimationLoop(() => {
+          renderer.render?.(scene, camera);
+        });
+      }
+      if (controls) {
+        controls.enabled = true;
+        controls.update?.();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [geoMode, isActive]);
 
   useEffect(() => {
     const mapView = mapViewRef.current;
@@ -681,6 +732,16 @@ export function CustomersPage() {
       return;
     }
 
+    if (!isActive || document.hidden) {
+      const renderer = globeRef.current?.renderer?.();
+      renderer?.setAnimationLoop?.(null);
+      const controls = globeRef.current?.controls?.();
+      if (controls) {
+        controls.enabled = false;
+      }
+      return;
+    }
+
     if (!globeRuntimeReady) {
       globeView.innerHTML = '<div class="customer-geo-empty">Hex-Globus wird geladen...</div>';
       return;
@@ -764,7 +825,9 @@ export function CustomersPage() {
     applyGlobeThemeColors(globeRef.current);
 
     if (!globeWorldFeaturesRef.current && !globeWorldLoadPromiseRef.current) {
-      globeWorldLoadPromiseRef.current = fetch("https://unpkg.com/world-atlas@2/countries-50m.json")
+      const abortController = new AbortController();
+      globeAtlasAbortRef.current = abortController;
+      globeWorldLoadPromiseRef.current = fetch("https://unpkg.com/world-atlas@2/countries-50m.json", { signal: abortController.signal })
         .then((response) => {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
@@ -788,7 +851,22 @@ export function CustomersPage() {
           globeRef.current?.hexPolygonAltitude?.(0.0036);
           globeRef.current?.hexPolygonUseDots?.(false);
         })
+        .catch((error) => {
+          if (abortController.signal.aborted) {
+            return;
+          }
+          const message = error instanceof Error ? error.message : "Weltkarte konnte nicht geladen werden.";
+          setGeoStatus((current) => ({
+            ...current,
+            log: logGeoEvent(`Globus-Atlas Fehler: ${message}`, current.log),
+          }));
+          setGlobeUnavailableReason(`Hex-Globus konnte nicht geladen werden: ${message}`);
+          setGeoModeState("map");
+        })
         .finally(() => {
+          if (globeAtlasAbortRef.current === abortController) {
+            globeAtlasAbortRef.current = null;
+          }
           globeWorldLoadPromiseRef.current = null;
         });
     } else if (globeWorldFeaturesRef.current) {
@@ -827,7 +905,7 @@ export function CustomersPage() {
       controls.enabled = true;
       controls.update?.();
     }
-  }, [geo.points, geoMode, globeRuntimeReady, theme, themeVersion]);
+  }, [geo.points, geoMode, globeRuntimeReady, isActive, theme, themeVersion]);
 
   const topContent = (
     <>

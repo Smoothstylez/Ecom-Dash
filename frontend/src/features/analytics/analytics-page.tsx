@@ -316,6 +316,68 @@ function StateCard({ title, message }: { title: string; message: string }) {
   );
 }
 
+function normalizeAnalyticsPayload(payload: AnalyticsPayload): AnalyticsPayload {
+  const statusSummary = payload.status_summary && typeof payload.status_summary === "object"
+    ? payload.status_summary
+    : {
+        completed_like_count: 0,
+        pending_like_count: 0,
+        return_like_count: 0,
+        other_count: 0,
+      };
+  const trend = payload.trend && typeof payload.trend === "object"
+    ? payload.trend
+    : null;
+
+  return {
+    ...payload,
+    order_count: Number(payload.order_count || 0),
+    revenue_total_cents: Number(payload.revenue_total_cents || 0),
+    fees_total_cents: Number(payload.fees_total_cents || 0),
+    after_fees_total_cents: Number(payload.after_fees_total_cents || 0),
+    purchase_total_cents: Number(payload.purchase_total_cents || 0),
+    profit_total_cents: Number(payload.profit_total_cents || 0),
+    margin_pct: Number(payload.margin_pct || 0),
+    aov_cents: Number(payload.aov_cents || 0),
+    avg_profit_per_order_cents: Number(payload.avg_profit_per_order_cents || 0),
+    fees_ratio_pct: Number(payload.fees_ratio_pct || 0),
+    shipping_total_cents: Number(payload.shipping_total_cents || 0),
+    orders_with_purchase_count: Number(payload.orders_with_purchase_count || 0),
+    purchase_missing_count: Number(payload.purchase_missing_count || 0),
+    purchase_coverage_pct: Number(payload.purchase_coverage_pct || 0),
+    returns_order_count: Number(payload.returns_order_count || 0),
+    return_rate_pct: Number(payload.return_rate_pct || 0),
+    unique_customers: Number(payload.unique_customers || 0),
+    repeat_customers: Number(payload.repeat_customers || 0),
+    repeat_customer_rate_pct: Number(payload.repeat_customer_rate_pct || 0),
+    shopify_revenue_total_cents: Number(payload.shopify_revenue_total_cents || 0),
+    kaufland_revenue_total_cents: Number(payload.kaufland_revenue_total_cents || 0),
+    marketplaces: Array.isArray(payload.marketplaces) ? payload.marketplaces : [],
+    top_payment_methods: Array.isArray(payload.top_payment_methods) ? payload.top_payment_methods : [],
+    monthly: Array.isArray(payload.monthly) ? payload.monthly : [],
+    top_articles: Array.isArray(payload.top_articles) ? payload.top_articles : [],
+    purchase_heatmap: Array.isArray(payload.purchase_heatmap) ? payload.purchase_heatmap : [],
+    previous_period: payload.previous_period ?? null,
+    status_summary: {
+      completed_like_count: Number(statusSummary.completed_like_count || 0),
+      pending_like_count: Number(statusSummary.pending_like_count || 0),
+      return_like_count: Number(statusSummary.return_like_count || 0),
+      other_count: Number(statusSummary.other_count || 0),
+    },
+    trend: {
+      granularity: String(trend?.granularity || ""),
+      title: String(trend?.title || ""),
+      from: String(trend?.from || ""),
+      to: String(trend?.to || ""),
+      point_count: Number(trend?.point_count || 0),
+      order_count: Number(trend?.order_count || 0),
+      revenue_total_cents: Number(trend?.revenue_total_cents || 0),
+      profit_total_cents: Number(trend?.profit_total_cents || 0),
+      points: Array.isArray(trend?.points) ? trend.points : [],
+    },
+  };
+}
+
 function KpiCard({
   cardId,
   name,
@@ -806,7 +868,11 @@ function TopArticlesCard({ payload, dragProps }: { payload: AnalyticsPayload; dr
   );
 }
 
-export function AnalyticsPage() {
+type AnalyticsPageProps = {
+  isActive: boolean;
+};
+
+export function AnalyticsPage({ isActive }: AnalyticsPageProps) {
   const { filters: shellFilters, requestCloseSettingsPanel, refreshRequestToken } = useDashboardShellState();
   const [trendGranularity, setTrendGranularity] = useState("auto");
   const [payload, setPayload] = useState<AnalyticsPayload | null>(null);
@@ -844,6 +910,9 @@ export function AnalyticsPage() {
   }, [layout]);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError("");
@@ -851,7 +920,7 @@ export function AnalyticsPage() {
     fetchAnalytics(query)
       .then((nextPayload) => {
         if (!cancelled) {
-          setPayload(nextPayload);
+          setPayload(normalizeAnalyticsPayload(nextPayload));
         }
       })
       .catch((nextError: Error) => {
@@ -868,10 +937,13 @@ export function AnalyticsPage() {
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [isActive, query]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
+      return;
+    }
+    if (!isActive) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
@@ -880,7 +952,7 @@ export function AnalyticsPage() {
     setError("");
     void fetchAnalytics(query)
       .then((nextPayload) => {
-        setPayload(nextPayload);
+        setPayload(normalizeAnalyticsPayload(nextPayload));
       })
       .catch((nextError: Error) => {
         setError(nextError.message);
@@ -888,7 +960,7 @@ export function AnalyticsPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [query, refreshRequestToken]);
+  }, [isActive, query, refreshRequestToken]);
 
   useEffect(() => {
     const layoutEditMenuBtn = document.getElementById("layoutEditMenuBtn");

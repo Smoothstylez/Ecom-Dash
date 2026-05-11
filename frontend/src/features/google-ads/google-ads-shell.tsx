@@ -1,5 +1,9 @@
 import { GoogleAdsPage } from "./google-ads-page";
 
-export function GoogleAdsShell() {
-  return <GoogleAdsPage />;
+type GoogleAdsShellProps = {
+  isActive: boolean;
+};
+
+export function GoogleAdsShell({ isActive }: GoogleAdsShellProps) {
+  return <GoogleAdsPage isActive={isActive} />;
 }

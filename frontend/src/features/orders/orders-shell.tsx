@@ -1,5 +1,9 @@
 import { OrdersPage } from "./orders-page";
 
-export function OrdersShell() {
-  return <OrdersPage />;
+type OrdersShellProps = {
+  isActive: boolean;
+};
+
+export function OrdersShell({ isActive }: OrdersShellProps) {
+  return <OrdersPage isActive={isActive} />;
 }

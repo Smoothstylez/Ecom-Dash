@@ -276,7 +276,11 @@ function ProductDetailRow({
   );
 }
 
-export function GoogleAdsPage() {
+type GoogleAdsPageProps = {
+  isActive: boolean;
+};
+
+export function GoogleAdsPage({ isActive }: GoogleAdsPageProps) {
   const { filters, refreshRequestToken } = useDashboardShellState();
   const themeToken = useThemeRenderToken();
   const [payload, setPayload] = useState<GoogleAdsAnalytics | null>(null);
@@ -294,6 +298,9 @@ export function GoogleAdsPage() {
   const query = useMemo(() => buildQuery(filters.from, filters.to, filters.q), [filters.from, filters.q, filters.to]);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
 
     const load = async () => {
@@ -321,7 +328,7 @@ export function GoogleAdsPage() {
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [isActive, query]);
 
   useEffect(() => {
     setExpandedProductKey("");
@@ -330,6 +337,9 @@ export function GoogleAdsPage() {
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
+      return;
+    }
+    if (!isActive) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
@@ -347,7 +357,7 @@ export function GoogleAdsPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [query, refreshRequestToken]);
+  }, [isActive, query, refreshRequestToken]);
 
   useEffect(() => {
     if (!expandedProductKey) {

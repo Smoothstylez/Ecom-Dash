@@ -5,7 +5,11 @@ import { useDashboardShellState } from "@/app/dashboard-shell-state";
 import { BookingsPanel } from "./bookings-panel";
 import { BookingsPage } from "./bookings-page";
 
-export function BookingsShell() {
+type BookingsShellProps = {
+  isActive: boolean;
+};
+
+export function BookingsShell({ isActive }: BookingsShellProps) {
   const { bookingsSubtab } = useDashboardShellState();
   const [panelElement, setPanelElement] = useState<HTMLElement | null>(null);
 
@@ -16,7 +20,7 @@ export function BookingsShell() {
   return (
     <>
       <BookingsPanel panelRef={handlePanelRef} bookingsSubtab={bookingsSubtab} />
-      {panelElement ? <BookingsPage panelElement={panelElement} /> : null}
+      {panelElement ? <BookingsPage panelElement={panelElement} isActive={isActive} /> : null}
     </>
   );
 }

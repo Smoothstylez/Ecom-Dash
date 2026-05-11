@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { DashboardShellStateProvider } from "@/app/dashboard-shell-state";
 import { DashboardControls } from "@/app/dashboard-controls";
+import { ErrorBoundary } from "@/app/error-boundary";
 import { DashboardRuntimeProvider } from "@/app/dashboard-runtime";
 import { DashboardSharedModals } from "@/app/dashboard-shared-modals";
 import { DashboardThemeModal } from "@/app/dashboard-theme-modal";
@@ -21,12 +22,12 @@ import { ThemeProvider } from "@/shared/theme/theme-provider";
 // Each route is mounted lazily on first visit, then kept alive (hidden via CSS).
 // This prevents re-fetching data when switching tabs.
 const ROUTE_SHELLS: Record<DashboardRoute, () => ReactElement> = {
-  analytics: () => <AnalyticsShell />,
-  orders: () => <OrdersShell />,
-  customers: () => <CustomersShell />,
-  bookings: () => <BookingsShell />,
-  "google-ads": () => <GoogleAdsShell />,
-  ebay: () => <EbayShell />,
+  analytics: () => <AnalyticsShell isActive={false} />,
+  orders: () => <OrdersShell isActive={false} />,
+  customers: () => <CustomersShell isActive={false} />,
+  bookings: () => <BookingsShell isActive={false} />,
+  "google-ads": () => <GoogleAdsShell isActive={false} />,
+  ebay: () => <EbayShell isActive={false} />,
 };
 
 export function App() {
@@ -53,15 +54,21 @@ export function App() {
             <AppShell route={route} navigate={navigate}>
               {(Object.keys(ROUTE_SHELLS) as DashboardRoute[]).map((r) => {
                 if (!mounted.has(r)) return null;
-                const Shell = ROUTE_SHELLS[r];
                 return (
                   <div key={r} style={r !== route ? { display: "none" } : undefined}>
-                    <Shell />
+                    <ErrorBoundary fallbackTitle="Ansicht konnte nicht geladen werden">
+                      {r === "analytics" ? <AnalyticsShell isActive={r === route} /> : null}
+                      {r === "orders" ? <OrdersShell isActive={r === route} /> : null}
+                      {r === "customers" ? <CustomersShell isActive={r === route} /> : null}
+                      {r === "bookings" ? <BookingsShell isActive={r === route} /> : null}
+                      {r === "google-ads" ? <GoogleAdsShell isActive={r === route} /> : null}
+                      {r === "ebay" ? <EbayShell isActive={r === route} /> : null}
+                    </ErrorBoundary>
                   </div>
                 );
               })}
             </AppShell>
-            <DashboardControls />
+            <DashboardControls route={route} />
             <DashboardSharedModals />
             <DashboardThemeModal />
             <OrderDetailRuntime />

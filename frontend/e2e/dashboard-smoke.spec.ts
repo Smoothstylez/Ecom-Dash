@@ -92,6 +92,17 @@ async function stubBookingsBootstrap(page: Page, options: StubBookingsBootstrapO
   });
 }
 
+async function openSettings(page: Page) {
+  await page.locator("#sidebarSettingsBtn").click();
+  await expect(page.locator("#settingsPanel")).toHaveClass(/active/);
+}
+
+async function disablePolling(page: Page) {
+  await page.addInitScript(() => {
+    window.localStorage.setItem("dash-combined.polling", JSON.stringify({ enabled: false, intervalSec: 30 }));
+  });
+}
+
 test.describe("dashboard smoke", () => {
   for (const expectation of routeExpectations) {
     test(`boots ${expectation.path}`, async ({ page }) => {
@@ -845,6 +856,241 @@ test.describe("dashboard smoke", () => {
 
     await page.locator("#themeModalCloseBtn").click();
     await expect(page.locator("#themeModal")).not.toHaveClass(/active/);
+  });
+
+  test("settings layout button follows active route state", async ({ page }) => {
+    await disablePolling(page);
+    await page.goto("/analytics", { waitUntil: "networkidle" });
+
+    await openSettings(page);
+    await expect(page.locator("#layoutEditMenuBtn")).toBeEnabled();
+    await page.locator("#closeSettingsBtn").click();
+
+    await page.locator("#tabOrdersBtn").click();
+    await expect(page).toHaveURL(/\/orders$/);
+
+    await openSettings(page);
+    await expect(page.locator("#layoutEditMenuBtn")).toBeDisabled();
+  });
+
+  test("global refresh only reloads the active route", async ({ page }) => {
+    await disablePolling(page);
+
+    let analyticsRequests = 0;
+    let ordersRequests = 0;
+    let customersOverviewRequests = 0;
+    let customersLocationRequests = 0;
+    let bookingsRequests = 0;
+    let googleAdsRequests = 0;
+    let ebaySummaryRequests = 0;
+    let ebayOrdersRequests = 0;
+
+    await page.route("**/api/health", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ sync_status: {}, live_sync_status: {}, bookkeeping_module: {} }),
+      });
+    });
+    await page.route("**/api/sync/credentials", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ shopify_configured: false, kaufland_configured: false, storage: "environment" }),
+      });
+    });
+
+    await page.route("**/api/analytics/kpis?**", async (route) => {
+      analyticsRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          order_count: 1,
+          revenue_total_cents: 1000,
+          fees_total_cents: 100,
+          purchase_total_cents: 200,
+          profit_total_cents: 700,
+          marketplace_split: { shopify_revenue_cents: 1000, kaufland_revenue_cents: 0 },
+          previous_period: null,
+          trend: [],
+          top_articles: [],
+          top_customers: [],
+          payments: [],
+        }),
+      });
+    });
+    await page.route("**/api/orders?**", async (route) => {
+      ordersRequests += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/customers?**", async (route) => {
+      customersOverviewRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ total: 0, kpis: {}, items: [] }),
+      });
+    });
+    await page.route("**/api/customers/locations?**", async (route) => {
+      customersLocationRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ summary: { orders_total: 0, unresolved_orders_count: 0, points_total: 0 }, points: [] }),
+      });
+    });
+    await page.route("**/api/bookings/**", async (route) => {
+      bookingsRequests += 1;
+      const url = route.request().url();
+      if (url.includes("/transactions")) {
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0, allItems: [] }) });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/google-ads/analytics?**", async (route) => {
+      googleAdsRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ kpis: {}, imports: {}, products: [], missing_assignments: [], trend: [] }),
+      });
+    });
+    await page.route("**/api/ebay/summary", async (route) => {
+      ebaySummaryRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ available: true, kpis: {}, shops: [], top_articles: [], import_meta: {} }),
+      });
+    });
+    await page.route("**/api/ebay/orders**", async (route) => {
+      ebayOrdersRequests += 1;
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ orders: [], total: 0 }) });
+    });
+
+    await page.goto("/analytics", { waitUntil: "networkidle" });
+    const baseline = {
+      analyticsRequests,
+      ordersRequests,
+      customersOverviewRequests,
+      customersLocationRequests,
+      bookingsRequests,
+      googleAdsRequests,
+      ebaySummaryRequests,
+      ebayOrdersRequests,
+    };
+
+    await expect(page.locator("#tabOrdersBtn")).toBeVisible();
+    await page.locator("#tabOrdersBtn").click();
+    await page.waitForLoadState("networkidle");
+    await page.locator("#tabCustomersBtn").click();
+    await page.waitForLoadState("networkidle");
+    await page.locator("#tabBookingsBtn").click();
+    await page.waitForLoadState("networkidle");
+    await page.locator("#tabGoogleAdsBtn").click();
+    await page.waitForLoadState("networkidle");
+    await page.locator("#tabEbayBtn").click();
+    await page.waitForLoadState("networkidle");
+    await page.locator("#tabAnalyticsBtn").click();
+    await page.waitForLoadState("networkidle");
+
+    const beforeRefresh = {
+      analyticsRequests,
+      ordersRequests,
+      customersOverviewRequests,
+      customersLocationRequests,
+      bookingsRequests,
+      googleAdsRequests,
+      ebaySummaryRequests,
+      ebayOrdersRequests,
+    };
+
+    await openSettings(page);
+    await page.locator("#refreshBtn").click();
+    await page.waitForTimeout(300);
+
+    expect(analyticsRequests - beforeRefresh.analyticsRequests).toBe(1);
+    expect(ordersRequests - beforeRefresh.ordersRequests).toBe(0);
+    expect(customersOverviewRequests - beforeRefresh.customersOverviewRequests).toBe(0);
+    expect(customersLocationRequests - beforeRefresh.customersLocationRequests).toBe(0);
+    expect(bookingsRequests - beforeRefresh.bookingsRequests).toBe(0);
+    expect(googleAdsRequests - beforeRefresh.googleAdsRequests).toBe(0);
+    expect(ebaySummaryRequests - beforeRefresh.ebaySummaryRequests).toBe(0);
+    expect(ebayOrdersRequests - beforeRefresh.ebayOrdersRequests).toBe(0);
+    expect(baseline.analyticsRequests).toBeGreaterThan(0);
+  });
+
+  test("google ads refresh triggers only one analytics request when status panel is closed", async ({ page }) => {
+    await disablePolling(page);
+    let analyticsRequests = 0;
+
+    await page.route("**/api/sync/credentials", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ shopify_configured: false, kaufland_configured: false, storage: "environment" }),
+      });
+    });
+
+    await page.route("**/api/google-ads/analytics?**", async (route) => {
+      analyticsRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ kpis: {}, imports: {}, products: [], missing_assignments: [], trend: [] }),
+      });
+    });
+
+    await page.goto("/google-ads", { waitUntil: "networkidle" });
+    const beforeRefresh = analyticsRequests;
+
+    await openSettings(page);
+    await page.locator("#refreshBtn").click();
+    await page.waitForTimeout(300);
+
+    expect(analyticsRequests - beforeRefresh).toBeLessThanOrEqual(1);
+  });
+
+  test("settings closes after global refresh so sidebar navigation stays clickable", async ({ page }) => {
+    await disablePolling(page);
+
+    await page.goto("/analytics", { waitUntil: "networkidle" });
+
+    await openSettings(page);
+    await page.locator("#refreshBtn").click();
+    await expect(page.locator("#settingsPanel")).not.toHaveClass(/active/);
+    await expect(page.locator("#settingsPanel")).toHaveAttribute("aria-hidden", "true");
+
+    await page.locator("#tabOrdersBtn").click();
+    await expect(page).toHaveURL(/\/orders$/);
+  });
+
+  test("customers globe failure falls back without page error", async ({ page }) => {
+    await disablePolling(page);
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    await page.addInitScript(() => {
+      window.topojson = {
+        feature: () => ({ features: [] }),
+      } as Window["topojson"];
+      window.Globe = class FakeGlobe {
+        constructor() {
+          throw new Error("forced globe init failure");
+        }
+      } as unknown as Window["Globe"];
+    });
+
+    await page.goto("/customers", { waitUntil: "networkidle" });
+    await page.locator("#customerGeoModeGlobeBtn").click();
+
+    await expect(page.locator("#customerGeoMapView")).toHaveClass(/active/);
+    await expect(page.locator("#customerGeoGlobeView")).toContainText("Hex-Globus Fehler: forced globe init failure");
+    expect(pageErrors).toEqual([]);
   });
 
   test("bookings route mounts React panel host", async ({ page }) => {

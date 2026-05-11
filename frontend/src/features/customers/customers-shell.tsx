@@ -1,5 +1,9 @@
 import { CustomersPage } from "./customers-page";
 
-export function CustomersShell() {
-  return <CustomersPage />;
+type CustomersShellProps = {
+  isActive: boolean;
+};
+
+export function CustomersShell({ isActive }: CustomersShellProps) {
+  return <CustomersPage isActive={isActive} />;
 }

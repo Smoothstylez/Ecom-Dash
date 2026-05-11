@@ -1,5 +1,9 @@
 import { EbayPage } from "./ebay-page";
 
-export function EbayShell() {
-  return <EbayPage />;
+type EbayShellProps = {
+  isActive: boolean;
+};
+
+export function EbayShell({ isActive }: EbayShellProps) {
+  return <EbayPage isActive={isActive} />;
 }

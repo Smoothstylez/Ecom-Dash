@@ -41,8 +41,13 @@ function loadExternalScript(src: string) {
     document.body.appendChild(script);
   });
 
-  loadedScripts.set(src, nextPromise);
-  return nextPromise;
+  const trackedPromise = nextPromise.catch((error) => {
+    loadedScripts.delete(src);
+    throw error;
+  });
+
+  loadedScripts.set(src, trackedPromise);
+  return trackedPromise;
 }
 
 export async function loadCustomerMapLibrary() {

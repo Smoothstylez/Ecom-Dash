@@ -1,5 +1,9 @@
 import { AnalyticsPage } from "@/features/analytics/analytics-page";
 
-export function AnalyticsShell() {
-  return <AnalyticsPage />;
+type AnalyticsShellProps = {
+  isActive: boolean;
+};
+
+export function AnalyticsShell({ isActive }: AnalyticsShellProps) {
+  return <AnalyticsPage isActive={isActive} />;
 }

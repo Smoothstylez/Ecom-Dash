@@ -82,7 +82,11 @@ function formatDateTime(value: string | undefined) {
   return `${new Intl.DateTimeFormat("de-DE").format(date)} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
 }
 
-export function EbayPage() {
+type EbayPageProps = {
+  isActive: boolean;
+};
+
+export function EbayPage({ isActive }: EbayPageProps) {
   const { refreshRequestToken } = useDashboardShellState();
   const [summary, setSummary] = useState<EbaySummary | null>(null);
   const [orders, setOrders] = useState<EbayOrder[]>([]);
@@ -93,6 +97,9 @@ export function EbayPage() {
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
 
     const loadSummary = async () => {
@@ -119,9 +126,12 @@ export function EbayPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isActive]);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
 
     const loadOrders = async () => {
@@ -149,10 +159,13 @@ export function EbayPage() {
     return () => {
       cancelled = true;
     };
-  }, [filters]);
+  }, [filters, isActive]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
+      return;
+    }
+    if (!isActive) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
@@ -182,7 +195,7 @@ export function EbayPage() {
       .finally(() => {
         setLoadingOrders(false);
       });
-  }, [filters, refreshRequestToken]);
+  }, [filters, isActive, refreshRequestToken]);
 
   const snapshot = useMemo(() => normalizeSummary(summary || undefined, orders, filters), [filters, orders, summary]);
   const kpis = snapshot.kpis;

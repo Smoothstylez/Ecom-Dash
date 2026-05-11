@@ -29,6 +29,7 @@ import {
   type StatusLevel,
   type StatusSnapshot,
 } from "@/app/dashboard-controls-api";
+import type { DashboardRoute } from "@/shared/runtime/dashboard-route";
 
 type StatusMessage = {
   text: string;
@@ -79,7 +80,11 @@ function classNames(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-export function DashboardControls() {
+type DashboardControlsProps = {
+  route: DashboardRoute;
+};
+
+export function DashboardControls({ route }: DashboardControlsProps) {
   const { filters, closeSettingsPanelRequestToken, requestOpenThemeModal, requestRefresh } = useDashboardShellState();
   const [isStatusOpen, setStatusOpen] = useState(false);
   const [isSettingsOpen, setSettingsOpen] = useState(false);
@@ -106,7 +111,7 @@ export function DashboardControls() {
     return classNames("status", suffix);
   }, [statusMessage.level]);
 
-  const isAnalyticsRoute = window.location.pathname === "/analytics";
+  const isAnalyticsRoute = route === "analytics";
 
   const applyStatus = useCallback((message: string, level: StatusLevel = "info") => {
     setStatusMessage({ text: String(message || "").trim(), level });
@@ -132,21 +137,22 @@ export function DashboardControls() {
   }, [filters]);
 
   const refreshAll = useCallback(async () => {
+    setSettingsOpen(false);
     applyStatus("Lade Daten...", "info");
     try {
-      await Promise.all([
-        loadStatusPanel(),
-        Promise.resolve().then(() => {
-          requestRefresh();
-        }),
-      ]);
+      await Promise.resolve().then(() => {
+        requestRefresh();
+      });
+      if (isStatusOpen) {
+        await loadStatusPanel();
+      }
       applyStatus("Daten aktualisiert.", "ok");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Daten konnten nicht aktualisiert werden.";
       applyStatus(`Fehler beim Laden: ${message}`, "error");
       throw error;
     }
-  }, [applyStatus, loadStatusPanel, requestRefresh]);
+  }, [applyStatus, isStatusOpen, loadStatusPanel, requestRefresh]);
 
   const closeStatusPanel = useCallback(() => {
     setStatusOpen(false);

@@ -35,6 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type BookingsPageProps = {
   panelElement: HTMLElement;
+  isActive: boolean;
 };
 
 type BookingsData = {
@@ -642,7 +643,7 @@ function BookingTransactionDetailPreview({ transaction }: { transaction: Booking
   );
 }
 
-export function BookingsPage({ panelElement }: BookingsPageProps) {
+export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const { filters: shellFilters, bookingsSubtab, refreshRequestToken } = useDashboardShellState();
   const {
     bookingsDetailsApi,
@@ -1116,6 +1117,9 @@ export function BookingsPage({ panelElement }: BookingsPageProps) {
   }, [bookingClass, bookingsSubtab, monthlyInvoiceDraft, ui.bookingClassControl, ui.createMonthlyInvoiceAmount, ui.createMonthlyInvoiceButton, ui.createMonthlyInvoiceFile, ui.createMonthlyInvoiceProvider, ui.createMonthlyInvoiceNotes, ui.newButton, ui.sammelMonthButton, ui.sammelMonthGrid, ui.sammelYearNextBtn, ui.sammelYearPrevBtn]);
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     const nextRequestId = requestIdRef.current + 1;
     requestIdRef.current = nextRequestId;
@@ -1172,15 +1176,18 @@ export function BookingsPage({ panelElement }: BookingsPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [query, refreshNonce]);
+  }, [isActive, query, refreshNonce]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
       return;
     }
+    if (!isActive) {
+      return;
+    }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
     setRefreshNonce((current) => current + 1);
-  }, [refreshRequestToken]);
+  }, [isActive, refreshRequestToken]);
 
   useEffect(() => {
     setBookingsUiState({

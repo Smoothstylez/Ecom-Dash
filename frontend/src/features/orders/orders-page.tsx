@@ -216,7 +216,11 @@ function cloneFilters(current: OrderFilterState): OrderFilterState {
   };
 }
 
-export function OrdersPage() {
+type OrdersPageProps = {
+  isActive: boolean;
+};
+
+export function OrdersPage({ isActive }: OrdersPageProps) {
   const { filters: shellFilters, refreshRequestToken } = useDashboardShellState();
   const { orderDetailsApi } = useDashboardRuntime();
   const [items, setItems] = useState<OrderSummary[]>([]);
@@ -246,6 +250,9 @@ export function OrdersPage() {
     : `${NUMBER_FORMATTER.format(filteredItems.length)} Zeilen`;
 
   useEffect(() => {
+    if (!isActive) {
+      return;
+    }
     let cancelled = false;
     setLoading(true);
 
@@ -284,10 +291,13 @@ export function OrdersPage() {
     return () => {
       cancelled = true;
     };
-  }, [query]);
+  }, [isActive, query]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
+      return;
+    }
+    if (!isActive) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
@@ -308,7 +318,7 @@ export function OrdersPage() {
       .finally(() => {
         setLoading(false);
       });
-  }, [query, refreshRequestToken]);
+  }, [isActive, query, refreshRequestToken]);
 
   useEffect(() => {
     const handleDocumentClick = (event: MouseEvent) => {
