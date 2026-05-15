@@ -1,4 +1,5 @@
 import type { AnalyticsPayload, AnalyticsQuery } from "@/features/analytics/types";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 function buildAnalyticsUrl(query: AnalyticsQuery) {
   const params = new URLSearchParams();
@@ -20,7 +21,7 @@ function buildAnalyticsUrl(query: AnalyticsQuery) {
   }
 
   const search = params.toString();
-  return search ? `/api/analytics/kpis?${search}` : "/api/analytics/kpis";
+  return buildDashboardApiUrl(search ? `/api/analytics/kpis?${search}` : "/api/analytics/kpis");
 }
 
 export async function fetchAnalytics(query: AnalyticsQuery): Promise<AnalyticsPayload> {

@@ -1,5 +1,6 @@
 import type { ShellFilters } from "@/app/dashboard-shell-state";
 import { loadAdminToken, persistAdminToken, withAdminHeaders } from "@/shared/api/admin-auth";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type StatusLevel = "info" | "ok" | "error";
 
@@ -71,7 +72,7 @@ export { loadAdminToken, persistAdminToken };
 export const DASHBOARD_VERSION = "0.4.3";
 export const POLLING_STORAGE_KEY = "dash-combined.polling";
 
-const API_BASE = "/api";
+const API_BASE = buildDashboardApiUrl("/api");
 
 function ensureErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) {

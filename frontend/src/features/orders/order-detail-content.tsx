@@ -1,4 +1,5 @@
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 import type { OrderDetail, OrderSummary } from "./api";
 
@@ -324,7 +325,7 @@ function buildInvoicePreviewUrl(summary: OrderSummary) {
   if (!marketplace || !orderId || !documentId) {
     return "";
   }
-  return `/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/invoice/${encodeURIComponent(documentId)}/download?disposition=inline`;
+  return buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/invoice/${encodeURIComponent(documentId)}/download?disposition=inline`);
 }
 
 function BookkeepingBreakdown({ detail, summary }: { detail: OrderDetail; summary: OrderSummary }) {
@@ -450,7 +451,7 @@ function BookkeepingBreakdown({ detail, summary }: { detail: OrderDetail; summar
           <tbody>
             {transactions.length ? transactions.map((entry, index) => {
               const documentUrl = optionalText(entry.document_id)
-                ? `/api/bookings/documents/${encodeURIComponent(String(entry.document_id))}/download`
+                ? buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(String(entry.document_id))}/download`)
                 : "";
               return (
                 <tr key={`${text(entry.id, `tx-${index}`)}:${index}`} data-tx-id={optionalText(entry.id)} style={{ cursor: entry.id ? "pointer" : undefined }}>

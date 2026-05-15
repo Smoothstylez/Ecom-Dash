@@ -18,6 +18,7 @@ type EbaySnapshot = {
   top_articles: EbayTopArticle[];
   import_meta: Record<string, string | number>;
   orders: EbayOrder[];
+  totalOrders: number;
   filters: {
     shop: string;
     category: string;
@@ -39,6 +40,7 @@ function normalizeSnapshot(input?: Partial<EbaySnapshot>): EbaySnapshot {
     top_articles: Array.isArray(input?.top_articles) ? input.top_articles : [],
     import_meta: input?.import_meta && typeof input.import_meta === "object" ? input.import_meta : {},
     orders: Array.isArray(input?.orders) ? input.orders : [],
+    totalOrders: Number(input?.totalOrders || 0),
     filters: {
       shop: String(filters.shop || ""),
       category: String(filters.category || ""),
@@ -47,7 +49,7 @@ function normalizeSnapshot(input?: Partial<EbaySnapshot>): EbaySnapshot {
   };
 }
 
-function normalizeSummary(summary?: EbaySummary, orders?: EbayOrder[], filters?: { shop: string; category: string }): EbaySnapshot {
+function normalizeSummary(summary?: EbaySummary, orders?: EbayOrder[], totalOrders?: number, filters?: { shop: string; category: string }): EbaySnapshot {
   const kpis = summary?.kpis && typeof summary.kpis === "object" ? summary.kpis : {};
   const shops = Array.isArray(summary?.shops) ? summary.shops : [];
   const topArticles = Array.isArray(summary?.top_articles) ? summary.top_articles : [];
@@ -64,6 +66,7 @@ function normalizeSummary(summary?: EbaySummary, orders?: EbayOrder[], filters?:
     top_articles: topArticles,
     import_meta: importMeta,
     orders: allOrders,
+    totalOrders: Number(totalOrders || allOrders.length || 0),
     filters,
     availableShops,
   });
@@ -86,15 +89,30 @@ type EbayPageProps = {
   isActive: boolean;
 };
 
+const EBAY_PAGE_SIZE = 150;
+
 export function EbayPage({ isActive }: EbayPageProps) {
   const { refreshRequestToken } = useDashboardShellState();
   const [summary, setSummary] = useState<EbaySummary | null>(null);
   const [orders, setOrders] = useState<EbayOrder[]>([]);
-  const [filters, setFilters] = useState({ shop: "", category: "" });
+  const [ordersTotal, setOrdersTotal] = useState(0);
+  const [ordersView, setOrdersView] = useState({ shop: "", category: "", pageIndex: 0 });
   const [error, setError] = useState("");
   const [isLoadingSummary, setLoadingSummary] = useState(true);
   const [isLoadingOrders, setLoadingOrders] = useState(true);
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
+
+  const ordersQuery = useMemo(() => ({
+    shop: ordersView.shop,
+    category: ordersView.category,
+    limit: EBAY_PAGE_SIZE,
+    offset: ordersView.pageIndex * EBAY_PAGE_SIZE,
+  }), [ordersView.category, ordersView.pageIndex, ordersView.shop]);
+
+  const currentPage = ordersView.pageIndex + 1;
+  const totalPages = Math.max(1, Math.ceil(ordersTotal / EBAY_PAGE_SIZE));
+  const pageStart = ordersTotal > 0 ? (ordersView.pageIndex * EBAY_PAGE_SIZE) + 1 : 0;
+  const pageEnd = ordersTotal > 0 ? Math.min(ordersTotal, pageStart + Math.max(orders.length - 1, 0)) : 0;
 
   useEffect(() => {
     if (!isActive) {
@@ -137,15 +155,17 @@ export function EbayPage({ isActive }: EbayPageProps) {
     const loadOrders = async () => {
       setLoadingOrders(true);
       try {
-        const payload = await fetchEbayOrders(filters);
+        const payload = await fetchEbayOrders(ordersQuery);
         if (!cancelled) {
           setOrders(Array.isArray(payload.orders) ? payload.orders : []);
+          setOrdersTotal(Number(payload.total || 0));
           setError("");
         }
       } catch (nextError) {
         if (!cancelled) {
           setError(nextError instanceof Error ? nextError.message : "eBay Bestellungen konnten nicht geladen werden.");
           setOrders([]);
+          setOrdersTotal(0);
         }
       } finally {
         if (!cancelled) {
@@ -159,7 +179,7 @@ export function EbayPage({ isActive }: EbayPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [filters, isActive]);
+  }, [isActive, ordersQuery]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
@@ -183,21 +203,26 @@ export function EbayPage({ isActive }: EbayPageProps) {
       .finally(() => {
         setLoadingSummary(false);
       });
-    void fetchEbayOrders(filters)
+    void fetchEbayOrders(ordersQuery)
       .then((payload) => {
         setOrders(Array.isArray(payload.orders) ? payload.orders : []);
+        setOrdersTotal(Number(payload.total || 0));
         setError("");
       })
       .catch((nextError: Error) => {
         setError(nextError.message);
         setOrders([]);
+        setOrdersTotal(0);
       })
       .finally(() => {
         setLoadingOrders(false);
       });
-  }, [filters, isActive, refreshRequestToken]);
+  }, [isActive, ordersQuery, refreshRequestToken]);
 
-  const snapshot = useMemo(() => normalizeSummary(summary || undefined, orders, filters), [filters, orders, summary]);
+  const snapshot = useMemo(
+    () => normalizeSummary(summary || undefined, orders, ordersTotal, { shop: ordersView.shop, category: ordersView.category }),
+    [orders, ordersTotal, ordersView.category, ordersView.shop, summary],
+  );
   const kpis = snapshot.kpis;
   const isLoading = isLoadingSummary || isLoadingOrders;
 
@@ -280,22 +305,24 @@ export function EbayPage({ isActive }: EbayPageProps) {
             <div className="bookings-filter-card" style={{ marginBottom: 0, padding: 0, background: "none", border: "none", boxShadow: "none" }}>
               <div className="bookings-filter-grid" style={{ gridTemplateColumns: "auto auto auto" }}>
                 <select
+                  id="ebayShopSelect"
                   className="booking-select"
                   style={{ minWidth: 120 }}
                   value={snapshot.filters.shop}
                   onChange={(event) => {
-                    setFilters((current) => ({ ...current, shop: event.target.value }));
+                    setOrdersView((current) => ({ ...current, shop: event.target.value, pageIndex: 0 }));
                   }}
                 >
                   <option value="">Alle Shops</option>
                   {snapshot.availableShops.map((shop) => <option key={shop} value={shop}>{shop}</option>)}
                 </select>
                 <select
+                  id="ebayCategorySelect"
                   className="booking-select"
                   style={{ minWidth: 120 }}
                   value={snapshot.filters.category}
                   onChange={(event) => {
-                    setFilters((current) => ({ ...current, category: event.target.value }));
+                    setOrdersView((current) => ({ ...current, category: event.target.value, pageIndex: 0 }));
                   }}
                 >
                   <option value="">Alle Kategorien</option>
@@ -303,7 +330,11 @@ export function EbayPage({ isActive }: EbayPageProps) {
                   <option value="computer">Computer</option>
                   <option value="return">Ruecksendungen</option>
                 </select>
-                <div className="table-meta" style={{ minWidth: 80, textAlign: "right" }}>{`${snapshot.orders.length} Zeilen`}</div>
+                <div id="ebayOrdersMeta" className="table-meta" style={{ minWidth: 100, textAlign: "right" }}>
+                  {isLoadingOrders ? "..." : ordersTotal > 0
+                    ? `${NUMBER_FORMATTER.format(pageStart)}-${NUMBER_FORMATTER.format(pageEnd)} / ${NUMBER_FORMATTER.format(ordersTotal)} Zeilen`
+                    : "0 Zeilen"}
+                </div>
               </div>
             </div>
           </div>
@@ -345,6 +376,37 @@ export function EbayPage({ isActive }: EbayPageProps) {
               </tbody>
             </table>
           </div>
+          {!isLoadingOrders && totalPages > 1 ? (
+            <div className="orders-pagination-row">
+              <div className="table-meta">
+                {`Seite ${NUMBER_FORMATTER.format(currentPage)} von ${NUMBER_FORMATTER.format(totalPages)}`}
+              </div>
+              <div className="orders-pagination-actions">
+                <button
+                  id="ebayPrevPageBtn"
+                  className="btn-inline ghost"
+                  type="button"
+                  disabled={ordersView.pageIndex <= 0}
+                  onClick={() => {
+                    setOrdersView((current) => ({ ...current, pageIndex: Math.max(0, current.pageIndex - 1) }));
+                  }}
+                >
+                  Vorherige
+                </button>
+                <button
+                  id="ebayNextPageBtn"
+                  className="btn-inline ghost"
+                  type="button"
+                  disabled={ordersView.pageIndex >= totalPages - 1}
+                  onClick={() => {
+                    setOrdersView((current) => ({ ...current, pageIndex: Math.min(totalPages - 1, current.pageIndex + 1) }));
+                  }}
+                >
+                  Naechste
+                </button>
+              </div>
+            </div>
+          ) : null}
         </section>
 
         <section className="card table-card" style={{ marginTop: 12 }}>

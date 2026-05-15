@@ -17,6 +17,7 @@ import {
   fetchMonthlyInvoices,
   runBookingTemplate as runBookingTemplateMutation,
   type BookingAccountRow,
+  type BookingTransactionCategoryCounts,
   type BookingTransactionsSumResponse,
   type BookingDocumentRow,
   type BookingOrderRow,
@@ -30,6 +31,7 @@ import {
   updateBookingTransaction,
   uploadBookingDocument,
 } from "@/features/bookings/api";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -41,7 +43,7 @@ type BookingsPageProps = {
 type BookingsData = {
   bookings: BookingRow[];
   bookingsTotal: number;
-  bookingsAllItems: BookingRow[];
+  bookingsCategoryCounts: BookingTransactionCategoryCounts;
   bookingOrders: BookingOrderRow[];
   bookingOrdersTotal: number;
   bookingTemplates: BookingTemplateRow[];
@@ -56,12 +58,14 @@ type BookingsData = {
   bookkeepingLedgerOrdersTotal: number;
 };
 
+type BookingsDataPatch = Partial<BookingsData>;
+
 type StatusLevel = "info" | "ok" | "error";
 
 const EMPTY_BOOKINGS_DATA: BookingsData = {
   bookings: [],
   bookingsTotal: 0,
-  bookingsAllItems: [],
+  bookingsCategoryCounts: {},
   bookingOrders: [],
   bookingOrdersTotal: 0,
   bookingTemplates: [],
@@ -75,6 +79,9 @@ const EMPTY_BOOKINGS_DATA: BookingsData = {
   bookkeepingLedgerOrders: [],
   bookkeepingLedgerOrdersTotal: 0,
 };
+
+const BOOKINGS_TRANSACTIONS_PAGE_SIZE = 150;
+const BOOKINGS_ORDERS_PAGE_SIZE = 150;
 
 const BOOKING_TX_CATEGORY_META = {
   sale: {
@@ -624,7 +631,7 @@ function BookingTransactionDetailPreview({ transaction }: { transaction: Booking
 
   const documentName = String(transaction.document?.original_filename || transaction.document?.stored_filename || documentId || "Beleg");
   const mimeType = String(transaction.document?.mime_type || "");
-  const downloadUrl = `/api/bookings/documents/${encodeURIComponent(documentId)}/download`;
+  const downloadUrl = buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(documentId)}/download`);
   const previewKind = detectPreviewKind(mimeType, documentName);
   const inlineUrl = appendInlineDisposition(downloadUrl);
   const previewUrl = previewKind === "pdf" ? `${inlineUrl}#toolbar=1&view=FitH` : inlineUrl;
@@ -664,6 +671,8 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const [monthlyInvoicePreviewNonce, setMonthlyInvoicePreviewNonce] = useState(0);
   const [isSammelMonthMenuOpen, setSammelMonthMenuOpen] = useState(false);
   const [sammelPickerYear, setSammelPickerYear] = useState(() => monthDateFromToken(defaultMonthlyInvoiceDraftState().monthToken)?.getFullYear() || new Date().getFullYear());
+  const [transactionsPageIndex, setTransactionsPageIndex] = useState(0);
+  const [ordersPageIndex, setOrdersPageIndex] = useState(0);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const requestIdRef = useRef(0);
   const monthlyInvoiceUploadTargetIdRef = useRef("");
@@ -725,6 +734,72 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     type: bookingType,
   }), [bookingCategory, bookingClass, bookingType, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
 
+  const transactionsQuery = useMemo(() => ({
+    ...query,
+    limit: BOOKINGS_TRANSACTIONS_PAGE_SIZE,
+    offset: transactionsPageIndex * BOOKINGS_TRANSACTIONS_PAGE_SIZE,
+  }), [query, transactionsPageIndex]);
+
+  const ordersQuery = useMemo(() => ({
+    from: shellFilters.from,
+    to: shellFilters.to,
+    marketplace: shellFilters.marketplace,
+    q: shellFilters.q,
+    limit: BOOKINGS_ORDERS_PAGE_SIZE,
+    offset: ordersPageIndex * BOOKINGS_ORDERS_PAGE_SIZE,
+  }), [ordersPageIndex, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
+
+  const activeFetchers = useMemo(() => {
+    const baseFetchers: Array<() => Promise<BookingsDataPatch>> = [
+      () => fetchBookingAccounts().then((payload) => ({
+        bookingAccounts: Array.isArray(payload.items) ? payload.items : [],
+        bookingAccountsTotal: Number(payload.total || payload.items.length || 0),
+      })),
+      () => fetchBookingTemplates().then((payload) => ({
+        bookingTemplates: Array.isArray(payload.items) ? payload.items : [],
+        bookingTemplatesTotal: Number(payload.total || payload.items.length || 0),
+      })),
+    ];
+
+    if (bookingsSubtab === "transactions") {
+      baseFetchers.push(
+        () => fetchBookingsTransactions(transactionsQuery).then((payload) => ({
+          bookings: Array.isArray(payload.items) ? payload.items : [],
+          bookingsTotal: Number(payload.total || 0),
+          bookingsCategoryCounts: payload.categoryCounts && typeof payload.categoryCounts === "object" ? payload.categoryCounts : {},
+        })),
+        () => fetchBookingLedgerOrders().then((payload) => ({
+          bookkeepingLedgerOrders: Array.isArray(payload.items) ? payload.items : [],
+          bookkeepingLedgerOrdersTotal: Number(payload.total || payload.items.length || 0),
+        })),
+        () => fetchMonthlyInvoices().then((payload) => ({
+          monthlyInvoices: Array.isArray(payload.items) ? payload.items : [],
+          monthlyInvoicesTotal: Number(payload.total || payload.items.length || 0),
+        })),
+      );
+    }
+
+    if (bookingsSubtab === "orders") {
+      baseFetchers.push(
+        () => fetchBookingOrders(ordersQuery).then((payload) => ({
+          bookingOrders: Array.isArray(payload.items) ? payload.items : [],
+          bookingOrdersTotal: Number(payload.total || payload.items.length || 0),
+        })),
+      );
+    }
+
+    if (bookingsSubtab === "documents") {
+      baseFetchers.push(
+        () => fetchBookingDocuments().then((payload) => ({
+          bookingDocuments: Array.isArray(payload.items) ? payload.items : [],
+          bookingDocumentsTotal: Number(payload.total || payload.items.length || 0),
+        })),
+      );
+    }
+
+    return baseFetchers;
+  }, [bookingsSubtab, ordersQuery, transactionsQuery]);
+
   useEffect(() => {
     panelElement.dataset.reactBookingsMounted = "true";
     return () => {
@@ -757,6 +832,14 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     }
     setSammelPickerYear(nextDate.getFullYear());
   }, [monthlyInvoiceDraft.monthToken]);
+
+  useEffect(() => {
+    setTransactionsPageIndex(0);
+  }, [bookingCategory, bookingClass, bookingType, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
+
+  useEffect(() => {
+    setOrdersPageIndex(0);
+  }, [shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
 
   useEffect(() => {
     const toolConfig = bookingToolButtonConfig(bookingsSubtab, bookingClass);
@@ -1124,59 +1207,58 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     const nextRequestId = requestIdRef.current + 1;
     requestIdRef.current = nextRequestId;
 
-    Promise.all([
-      fetchBookingsTransactions(query),
-      fetchBookingOrders(query),
-      fetchBookingLedgerOrders(),
-      fetchBookingAccounts(),
-      fetchBookingTemplates(),
-      fetchBookingDocuments(),
-      fetchMonthlyInvoices(),
-    ])
-      .then(([
-        bookingsPayload,
-        ordersPayload,
-        ledgerOrdersPayload,
-        accountsPayload,
-        templatesPayload,
-        documentsPayload,
-        monthlyInvoicesPayload,
-      ]) => {
+    Promise.all(activeFetchers.map((fetcher) => fetcher()))
+      .then((patches) => {
         if (cancelled || requestIdRef.current !== nextRequestId) {
           return;
         }
 
-        const nextData: BookingsData = {
-          bookings: Array.isArray(bookingsPayload.items) ? bookingsPayload.items : [],
-          bookingsTotal: Number(bookingsPayload.total || 0),
-          bookingsAllItems: Array.isArray(bookingsPayload.allItems) ? bookingsPayload.allItems : [],
-          bookingOrders: Array.isArray(ordersPayload.items) ? ordersPayload.items : [],
-          bookingOrdersTotal: Number(ordersPayload.total || ordersPayload.items.length || 0),
-          bookingTemplates: Array.isArray(templatesPayload.items) ? templatesPayload.items : [],
-          bookingTemplatesTotal: Number(templatesPayload.total || templatesPayload.items.length || 0),
-          bookingAccounts: Array.isArray(accountsPayload.items) ? accountsPayload.items : [],
-          bookingAccountsTotal: Number(accountsPayload.total || accountsPayload.items.length || 0),
-          bookingDocuments: Array.isArray(documentsPayload.items) ? documentsPayload.items : [],
-          bookingDocumentsTotal: Number(documentsPayload.total || documentsPayload.items.length || 0),
-          monthlyInvoices: Array.isArray(monthlyInvoicesPayload.items) ? monthlyInvoicesPayload.items : [],
-          monthlyInvoicesTotal: Number(monthlyInvoicesPayload.total || monthlyInvoicesPayload.items.length || 0),
-          bookkeepingLedgerOrders: Array.isArray(ledgerOrdersPayload.items) ? ledgerOrdersPayload.items : [],
-          bookkeepingLedgerOrdersTotal: Number(ledgerOrdersPayload.total || ledgerOrdersPayload.items.length || 0),
-        };
+        setData((current) => {
+          const nextData: BookingsData = {
+            ...current,
+            bookings: bookingsSubtab === "transactions" ? current.bookings : [],
+            bookingsTotal: bookingsSubtab === "transactions" ? current.bookingsTotal : 0,
+            bookingsCategoryCounts: bookingsSubtab === "transactions" ? current.bookingsCategoryCounts : {},
+            bookingOrders: bookingsSubtab === "orders" ? current.bookingOrders : [],
+            bookingOrdersTotal: bookingsSubtab === "orders" ? current.bookingOrdersTotal : 0,
+            bookingDocuments: bookingsSubtab === "documents" ? current.bookingDocuments : [],
+            bookingDocumentsTotal: bookingsSubtab === "documents" ? current.bookingDocumentsTotal : 0,
+            monthlyInvoices: bookingsSubtab === "transactions" ? current.monthlyInvoices : [],
+            monthlyInvoicesTotal: bookingsSubtab === "transactions" ? current.monthlyInvoicesTotal : 0,
+            bookkeepingLedgerOrders: bookingsSubtab === "transactions" ? current.bookkeepingLedgerOrders : [],
+            bookkeepingLedgerOrdersTotal: bookingsSubtab === "transactions" ? current.bookkeepingLedgerOrdersTotal : 0,
+          };
 
-        setData(nextData);
+          for (const patch of patches) {
+            Object.assign(nextData, patch);
+          }
+          return nextData;
+        });
       })
       .catch(() => {
         if (cancelled || requestIdRef.current !== nextRequestId) {
           return;
         }
-        setData(EMPTY_BOOKINGS_DATA);
+        setData((current) => ({
+          ...current,
+          bookings: bookingsSubtab === "transactions" ? current.bookings : [],
+          bookingsTotal: bookingsSubtab === "transactions" ? current.bookingsTotal : 0,
+          bookingsCategoryCounts: bookingsSubtab === "transactions" ? current.bookingsCategoryCounts : {},
+          bookingOrders: bookingsSubtab === "orders" ? current.bookingOrders : [],
+          bookingOrdersTotal: bookingsSubtab === "orders" ? current.bookingOrdersTotal : 0,
+          bookingDocuments: bookingsSubtab === "documents" ? current.bookingDocuments : [],
+          bookingDocumentsTotal: bookingsSubtab === "documents" ? current.bookingDocumentsTotal : 0,
+          monthlyInvoices: bookingsSubtab === "transactions" ? current.monthlyInvoices : [],
+          monthlyInvoicesTotal: bookingsSubtab === "transactions" ? current.monthlyInvoicesTotal : 0,
+          bookkeepingLedgerOrders: bookingsSubtab === "transactions" ? current.bookkeepingLedgerOrders : [],
+          bookkeepingLedgerOrdersTotal: bookingsSubtab === "transactions" ? current.bookkeepingLedgerOrdersTotal : 0,
+        }));
       });
 
     return () => {
       cancelled = true;
     };
-  }, [isActive, query, refreshNonce]);
+  }, [activeFetchers, bookingsSubtab, isActive, refreshNonce]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
@@ -1803,25 +1885,21 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const accountOptions = useMemo<OptionItem[]>(() => data.bookingAccounts, [data.bookingAccounts]);
   const bookingLegendContent = useMemo(() => {
     const counters = {
-      sale: 0,
-      fee: 0,
-      cogs: 0,
-      invoice: 0,
-      subscription: 0,
-      refund: 0,
-      other: 0,
+      sale: Number(data.bookingsCategoryCounts.sale || 0),
+      fee: Number(data.bookingsCategoryCounts.fee || 0),
+      cogs: Number(data.bookingsCategoryCounts.cogs || 0),
+      invoice: Number(data.bookingsCategoryCounts.invoice || 0),
+      subscription: Number(data.bookingsCategoryCounts.subscription || 0),
+      refund: Number(data.bookingsCategoryCounts.refund || 0),
+      other: Number(data.bookingsCategoryCounts.other || 0),
     };
-
-    data.bookingsAllItems.forEach((booking) => {
-      const key = bookingTxCategoryMetaForType(booking.type).key;
-      counters[key] += 1;
-    });
+    const totalCount = counters.sale + counters.fee + counters.cogs + counters.invoice + counters.subscription + counters.refund + counters.other;
 
     return (
       <>
         <span className={`tx-legend-item${bookingCategory ? "" : " active"}`} data-filter-category="">
           <span className="badge badge-default">Gesamt</span>
-          <span className="tx-legend-count">{NUMBER_FORMATTER.format(data.bookingsAllItems.length)}</span>
+          <span className="tx-legend-count">{NUMBER_FORMATTER.format(totalCount)}</span>
         </span>
         {(["sale", "fee", "cogs", "invoice", "subscription", "refund", "other"] as const).map((key) => {
           const meta = BOOKING_TX_CATEGORY_META[key];
@@ -1834,7 +1912,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         })}
       </>
     );
-  }, [bookingCategory, data.bookingsAllItems]);
+  }, [bookingCategory, data.bookingsCategoryCounts]);
   const createBookingOrderOptions = useMemo(() => renderOrderOptions(data.bookkeepingLedgerOrders), [data.bookkeepingLedgerOrders]);
   const createBookingAccountOptions = useMemo(() => renderAccountOptions(accountOptions), [accountOptions]);
   const createBookingTemplateOptions = useMemo(() => renderTemplateOptions(data.bookingTemplates), [data.bookingTemplates]);
@@ -1917,11 +1995,22 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     );
   }, [monthlyInvoicePreview]);
 
+  const transactionsCurrentPage = transactionsPageIndex + 1;
+  const transactionsTotalPages = Math.max(1, Math.ceil(data.bookingsTotal / BOOKINGS_TRANSACTIONS_PAGE_SIZE));
+  const transactionsPageStart = data.bookingsTotal > 0 ? (transactionsPageIndex * BOOKINGS_TRANSACTIONS_PAGE_SIZE) + 1 : 0;
+  const transactionsPageEnd = data.bookingsTotal > 0
+    ? Math.min(data.bookingsTotal, transactionsPageStart + Math.max(data.bookings.length - 1, 0))
+    : 0;
+
   const transactionsContent = (
     <>
       <div className="table-head">
         <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Transaktionen</h3>
-        <div className="table-meta">{`${NUMBER_FORMATTER.format(data.bookingsTotal)} Zeilen`}</div>
+        <div id="bookingsTransactionsMeta" className="table-meta">
+          {data.bookingsTotal > 0
+            ? `${NUMBER_FORMATTER.format(transactionsPageStart)}-${NUMBER_FORMATTER.format(transactionsPageEnd)} / ${NUMBER_FORMATTER.format(data.bookingsTotal)} Zeilen`
+            : "0 Zeilen"}
+        </div>
       </div>
       <div className="table-wrap">
         <table>
@@ -1940,7 +2029,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           </thead>
           <tbody>
             {data.bookings.length ? data.bookings.map((booking, index) => {
-              const docUrl = booking.document_id ? `/api/bookings/documents/${encodeURIComponent(String(booking.document_id || ""))}/download` : "";
+              const docUrl = booking.document_id ? buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(String(booking.document_id || ""))}/download`) : "";
               const documentName = String(booking.document?.original_filename || booking.document_id || "Beleg");
               const documentMimeType = String(booking.document?.mime_type || "");
               return (
@@ -1964,8 +2053,46 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           </tbody>
         </table>
       </div>
+      {transactionsTotalPages > 1 ? (
+        <div className="orders-pagination-row">
+          <div className="table-meta">
+            {`Seite ${NUMBER_FORMATTER.format(transactionsCurrentPage)} von ${NUMBER_FORMATTER.format(transactionsTotalPages)}`}
+          </div>
+          <div className="orders-pagination-actions">
+            <button
+              id="bookingsPrevPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={transactionsPageIndex <= 0}
+              onClick={() => {
+                setTransactionsPageIndex((current) => Math.max(0, current - 1));
+              }}
+            >
+              Vorherige
+            </button>
+            <button
+              id="bookingsNextPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={transactionsPageIndex >= transactionsTotalPages - 1}
+              onClick={() => {
+                setTransactionsPageIndex((current) => Math.min(transactionsTotalPages - 1, current + 1));
+              }}
+            >
+              Naechste
+            </button>
+          </div>
+        </div>
+      ) : null}
     </>
   );
+
+  const bookingOrdersCurrentPage = ordersPageIndex + 1;
+  const bookingOrdersTotalPages = Math.max(1, Math.ceil(data.bookingOrdersTotal / BOOKINGS_ORDERS_PAGE_SIZE));
+  const bookingOrdersPageStart = data.bookingOrdersTotal > 0 ? (ordersPageIndex * BOOKINGS_ORDERS_PAGE_SIZE) + 1 : 0;
+  const bookingOrdersPageEnd = data.bookingOrdersTotal > 0
+    ? Math.min(data.bookingOrdersTotal, bookingOrdersPageStart + Math.max(data.bookingOrders.length - 1, 0))
+    : 0;
 
   const monthlyInvoicesContent = (
     <>
@@ -1990,7 +2117,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           </thead>
           <tbody>
             {data.monthlyInvoices.length ? data.monthlyInvoices.map((invoice, index) => {
-              const docUrl = invoice.document_id ? `/api/bookings/documents/${encodeURIComponent(String(invoice.document_id || ""))}/download` : "";
+              const docUrl = invoice.document_id ? buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(String(invoice.document_id || ""))}/download`) : "";
               const diff = Number(invoice.difference_cents || 0);
               const documentName = String(invoice.document?.original_filename || invoice.document_id || "Beleg");
               const documentMimeType = String(invoice.document?.mime_type || "");
@@ -2018,7 +2145,11 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     <section className="card table-card">
       <div className="table-head">
         <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Bestellungen mit Kostenaufschluesselung</h3>
-        <div className="table-meta">{`${NUMBER_FORMATTER.format(data.bookingOrdersTotal)} Zeilen`}</div>
+        <div id="bookingsOrdersMeta" className="table-meta">
+          {data.bookingOrdersTotal > 0
+            ? `${NUMBER_FORMATTER.format(bookingOrdersPageStart)}-${NUMBER_FORMATTER.format(bookingOrdersPageEnd)} / ${NUMBER_FORMATTER.format(data.bookingOrdersTotal)} Zeilen`
+            : "0 Zeilen"}
+        </div>
       </div>
       <div className="table-wrap">
         <table className="bookings-orders-table">
@@ -2052,6 +2183,37 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           </tbody>
         </table>
       </div>
+      {bookingOrdersTotalPages > 1 ? (
+        <div className="orders-pagination-row">
+          <div className="table-meta">
+            {`Seite ${NUMBER_FORMATTER.format(bookingOrdersCurrentPage)} von ${NUMBER_FORMATTER.format(bookingOrdersTotalPages)}`}
+          </div>
+          <div className="orders-pagination-actions">
+            <button
+              id="bookingsOrdersPrevPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={ordersPageIndex <= 0}
+              onClick={() => {
+                setOrdersPageIndex((current) => Math.max(0, current - 1));
+              }}
+            >
+              Vorherige
+            </button>
+            <button
+              id="bookingsOrdersNextPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={ordersPageIndex >= bookingOrdersTotalPages - 1}
+              onClick={() => {
+                setOrdersPageIndex((current) => Math.min(bookingOrdersTotalPages - 1, current + 1));
+              }}
+            >
+              Naechste
+            </button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 
@@ -2146,7 +2308,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           </thead>
           <tbody>
             {data.bookingDocuments.length ? data.bookingDocuments.map((document, index) => {
-              const url = `/api/bookings/documents/${encodeURIComponent(String(document.id || ""))}/download`;
+              const url = buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(String(document.id || ""))}/download`);
               const filename = String(document.original_filename || document.stored_filename || document.id || "Beleg");
               const mimeType = String(document.mime_type || "");
               return (
@@ -2167,20 +2329,20 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
 
   return (
     <>
-      {ui.bookingTxLegend instanceof HTMLElement ? createPortal(bookingLegendContent, ui.bookingTxLegend) : null}
-      {ui.createBookingOrder instanceof HTMLElement ? createPortal(createBookingOrderOptions, ui.createBookingOrder) : null}
-      {ui.createBookingAccount instanceof HTMLElement ? createPortal(createBookingAccountOptions, ui.createBookingAccount) : null}
-      {ui.createBookingTemplate instanceof HTMLElement ? createPortal(createBookingTemplateOptions, ui.createBookingTemplate) : null}
-      {ui.templateAccountInput instanceof HTMLElement ? createPortal(templateAccountOptions, ui.templateAccountInput) : null}
-      {ui.bookingDocumentTxInput instanceof HTMLElement ? createPortal(bookingDocumentTransactionOptions, ui.bookingDocumentTxInput) : null}
-      {roots.transactions instanceof HTMLElement ? createPortal(transactionsContent, roots.transactions) : null}
-      {roots.monthlyInvoices instanceof HTMLElement ? createPortal(monthlyInvoicesContent, roots.monthlyInvoices) : null}
-      {roots.orders instanceof HTMLElement ? createPortal(ordersContent, roots.orders) : null}
-      {roots.templates instanceof HTMLElement ? createPortal(templatesContent, roots.templates) : null}
-      {roots.accounts instanceof HTMLElement ? createPortal(accountsContent, roots.accounts) : null}
-      {roots.documents instanceof HTMLElement ? createPortal(documentsContent, roots.documents) : null}
-      {ui.sammelMonthGrid instanceof HTMLElement ? createPortal(sammelMonthGridContent, ui.sammelMonthGrid) : null}
-      {ui.sammelPreview instanceof HTMLElement && monthlyInvoicePreviewContent ? createPortal(monthlyInvoicePreviewContent, ui.sammelPreview) : null}
+      {bookingsSubtab === "transactions" && ui.bookingTxLegend instanceof HTMLElement ? createPortal(bookingLegendContent, ui.bookingTxLegend) : null}
+      {bookingsSubtab === "transactions" && ui.createBookingOrder instanceof HTMLElement ? createPortal(createBookingOrderOptions, ui.createBookingOrder) : null}
+      {bookingsSubtab === "transactions" && ui.createBookingAccount instanceof HTMLElement ? createPortal(createBookingAccountOptions, ui.createBookingAccount) : null}
+      {bookingsSubtab === "transactions" && ui.createBookingTemplate instanceof HTMLElement ? createPortal(createBookingTemplateOptions, ui.createBookingTemplate) : null}
+      {bookingsSubtab === "templates" && ui.templateAccountInput instanceof HTMLElement ? createPortal(templateAccountOptions, ui.templateAccountInput) : null}
+      {bookingsSubtab === "documents" && ui.bookingDocumentTxInput instanceof HTMLElement ? createPortal(bookingDocumentTransactionOptions, ui.bookingDocumentTxInput) : null}
+      {bookingsSubtab === "transactions" && roots.transactions instanceof HTMLElement ? createPortal(transactionsContent, roots.transactions) : null}
+      {bookingsSubtab === "transactions" && roots.monthlyInvoices instanceof HTMLElement ? createPortal(monthlyInvoicesContent, roots.monthlyInvoices) : null}
+      {bookingsSubtab === "orders" && roots.orders instanceof HTMLElement ? createPortal(ordersContent, roots.orders) : null}
+      {bookingsSubtab === "templates" && roots.templates instanceof HTMLElement ? createPortal(templatesContent, roots.templates) : null}
+      {bookingsSubtab === "accounts" && roots.accounts instanceof HTMLElement ? createPortal(accountsContent, roots.accounts) : null}
+      {bookingsSubtab === "documents" && roots.documents instanceof HTMLElement ? createPortal(documentsContent, roots.documents) : null}
+      {bookingsSubtab === "transactions" && ui.sammelMonthGrid instanceof HTMLElement ? createPortal(sammelMonthGridContent, ui.sammelMonthGrid) : null}
+      {bookingsSubtab === "transactions" && ui.sammelPreview instanceof HTMLElement && monthlyInvoicePreviewContent ? createPortal(monthlyInvoicePreviewContent, ui.sammelPreview) : null}
       <input id="bookingMonthlyInvoiceUploadInput" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp" style={{ display: "none" }} />
     </>
   );

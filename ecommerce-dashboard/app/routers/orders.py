@@ -19,6 +19,7 @@ from app.db import (
 )
 from app.services.bookings import get_order_bookkeeping_breakdown, sync_combined_orders_into_bookkeeping
 from app.services.orders import get_order_detail, list_orders
+from app.uploads import EmptyUploadError, UploadTooLargeError, stream_fileobj_to_path
 
 
 router = APIRouter(prefix="/api/orders", tags=["orders"])
@@ -82,6 +83,12 @@ def api_list_orders(
     marketplace: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None),
     status_filter: Optional[str] = Query(default=None, alias="status"),
+    payment_filters: list[str] = Query(default_factory=list, alias="payment"),
+    hide_canceled: bool = Query(default=False),
+    has_purchase_cost: bool = Query(default=False),
+    no_purchase_cost: bool = Query(default=False),
+    has_invoice: bool = Query(default=False),
+    no_invoice: bool = Query(default=False),
     limit: int = Query(default=200, ge=1, le=5000),
     offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
@@ -95,8 +102,15 @@ def api_list_orders(
         marketplace=marketplace,
         query=q,
         status_filter=status_filter,
+        payment_filters=payment_filters,
+        hide_canceled=hide_canceled,
+        has_purchase_cost=has_purchase_cost,
+        no_purchase_cost=no_purchase_cost,
+        has_invoice=has_invoice,
+        no_invoice=no_invoice,
         limit=limit,
         offset=offset,
+        include_raw_fallbacks=False,
     )
     return {
         "total": payload["total"],
@@ -162,16 +176,14 @@ async def api_upload_invoice(
     order_token = _resolve_invoice_order_token(market, order_id)
     renamed_filename = _build_invoice_filename(market, order_token, upload_filename)
     purchase_cents = _to_cents(purchase_cost_eur) if purchase_cost_eur is not None else None
-    content = await file.read()
-
-    if not content:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file is empty")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file too large")
 
     target_path = build_invoice_storage_path(market, order_token, renamed_filename)
-    target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_bytes(content)
+    try:
+        stream_fileobj_to_path(file.file, target_path, max_bytes=MAX_UPLOAD_BYTES)
+    except EmptyUploadError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="file is empty") from exc
+    except UploadTooLargeError as exc:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="file too large") from exc
 
     row = create_invoice_document(
         marketplace=market,

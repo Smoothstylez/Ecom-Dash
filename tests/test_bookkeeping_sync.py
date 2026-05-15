@@ -110,16 +110,24 @@ class BookkeepingSyncTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.temp_dir.name) / "dashboard.sqlite3"
+        self.documents_dir = Path(self.temp_dir.name) / "documents"
+        self.documents_dir.mkdir(parents=True, exist_ok=True)
         _init_bookkeeping_schema(self.db_path)
 
         self.original_bookings_db = bookings.BOOKKEEPING_DB_PATH
         self.original_bf_db = bookkeeping_full.BOOKKEEPING_DB_PATH
+        self.original_bf_docs = bookkeeping_full.BOOKKEEPING_DOCUMENTS_DIR
+        self.original_bf_root = bookkeeping_full.BOOKKEEPING_PROJECT_ROOT
         bookings.BOOKKEEPING_DB_PATH = self.db_path
         bookkeeping_full.BOOKKEEPING_DB_PATH = self.db_path
+        bookkeeping_full.BOOKKEEPING_DOCUMENTS_DIR = self.documents_dir
+        bookkeeping_full.BOOKKEEPING_PROJECT_ROOT = Path(self.temp_dir.name)
 
     def tearDown(self) -> None:
         bookings.BOOKKEEPING_DB_PATH = self.original_bookings_db
         bookkeeping_full.BOOKKEEPING_DB_PATH = self.original_bf_db
+        bookkeeping_full.BOOKKEEPING_DOCUMENTS_DIR = self.original_bf_docs
+        bookkeeping_full.BOOKKEEPING_PROJECT_ROOT = self.original_bf_root
         self.temp_dir.cleanup()
 
     @classmethod
@@ -393,6 +401,167 @@ class BookkeepingSyncTests(unittest.TestCase):
         self.assertEqual(kaufland_rows["items"][0]["provider"], "kaufland")
         self.assertIsNone(kaufland_rows["items"][0]["order"])
 
+    def test_list_bookkeeping_transactions_supports_search_category_and_pagination(self) -> None:
+        connection = sqlite3.connect(self.db_path)
+        try:
+            for tx_id, tx_date, tx_type, provider, reference, notes, booking_class in (
+                ("tx-sale-1", "2026-02-03T10:00:00Z", "SALE", "shopify", "SALE-1", "alpha note", "single"),
+                ("tx-fee-1", "2026-02-02T10:00:00Z", "FEE", "paypal", "FEE-1", "fee note", "automatic"),
+                ("tx-sale-2", "2026-02-01T10:00:00Z", "SALE", "shopify", "SALE-2", "beta note", "single"),
+            ):
+                connection.execute(
+                    """
+                    INSERT INTO transactions (
+                        id, date, type, direction, amount_gross, currency,
+                        vat_rate, vat_amount, amount_net, provider, counterparty_name, category,
+                        reference, notes, order_id, document_id, template_id, payment_account_id, period_key,
+                        source, source_key, status, booking_class, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 'api', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        tx_id,
+                        tx_date,
+                        tx_type,
+                        "IN" if tx_type == "SALE" else "OUT",
+                        1000,
+                        "EUR",
+                        provider,
+                        "Counterparty",
+                        "test",
+                        reference,
+                        notes,
+                        f"source:{tx_id}",
+                        "confirmed",
+                        booking_class,
+                        tx_date,
+                        tx_date,
+                    ),
+                )
+            connection.commit()
+        finally:
+            connection.close()
+
+        payload = bookkeeping_full.list_bookkeeping_transactions({
+            "q": "sale",
+            "category": "sale",
+            "limit": 1,
+            "offset": 1,
+        })
+
+        self.assertEqual(payload["total"], 2)
+        self.assertEqual(payload["limit"], 1)
+        self.assertEqual(payload["offset"], 1)
+        self.assertEqual(payload["category_counts"]["sale"], 2)
+        self.assertEqual(payload["category_counts"]["fee"], 1)
+        self.assertEqual(len(payload["items"]), 1)
+        self.assertEqual(payload["items"][0]["id"], "tx-sale-2")
+
+    def test_list_booking_orders_uses_paginated_order_slice(self) -> None:
+        paged_orders = [
+            {
+                "marketplace": "shopify",
+                "order_id": "order-151",
+                "external_order_id": "#2151",
+                "order_date": "2026-02-01T10:00:00Z",
+                "customer": "Alice Example",
+                "article": "Alpha",
+                "currency": "EUR",
+                "total_cents": 12990,
+                "fees_cents": 990,
+                "purchase_cost_cents": 4500,
+            },
+            {
+                "marketplace": "shopify",
+                "order_id": "order-152",
+                "external_order_id": "#2152",
+                "order_date": "2026-02-02T10:00:00Z",
+                "customer": "Bob Example",
+                "article": "Beta",
+                "currency": "EUR",
+                "total_cents": 14990,
+                "fees_cents": 1290,
+                "purchase_cost_cents": 5500,
+            },
+        ]
+        requested_breakdowns: list[tuple[str, str]] = []
+        breakdowns = {
+            "#2151": {
+                "income_total_cents": 12990,
+                "expense_total_cents": 600,
+                "additional_expense_total_cents": 600,
+                "fee_total_cents": 990,
+                "cogs_total_cents": 4500,
+                "other_expenses_cents": 0,
+                "additional_fee_cents": 0,
+                "additional_cogs_cents": 0,
+                "additional_other_cents": 600,
+                "mirrored_fee_total_cents": 990,
+                "mirrored_cogs_total_cents": 4500,
+                "matched_via": "order_id",
+                "documents": [{"id": "doc-1"}],
+            },
+            "#2152": {
+                "income_total_cents": 14990,
+                "expense_total_cents": 900,
+                "additional_expense_total_cents": 900,
+                "fee_total_cents": 1290,
+                "cogs_total_cents": 5500,
+                "other_expenses_cents": 0,
+                "additional_fee_cents": 300,
+                "additional_cogs_cents": 0,
+                "additional_other_cents": 600,
+                "mirrored_fee_total_cents": 990,
+                "mirrored_cogs_total_cents": 5500,
+                "matched_via": "external_order_id",
+                "documents": [{"id": "doc-2"}, {"id": "doc-3"}],
+            },
+        }
+
+        def fake_breakdown(*, marketplace: str, external_order_id: str) -> dict[str, object]:
+            requested_breakdowns.append((marketplace, external_order_id))
+            return breakdowns[external_order_id]
+
+        with patch("app.services.orders.list_orders", return_value={"items": paged_orders, "total": 305}) as list_orders_mock, \
+             patch.object(bookings, "get_order_bookkeeping_breakdown", side_effect=fake_breakdown):
+            payload = bookings.list_booking_orders(
+                from_date="2026-02-01",
+                to_date="2026-02-29",
+                marketplace="shopify",
+                query="alice",
+                limit=2,
+                offset=150,
+            )
+
+        list_orders_mock.assert_called_once_with(
+            from_date="2026-02-01",
+            to_date="2026-02-29",
+            marketplace="shopify",
+            query="alice",
+            status_filter=None,
+            payment_filters=None,
+            hide_canceled=False,
+            has_purchase_cost=False,
+            no_purchase_cost=False,
+            has_invoice=False,
+            no_invoice=False,
+            limit=2,
+            offset=150,
+            include_raw_fallbacks=True,
+        )
+        self.assertEqual(requested_breakdowns, [("shopify", "#2151"), ("shopify", "#2152")])
+        self.assertEqual(payload["total"], 305)
+        self.assertEqual(payload["limit"], 2)
+        self.assertEqual(payload["offset"], 150)
+        self.assertEqual([item["external_order_id"] for item in payload["items"]], ["#2152", "#2151"])
+
+        newest = payload["items"][0]
+        self.assertEqual(newest["bookkeeping_income_cents"], 14990)
+        self.assertEqual(newest["bookkeeping_expense_cents"], 900)
+        self.assertEqual(newest["total_costs_cents"], 7690)
+        self.assertEqual(newest["profit_cents"], 7300)
+        self.assertEqual(newest["documents_count"], 2)
+        self.assertEqual(newest["bookkeeping_matched_via"], "external_order_id")
+
     def test_source_sync_skips_bookkeeping_bootstrap_without_force(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -473,6 +642,36 @@ class BookkeepingSyncTests(unittest.TestCase):
 
             self.assertEqual(summary["results"]["bookkeeping_db"]["status"], "skipped")
             self.assertIn("disabled for regular source sync", summary["results"]["bookkeeping_db"]["reason"])
+
+    def test_document_upload_route_persists_streamed_file(self) -> None:
+        upload_content = b"%PDF-1.4 monthly invoice"
+
+        response = self.client.post(
+            "/api/bookings/documents/upload",
+            headers=self.admin_headers,
+            data={
+                "provider": "PayPal",
+                "transaction_type": "EXPENSE",
+                "booking_date": "2026-02-04",
+                "amount_cents": "1234",
+                "currency": "EUR",
+            },
+            files={"file": ("invoice.pdf", upload_content, "application/pdf")},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        document_id = str(payload["document"]["id"])
+        row = self._fetchone(
+            "SELECT file_path, mime_type FROM documents WHERE id = ?",
+            (document_id,),
+        )
+
+        assert row is not None
+        resolved_path = bookkeeping_full.get_document_resolved_path(str(row["file_path"]))
+        self.assertTrue(str(resolved_path).startswith(str(self.documents_dir)))
+        self.assertEqual(row["mime_type"], "application/pdf")
+        self.assertEqual(resolved_path.read_bytes(), upload_content)
 
     def test_delete_cogs_transaction_does_not_clear_purchase_enrichment(self) -> None:
         combined_db_path = Path(self.temp_dir.name) / "combined.sqlite3"

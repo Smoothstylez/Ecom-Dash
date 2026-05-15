@@ -15,6 +15,7 @@ import {
   updateMonthlyInvoice,
   uploadBookingDocument,
 } from "@/features/bookings/api";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { createPortal } from "react-dom";
 import { type MouseEvent as ReactMouseEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -365,7 +366,7 @@ function BookingTransactionDetailPreview({ transaction }: { transaction: Booking
 
   const documentName = String(transaction.document?.original_filename || transaction.document?.stored_filename || documentId || "Beleg");
   const mimeType = String(transaction.document?.mime_type || "");
-  const downloadUrl = `/api/bookings/documents/${encodeURIComponent(documentId)}/download`;
+  const downloadUrl = buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(documentId)}/download`);
   const previewKind = detectPreviewKind(mimeType, documentName);
   const inlineUrl = appendInlineDisposition(downloadUrl);
   const previewUrl = previewKind === "pdf" ? `${inlineUrl}#toolbar=1&view=FitH` : inlineUrl;
@@ -934,7 +935,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       const documentId = String(transaction.document_id || "").trim();
       const documentName = String(transaction.document?.original_filename || documentId || "Beleg");
       const documentMimeType = String(transaction.document?.mime_type || "");
-      const documentUrl = documentId ? `/api/bookings/documents/${encodeURIComponent(documentId)}/download` : "";
+      const documentUrl = documentId ? buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(documentId)}/download`) : "";
 
       return (
         <div
@@ -1105,7 +1106,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       const documentId = String(invoice.document_id || "").trim();
       const documentName = String(invoice.document?.original_filename || documentId || "Beleg");
       const documentMimeType = String(invoice.document?.mime_type || "");
-      const documentUrl = documentId ? `/api/bookings/documents/${encodeURIComponent(documentId)}/download` : "";
+      const documentUrl = documentId ? buildDashboardApiUrl(`/api/bookings/documents/${encodeURIComponent(documentId)}/download`) : "";
       const linkedTransactions = Array.isArray(invoice.transactions) ? invoice.transactions : [];
       const linkedTransactionSum = linkedTransactions.reduce((sum, tx) => sum + Number(tx.amount_gross || 0), 0);
 

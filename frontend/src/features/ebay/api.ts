@@ -1,6 +1,10 @@
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
+
 type EbayOrdersQuery = {
   shop?: string;
   category?: string;
+  limit?: number;
+  offset?: number;
 };
 
 export type EbayOrder = {
@@ -46,6 +50,8 @@ export type EbaySummary = {
 export type EbayOrdersResponse = {
   orders: EbayOrder[];
   total: number;
+  limit?: number;
+  offset?: number;
 };
 
 function buildOrdersUrl(query: EbayOrdersQuery) {
@@ -57,9 +63,15 @@ function buildOrdersUrl(query: EbayOrdersQuery) {
   if (query.category) {
     params.set("category", query.category);
   }
+  if (query.limit) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.offset) {
+    params.set("offset", String(query.offset));
+  }
 
   const search = params.toString();
-  return search ? `/api/ebay/orders?${search}` : "/api/ebay/orders";
+  return buildDashboardApiUrl(search ? `/api/ebay/orders?${search}` : "/api/ebay/orders");
 }
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -77,7 +89,7 @@ async function fetchJson<T>(url: string): Promise<T> {
 }
 
 export function fetchEbaySummary(): Promise<EbaySummary> {
-  return fetchJson<EbaySummary>("/api/ebay/summary");
+  return fetchJson<EbaySummary>(buildDashboardApiUrl("/api/ebay/summary"));
 }
 
 export function fetchEbayOrders(query: EbayOrdersQuery): Promise<EbayOrdersResponse> {

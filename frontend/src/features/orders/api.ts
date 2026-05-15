@@ -1,4 +1,5 @@
 import { withAdminHeaders } from "@/shared/api/admin-auth";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type InvoiceDocument = {
   document_id?: string;
@@ -55,11 +56,18 @@ export type OrdersResponse = {
   offset?: number;
 };
 
-type OrdersQuery = {
+export type OrdersQuery = {
   from?: string;
   to?: string;
   marketplace?: string;
   q?: string;
+  status?: string;
+  payment?: string[];
+  hideCanceled?: boolean;
+  hasPurchaseCost?: boolean;
+  noPurchaseCost?: boolean;
+  hasInvoice?: boolean;
+  noInvoice?: boolean;
   limit?: number;
   offset?: number;
 };
@@ -79,6 +87,32 @@ function buildOrdersUrl(query: OrdersQuery) {
   if (query.q) {
     params.set("q", query.q);
   }
+  if (query.status) {
+    params.set("status", query.status);
+  }
+  if (Array.isArray(query.payment)) {
+    for (const payment of query.payment) {
+      const token = String(payment || "").trim();
+      if (token) {
+        params.append("payment", token);
+      }
+    }
+  }
+  if (query.hideCanceled) {
+    params.set("hide_canceled", "true");
+  }
+  if (query.hasPurchaseCost) {
+    params.set("has_purchase_cost", "true");
+  }
+  if (query.noPurchaseCost) {
+    params.set("no_purchase_cost", "true");
+  }
+  if (query.hasInvoice) {
+    params.set("has_invoice", "true");
+  }
+  if (query.noInvoice) {
+    params.set("no_invoice", "true");
+  }
   if (query.limit) {
     params.set("limit", String(query.limit));
   }
@@ -87,7 +121,7 @@ function buildOrdersUrl(query: OrdersQuery) {
   }
 
   const search = params.toString();
-  return search ? `/api/orders?${search}` : "/api/orders";
+  return buildDashboardApiUrl(search ? `/api/orders?${search}` : "/api/orders");
 }
 
 async function readErrorMessage(response: Response) {
@@ -121,13 +155,13 @@ export function fetchOrders(query: OrdersQuery): Promise<OrdersResponse> {
 
 export function fetchOrderDetail(marketplace: string, orderId: string): Promise<OrderDetail> {
   return fetchJson<OrderDetail>(
-    `/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}`,
+    buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}`),
   );
 }
 
 export function updateOrderPurchase(marketplace: string, orderId: string, purchaseCostEur: number | null) {
   return fetchJson<Record<string, unknown>>(
-    `/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/purchase`,
+    buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/purchase`),
     {
       method: "PATCH",
       headers: {
@@ -140,7 +174,7 @@ export function updateOrderPurchase(marketplace: string, orderId: string, purcha
 
 export function uploadOrderInvoice(marketplace: string, orderId: string, formData: FormData) {
   return fetchJson<Record<string, unknown>>(
-    `/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/invoice`,
+    buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/invoice`),
     {
       method: "POST",
       body: formData,

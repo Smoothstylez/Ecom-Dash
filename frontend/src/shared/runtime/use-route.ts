@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { stripDashboardBasePath, withDashboardBasePath } from "@/shared/runtime/base-path";
 import { resolveDashboardRoute, type DashboardRoute } from "@/shared/runtime/dashboard-route";
 
 /**
@@ -10,12 +11,12 @@ import { resolveDashboardRoute, type DashboardRoute } from "@/shared/runtime/das
  */
 export function useRoute(): [DashboardRoute, (path: string) => void] {
   const [route, setRoute] = useState<DashboardRoute>(() =>
-    resolveDashboardRoute(window.location.pathname),
+    resolveDashboardRoute(stripDashboardBasePath(window.location.pathname)),
   );
 
   useEffect(() => {
     const handlePopState = () => {
-      setRoute(resolveDashboardRoute(window.location.pathname));
+      setRoute(resolveDashboardRoute(stripDashboardBasePath(window.location.pathname)));
     };
     window.addEventListener("popstate", handlePopState);
     return () => {
@@ -28,9 +29,10 @@ export function useRoute(): [DashboardRoute, (path: string) => void] {
     // resolveDashboardRoute only needs the pathname portion
     const [pathname] = path.split("?");
     const next = resolveDashboardRoute(pathname);
+    const nextUrl = withDashboardBasePath(path);
     const current = window.location.pathname + window.location.search;
-    if (current !== path) {
-      window.history.pushState(null, "", path);
+    if (current !== nextUrl) {
+      window.history.pushState(null, "", nextUrl);
     }
     setRoute(next);
   }, []);

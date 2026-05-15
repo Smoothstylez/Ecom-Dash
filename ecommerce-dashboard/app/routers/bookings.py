@@ -113,6 +113,8 @@ def api_list_bookkeeping_transactions(
     date_from: Optional[str] = Query(default=None, alias="dateFrom"),
     date_to: Optional[str] = Query(default=None, alias="dateTo"),
     marketplace: Optional[str] = Query(default=None),
+    q: Optional[str] = Query(default=None),
+    category: Optional[str] = Query(default=None),
     tx_type: Optional[str] = Query(default=None, alias="type"),
     provider: Optional[str] = Query(default=None),
     direction: Optional[str] = Query(default=None),
@@ -121,6 +123,8 @@ def api_list_bookkeeping_transactions(
     template_id: Optional[str] = Query(default=None, alias="templateId"),
     payment_account_id: Optional[str] = Query(default=None, alias="paymentAccountId"),
     booking_class: Optional[str] = Query(default=None, alias="bookingClass"),
+    limit: int = Query(default=150, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     try:
         return list_bookkeeping_transactions(
@@ -128,6 +132,8 @@ def api_list_bookkeeping_transactions(
                 "dateFrom": date_from,
                 "dateTo": date_to,
                 "marketplace": marketplace,
+                "q": q,
+                "category": category,
                 "type": tx_type,
                 "provider": provider,
                 "direction": direction,
@@ -136,6 +142,8 @@ def api_list_bookkeeping_transactions(
                 "templateId": template_id,
                 "paymentAccountId": payment_account_id,
                 "bookingClass": booking_class,
+                "limit": limit,
+                "offset": offset,
             }
         )
     except BookkeepingServiceError as exc:
@@ -285,8 +293,6 @@ async def api_upload_document(
     amount_cents: Optional[str] = Form(default=None),
     currency: Optional[str] = Form(default=None),
 ) -> dict[str, Any]:
-    content = await file.read()
-
     parsed_amount: Optional[int] = None
     if amount_cents is not None and str(amount_cents).strip():
         try:
@@ -297,8 +303,8 @@ async def api_upload_document(
     try:
         created = upload_document(
             filename=file.filename or "document",
-            content=content,
             mime_type=file.content_type,
+            file_stream=file.file,
             notes=notes,
             transaction_id=transaction_id,
             provider=provider,
@@ -318,12 +324,16 @@ def api_list_booking_orders(
     to_date: Optional[str] = Query(default=None, alias="to"),
     marketplace: Optional[str] = Query(default=None),
     q: Optional[str] = Query(default=None),
+    limit: int = Query(default=150, ge=1, le=1000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
     payload = list_booking_orders(
         from_date=from_date,
         to_date=to_date,
         marketplace=marketplace,
         query=q,
+        limit=limit,
+        offset=offset,
     )
     return payload
 

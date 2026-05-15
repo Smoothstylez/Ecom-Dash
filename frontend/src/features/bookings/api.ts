@@ -1,4 +1,5 @@
 import { withAdminHeaders } from "@/shared/api/admin-auth";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type BookingRow = {
   id?: string;
@@ -124,6 +125,16 @@ export type BookingTransactionsSumResponse = {
   }>;
 };
 
+export type BookingTransactionCategoryCounts = {
+  sale?: number;
+  fee?: number;
+  cogs?: number;
+  invoice?: number;
+  subscription?: number;
+  refund?: number;
+  other?: number;
+};
+
 export type OptionItem = {
   id?: string;
   name?: string;
@@ -140,6 +151,9 @@ export type OptionItem = {
 type ListResponse<T> = {
   items: T[];
   total?: number;
+  limit?: number;
+  offset?: number;
+  category_counts?: BookingTransactionCategoryCounts;
 };
 
 type CreateUpdateResponse<T, K extends string> = {
@@ -154,27 +168,9 @@ type BookingsQuery = {
   bookingClass?: string;
   category?: string;
   type?: string;
+  limit?: number;
+  offset?: number;
 };
-
-const BOOKING_TX_TYPE_TO_CATEGORY: Record<string, string> = {
-  SALE: "sale",
-  FEE: "fee",
-  COGS: "cogs",
-  EXPENSE: "invoice",
-  SUBSCRIPTION: "subscription",
-  REFUND: "refund",
-  PAYOUT: "other",
-  ADJUSTMENT: "other",
-};
-
-function normalizeBookingTxType(value: string | undefined) {
-  return String(value || "").trim().toUpperCase();
-}
-
-function bookingTxCategoryKeyForType(type: string | undefined) {
-  const normalized = normalizeBookingTxType(type);
-  return BOOKING_TX_TYPE_TO_CATEGORY[normalized] || "other";
-}
 
 function buildBookingsTransactionQuery(query: BookingsQuery) {
   const params = new URLSearchParams();
@@ -187,11 +183,23 @@ function buildBookingsTransactionQuery(query: BookingsQuery) {
   if (query.marketplace) {
     params.set("marketplace", query.marketplace);
   }
+  if (query.q) {
+    params.set("q", query.q);
+  }
+  if (query.category) {
+    params.set("category", query.category);
+  }
   if (query.type) {
     params.set("type", query.type);
   }
   if (query.bookingClass && query.bookingClass !== "all") {
     params.set("bookingClass", query.bookingClass);
+  }
+  if (query.limit) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.offset) {
+    params.set("offset", String(query.offset));
   }
   return params.toString();
 }
@@ -211,30 +219,6 @@ function buildSharedQuery(query: BookingsQuery) {
     params.set("q", query.q);
   }
   return params.toString();
-}
-
-function applyBookingCategoryFilter(items: BookingRow[], category: string) {
-  const selectedCategory = String(category || "").trim().toLowerCase();
-  if (!selectedCategory) {
-    return items;
-  }
-  return items.filter((row) => bookingTxCategoryKeyForType(row?.type) === selectedCategory);
-}
-
-function applyBookingSearchFilter(items: BookingRow[], query: string) {
-  const needle = String(query || "").trim().toLowerCase();
-  if (!needle) {
-    return items;
-  }
-  return items.filter((row) => {
-    return [
-      row.provider,
-      row.counterparty_name,
-      row.reference,
-      row.notes,
-      row.type,
-    ].some((value) => String(value || "").toLowerCase().includes(needle));
-  });
 }
 
 async function readErrorMessage(response: Response) {
@@ -272,51 +256,58 @@ async function fetchWithoutJson(url: string, init?: RequestInit) {
 
 export async function fetchBookingsTransactions(query: BookingsQuery) {
   const search = buildBookingsTransactionQuery(query);
-  const payload = await fetchJson<ListResponse<BookingRow>>(search ? `/api/bookings/transactions?${search}` : "/api/bookings/transactions");
-  const allItems = Array.isArray(payload.items) ? payload.items : [];
-  const filtered = applyBookingSearchFilter(applyBookingCategoryFilter(allItems, query.category || ""), query.q || "");
+  const payload = await fetchJson<ListResponse<BookingRow>>(buildDashboardApiUrl(search ? `/api/bookings/transactions?${search}` : "/api/bookings/transactions"));
   return {
-    allItems,
-    items: filtered,
-    total: filtered.length,
+    items: Array.isArray(payload.items) ? payload.items : [],
+    total: Number(payload.total || 0),
+    limit: Number(payload.limit || 0),
+    offset: Number(payload.offset || 0),
+    categoryCounts: payload.category_counts && typeof payload.category_counts === "object" ? payload.category_counts : {},
   };
 }
 
 export function fetchBookingOrders(query: BookingsQuery) {
-  const search = buildSharedQuery(query);
-  return fetchJson<ListResponse<BookingOrderRow>>(search ? `/api/bookings/orders?${search}` : "/api/bookings/orders");
+  const params = new URLSearchParams(buildSharedQuery(query));
+  if (query.limit) {
+    params.set("limit", String(query.limit));
+  }
+  if (query.offset) {
+    params.set("offset", String(query.offset));
+  }
+  const search = params.toString();
+  return fetchJson<ListResponse<BookingOrderRow>>(buildDashboardApiUrl(search ? `/api/bookings/orders?${search}` : "/api/bookings/orders"));
 }
 
 export function fetchBookingLedgerOrders() {
-  return fetchJson<ListResponse<OptionItem>>("/api/bookings/ledger/orders");
+  return fetchJson<ListResponse<OptionItem>>(buildDashboardApiUrl("/api/bookings/ledger/orders"));
 }
 
 export function fetchBookingAccounts() {
-  return fetchJson<ListResponse<BookingAccountRow>>("/api/bookings/payment-accounts");
+  return fetchJson<ListResponse<BookingAccountRow>>(buildDashboardApiUrl("/api/bookings/payment-accounts"));
 }
 
 export function fetchBookingTemplates() {
-  return fetchJson<ListResponse<BookingTemplateRow>>("/api/bookings/templates");
+  return fetchJson<ListResponse<BookingTemplateRow>>(buildDashboardApiUrl("/api/bookings/templates"));
 }
 
 export function fetchBookingDocuments() {
-  return fetchJson<ListResponse<BookingDocumentRow>>("/api/bookings/documents");
+  return fetchJson<ListResponse<BookingDocumentRow>>(buildDashboardApiUrl("/api/bookings/documents"));
 }
 
 export function fetchMonthlyInvoices() {
-  return fetchJson<ListResponse<MonthlyInvoiceRow>>("/api/bookings/monthly-invoices");
+  return fetchJson<ListResponse<MonthlyInvoiceRow>>(buildDashboardApiUrl("/api/bookings/monthly-invoices"));
 }
 
 export function fetchBookingTransactionDetail(transactionId: string) {
-  return fetchJson<BookingDetailResponse>(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`);
+  return fetchJson<BookingDetailResponse>(buildDashboardApiUrl(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`));
 }
 
 export function fetchMonthlyInvoiceDetail(invoiceId: string) {
-  return fetchJson<MonthlyInvoiceDetailResponse>(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`);
+  return fetchJson<MonthlyInvoiceDetailResponse>(buildDashboardApiUrl(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`));
 }
 
 export function createMonthlyInvoice(payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<MonthlyInvoiceRow, "invoice">>("/api/bookings/monthly-invoices", {
+  return fetchJson<CreateUpdateResponse<MonthlyInvoiceRow, "invoice">>(buildDashboardApiUrl("/api/bookings/monthly-invoices"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -325,11 +316,11 @@ export function createMonthlyInvoice(payload: Record<string, unknown>) {
 
 export function fetchBookingTransactionsSum(provider: string, periodFrom: string, periodTo: string) {
   const params = new URLSearchParams({ provider, periodFrom, periodTo });
-  return fetchJson<BookingTransactionsSumResponse>(`/api/bookings/transactions/sum?${params.toString()}`);
+  return fetchJson<BookingTransactionsSumResponse>(buildDashboardApiUrl(`/api/bookings/transactions/sum?${params.toString()}`));
 }
 
 export function updateMonthlyInvoice(invoiceId: string, payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<MonthlyInvoiceRow, "invoice">>(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`, {
+  return fetchJson<CreateUpdateResponse<MonthlyInvoiceRow, "invoice">>(buildDashboardApiUrl(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -337,13 +328,13 @@ export function updateMonthlyInvoice(invoiceId: string, payload: Record<string, 
 }
 
 export async function deleteMonthlyInvoice(invoiceId: string) {
-  await fetchWithoutJson(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`, {
+  await fetchWithoutJson(buildDashboardApiUrl(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}`), {
     method: "DELETE",
   });
 }
 
 export function createBookingTransaction(payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingRow, "transaction">>("/api/bookings/transactions", {
+  return fetchJson<CreateUpdateResponse<BookingRow, "transaction">>(buildDashboardApiUrl("/api/bookings/transactions"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -351,7 +342,7 @@ export function createBookingTransaction(payload: Record<string, unknown>) {
 }
 
 export function updateBookingTransaction(transactionId: string, payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingRow, "transaction">>(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`, {
+  return fetchJson<CreateUpdateResponse<BookingRow, "transaction">>(buildDashboardApiUrl(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -359,13 +350,13 @@ export function updateBookingTransaction(transactionId: string, payload: Record<
 }
 
 export async function deleteBookingTransaction(transactionId: string) {
-  await fetchWithoutJson(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`, {
+  await fetchWithoutJson(buildDashboardApiUrl(`/api/bookings/transactions/${encodeURIComponent(transactionId)}`), {
     method: "DELETE",
   });
 }
 
 export function createBookingTemplate(payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingTemplateRow, "template">>("/api/bookings/templates", {
+  return fetchJson<CreateUpdateResponse<BookingTemplateRow, "template">>(buildDashboardApiUrl("/api/bookings/templates"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -373,7 +364,7 @@ export function createBookingTemplate(payload: Record<string, unknown>) {
 }
 
 export function updateBookingTemplate(templateId: string, payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingTemplateRow, "template">>(`/api/bookings/templates/${encodeURIComponent(templateId)}`, {
+  return fetchJson<CreateUpdateResponse<BookingTemplateRow, "template">>(buildDashboardApiUrl(`/api/bookings/templates/${encodeURIComponent(templateId)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -381,7 +372,7 @@ export function updateBookingTemplate(templateId: string, payload: Record<string
 }
 
 export async function runBookingTemplate(templateId: string, payload: Record<string, unknown>) {
-  const response = await fetch(`/api/bookings/templates/${encodeURIComponent(templateId)}/generate-transaction`, withAdminHeaders({
+  const response = await fetch(buildDashboardApiUrl(`/api/bookings/templates/${encodeURIComponent(templateId)}/generate-transaction`), withAdminHeaders({
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -406,7 +397,7 @@ export async function runBookingTemplate(templateId: string, payload: Record<str
 }
 
 export function createBookingAccount(payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingAccountRow, "payment_account">>("/api/bookings/payment-accounts", {
+  return fetchJson<CreateUpdateResponse<BookingAccountRow, "payment_account">>(buildDashboardApiUrl("/api/bookings/payment-accounts"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -414,7 +405,7 @@ export function createBookingAccount(payload: Record<string, unknown>) {
 }
 
 export function updateBookingAccount(accountId: string, payload: Record<string, unknown>) {
-  return fetchJson<CreateUpdateResponse<BookingAccountRow, "payment_account">>(`/api/bookings/payment-accounts/${encodeURIComponent(accountId)}`, {
+  return fetchJson<CreateUpdateResponse<BookingAccountRow, "payment_account">>(buildDashboardApiUrl(`/api/bookings/payment-accounts/${encodeURIComponent(accountId)}`), {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -422,7 +413,7 @@ export function updateBookingAccount(accountId: string, payload: Record<string, 
 }
 
 export function uploadBookingDocument(payload: FormData) {
-  return fetchJson<CreateUpdateResponse<BookingDocumentRow, "document">>("/api/bookings/documents/upload", {
+  return fetchJson<CreateUpdateResponse<BookingDocumentRow, "document">>(buildDashboardApiUrl("/api/bookings/documents/upload"), {
     method: "POST",
     body: payload,
   });

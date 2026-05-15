@@ -17,9 +17,17 @@ def api_ebay_orders(
     shop: Optional[str] = Query(default=None),
     category: Optional[str] = Query(default=None),
     include_returns: bool = Query(default=True, alias="includeReturns"),
+    limit: int = Query(default=150, ge=1, le=5000),
+    offset: int = Query(default=0, ge=0),
 ) -> dict[str, Any]:
-    orders = get_ebay_orders(shop=shop, category=category, include_returns=include_returns)
-    return {"orders": orders, "total": len(orders)}
+    payload = get_ebay_orders(
+        shop=shop,
+        category=category,
+        include_returns=include_returns,
+        limit=limit,
+        offset=offset,
+    )
+    return {"orders": payload["items"], "total": payload["total"], "limit": limit, "offset": offset}
 
 
 @router.get("/summary")

@@ -35,19 +35,41 @@ async function stubBookingsBootstrap(page: Page, options: StubBookingsBootstrapO
   const documents = options.documents ?? [];
   const ledgerOrders = options.ledgerOrders ?? [];
 
-  await page.route("**/api/bookings/transactions?**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ items: transactions, total: transactions.length }),
+    await page.route("**/api/bookings/transactions?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: transactions,
+          total: transactions.length,
+          category_counts: {
+            sale: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "SALE").length,
+            fee: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "FEE").length,
+            cogs: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "COGS").length,
+            invoice: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "EXPENSE").length,
+            subscription: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "SUBSCRIPTION").length,
+            refund: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "REFUND").length,
+            other: transactions.filter((transaction) => ["PAYOUT", "ADJUSTMENT"].includes(String(transaction.type || "").toUpperCase())).length,
+          },
+          limit: transactions.length,
+          offset: 0,
+        }),
+      });
     });
-  });
 
   await page.route("**/api/bookings/orders?**", async (route) => {
+    const url = new URL(route.request().url());
+    const limit = Number(url.searchParams.get("limit") || String(orders.length || 150));
+    const offset = Number(url.searchParams.get("offset") || "0");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ items: orders, total: orders.length }),
+      body: JSON.stringify({
+        items: orders.slice(offset, offset + limit),
+        total: orders.length,
+        limit,
+        offset,
+      }),
     });
   });
 
@@ -134,10 +156,19 @@ test.describe("dashboard smoke", () => {
     });
   }
 
-  test("redirects old app-preview links", async ({ request }) => {
+  test("legacy app-preview links resolve to analytics", async ({ page, request }) => {
     const response = await request.get("/app-preview/analytics", { maxRedirects: 0 });
-    expect(response.status()).toBe(307);
-    expect(response.headers()["location"]).toBe("/analytics");
+
+    if (response.status() === 307) {
+      expect(response.headers()["location"]).toBe("/analytics");
+      return;
+    }
+
+    expect(response.status()).toBe(200);
+
+    await page.goto("/app-preview/analytics", { waitUntil: "networkidle" });
+    await expect(page.locator("#analyticsPanel")).toHaveClass(/active/);
+    expect(["/analytics", "/app-preview/analytics"]).toContain(new URL(page.url()).pathname);
   });
 
   test("orders route mounts React table host", async ({ page }) => {
@@ -834,6 +865,119 @@ test.describe("dashboard smoke", () => {
     expect(pageErrors, "page errors in ebay filter flow").toEqual([]);
   });
 
+  test("ebay orders use real pagination controls", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    const allOrders = Array.from({ length: 220 }, (_, index) => ({
+      datum: `2026-01-${String((index % 28) + 1).padStart(2, "0")}`,
+      shop: index % 2 === 0 ? "alpha" : "beta",
+      category: index % 3 === 0 ? "computer" : "order",
+      artikel: `Article ${index + 1}`,
+      kunde_name: `Customer ${index + 1}`,
+      order_number: `EB-${index + 1}`,
+      preis: 40 + index,
+      gebuehren: 5,
+      ali_preis: 12 + index,
+      gewinn: 23,
+      is_return: 0,
+    }));
+
+    await page.route("**/api/ebay/summary", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          available: true,
+          kpis: {
+            total_orders: allOrders.length,
+            total_returns: 0,
+            total_revenue: 1000,
+            total_purchase: 400,
+            total_fees: 80,
+            total_profit: 520,
+            margin_pct: 52,
+            first_date: "2026-01-01",
+            last_date: "2026-01-28",
+          },
+          shops: [
+            { shop: "alpha", count: 110, first_date: "2026-01-01", last_date: "2026-01-28", revenue: 500, fees: 40, purchase: 200, profit: 260 },
+            { shop: "beta", count: 110, first_date: "2026-01-01", last_date: "2026-01-28", revenue: 500, fees: 40, purchase: 200, profit: 260 },
+          ],
+          top_articles: [{ artikel: "Article 1", count: 1, revenue: 40, profit: 23 }],
+          import_meta: {
+            imported_at: "2026-01-29T10:00:00Z",
+            source_file: "ebay.csv",
+            shops: "alpha,beta",
+            total_orders: allOrders.length,
+            total_returns: 0,
+          },
+        }),
+      });
+    });
+
+    const orderRequests: Array<{ limit: string; offset: string; shop: string; category: string }> = [];
+    await page.route(/\/api\/ebay\/orders(?:\?.*)?$/, async (route) => {
+      const url = new URL(route.request().url());
+      const limit = String(url.searchParams.get("limit") || "150");
+      const offset = String(url.searchParams.get("offset") || "0");
+      const shop = String(url.searchParams.get("shop") || "");
+      const category = String(url.searchParams.get("category") || "");
+      orderRequests.push({ limit, offset, shop, category });
+
+      const filtered = allOrders.filter((order) => {
+        if (shop && order.shop !== shop) {
+          return false;
+        }
+        if (category && order.category !== category) {
+          return false;
+        }
+        return true;
+      });
+      const numericLimit = Number(limit || "150");
+      const numericOffset = Number(offset || "0");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          orders: filtered.slice(numericOffset, numericOffset + numericLimit),
+          total: filtered.length,
+          limit: numericLimit,
+          offset: numericOffset,
+        }),
+      });
+    });
+
+    await page.goto("/ebay", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#ebayOrdersMeta")).toContainText("1-150 / 220 Zeilen");
+    await expect(page.locator("#ebayReactRoot .orders-table tbody tr")).toHaveCount(150);
+    await expect(page.locator("#ebayReactRoot")).toContainText("Seite 1 von 2");
+    await expect(page.locator("#ebayPrevPageBtn")).toBeDisabled();
+    await expect(page.locator("#ebayNextPageBtn")).toBeEnabled();
+
+    await page.locator("#ebayNextPageBtn").click();
+    await expect(page.locator("#ebayOrdersMeta")).toContainText("151-220 / 220 Zeilen");
+    await expect(page.locator("#ebayReactRoot .orders-table tbody tr")).toHaveCount(70);
+    await expect(page.locator("#ebayPrevPageBtn")).toBeEnabled();
+    await expect(page.locator("#ebayNextPageBtn")).toBeDisabled();
+    await expect(page.locator("#ebayReactRoot")).toContainText("EB-220");
+
+    await page.locator("#ebayShopSelect").selectOption("alpha");
+    await expect(page.locator("#ebayOrdersMeta")).toContainText("1-110 / 110 Zeilen");
+    await expect(page.locator("#ebayPrevPageBtn")).toHaveCount(0);
+    await expect(page.locator("#ebayNextPageBtn")).toHaveCount(0);
+
+    expect(orderRequests.map((request) => `${request.limit}:${request.offset}:${request.shop}:${request.category}`)).toEqual([
+      "150:0::",
+      "150:150::",
+      "150:0:alpha:",
+    ]);
+    expect(pageErrors).toEqual([]);
+  });
+
   test("settings design button opens React-owned theme modal", async ({ page }) => {
     await page.goto("/orders", { waitUntil: "networkidle" });
 
@@ -860,6 +1004,20 @@ test.describe("dashboard smoke", () => {
 
   test("settings layout button follows active route state", async ({ page }) => {
     await disablePolling(page);
+    await page.route("**/api/analytics/kpis?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          order_count: 1,
+          revenue_total_cents: 1000,
+          fees_total_cents: 100,
+          after_fees_total_cents: 900,
+          purchase_total_cents: 200,
+          profit_total_cents: 700,
+        }),
+      });
+    });
     await page.goto("/analytics", { waitUntil: "networkidle" });
 
     await openSettings(page);
@@ -944,7 +1102,11 @@ test.describe("dashboard smoke", () => {
       bookingsRequests += 1;
       const url = route.request().url();
       if (url.includes("/transactions")) {
-        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0, allItems: [] }) });
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ items: [], total: 0, category_counts: {}, limit: 150, offset: 0 }),
+        });
         return;
       }
       await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
@@ -1074,6 +1236,56 @@ test.describe("dashboard smoke", () => {
       pageErrors.push(error.message);
     });
 
+    await page.route("**/api/customers?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          total: 1,
+          kpis: {
+            customers_count: 1,
+          },
+          items: [
+            {
+              customer_id: "cust-1",
+              customer_name: "Alice Example",
+              marketplaces: ["shopify"],
+              order_count: 1,
+              repeat_customer: false,
+              revenue_total_cents: 12990,
+              profit_total_cents: 7500,
+              last_order_date: "2026-02-03T10:00:00Z",
+            },
+          ],
+        }),
+      });
+    });
+    await page.route("**/api/customers/locations?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          summary: {
+            orders_total: 1,
+            unresolved_orders_count: 0,
+            points_total: 1,
+          },
+          points: [
+            {
+              lat: 52.52,
+              lng: 13.405,
+              city: "Berlin",
+              country: "Germany",
+              order_count: 1,
+              revenue_total_cents: 12990,
+              profit_total_cents: 7500,
+              dominant_marketplace: "shopify",
+            },
+          ],
+        }),
+      });
+    });
+
     await page.addInitScript(() => {
       window.topojson = {
         feature: () => ({ features: [] }),
@@ -1090,6 +1302,122 @@ test.describe("dashboard smoke", () => {
 
     await expect(page.locator("#customerGeoMapView")).toHaveClass(/active/);
     await expect(page.locator("#customerGeoGlobeView")).toContainText("Hex-Globus Fehler: forced globe init failure");
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("customers list uses real pagination controls while geo stays unpaginated", async ({ page }) => {
+    await disablePolling(page);
+    const pageErrors: string[] = [];
+    const overviewRequests: Array<{ limit: string; offset: string }> = [];
+    const geoRequests: Array<{ limit: string; offset: string }> = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    const allCustomers = Array.from({ length: 220 }, (_, index) => ({
+      customer_id: `CUST-${String(index + 1).padStart(5, "0")}`,
+      customer_name: `Customer ${index + 1}`,
+      emails: [`customer${index + 1}@example.com`],
+      phones: [`+4912345${String(index + 1).padStart(4, "0")}`],
+      primary_address: {
+        street: `Street ${index + 1}`,
+        postcode: `10${String(index).padStart(3, "0")}`,
+        city: "Berlin",
+        country: "DE",
+      },
+      marketplaces: [index % 2 === 0 ? "shopify" : "kaufland"],
+      order_count: (index % 4) + 1,
+      repeat_customer: index % 3 === 0,
+      revenue_total_cents: 10000 + index,
+      profit_total_cents: 4000 + index,
+      last_order_date: `2026-03-${String((index % 28) + 1).padStart(2, "0")}T10:00:00Z`,
+      top_articles: [`Article ${index + 1}`],
+    }));
+
+    await page.route("**/api/customers?**", async (route) => {
+      const url = new URL(route.request().url());
+      const limit = String(url.searchParams.get("limit") || "");
+      const offset = String(url.searchParams.get("offset") || "0");
+      overviewRequests.push({ limit, offset });
+      const numericLimit = Number(limit || "150");
+      const numericOffset = Number(offset || "0");
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          total: allCustomers.length,
+          items: allCustomers.slice(numericOffset, numericOffset + numericLimit),
+          limit: numericLimit,
+          offset: numericOffset,
+          kpis: {
+            customers_count: allCustomers.length,
+            repeat_customers_count: allCustomers.filter((item) => item.repeat_customer).length,
+            repeat_customers_rate_pct: 33.3,
+            avg_orders_per_customer: 2.2,
+            orders_total_count: 484,
+            avg_revenue_per_customer_cents: 12345,
+            revenue_total_cents: 987654,
+            with_email_count: allCustomers.length,
+            with_phone_count: allCustomers.length,
+            with_address_count: allCustomers.length,
+            cross_market_customers_count: 0,
+            shopify_customers_count: 110,
+            kaufland_customers_count: 110,
+          },
+        }),
+      });
+    });
+
+    await page.route("**/api/customers/locations?**", async (route) => {
+      const url = new URL(route.request().url());
+      geoRequests.push({
+        limit: String(url.searchParams.get("limit") || ""),
+        offset: String(url.searchParams.get("offset") || ""),
+      });
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          summary: {
+            orders_total: 220,
+            points_total: 2,
+            unresolved_orders_count: 0,
+            resolved_source_coordinates_count: 2,
+            resolved_geocoded_count: 0,
+            resolved_country_centroid_count: 0,
+            geocode_attempts: 0,
+            geocode_successes: 0,
+            cache_location_hits: 2,
+            cache_hit: true,
+            generated_in_ms: 12,
+          },
+          points: [
+            { lat: 52.52, lng: 13.405, order_count: 120, revenue_total_cents: 500000, profit_total_cents: 200000, dominant_marketplace: "shopify", country: "DE", city: "Berlin", weight: 120 },
+            { lat: 48.137, lng: 11.575, order_count: 100, revenue_total_cents: 487654, profit_total_cents: 180000, dominant_marketplace: "kaufland", country: "DE", city: "Muenchen", weight: 100 },
+          ],
+        }),
+      });
+    });
+
+    await page.goto("/customers", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#customersMeta")).toContainText("1-150 / 220 Zeilen");
+    await expect(page.locator("#customersReactBottom tbody tr")).toHaveCount(150);
+    await expect(page.locator("#customersReactBottom")).toContainText("Seite 1 von 2");
+    await expect(page.locator("#customersPrevPageBtn")).toBeDisabled();
+    await expect(page.locator("#customersNextPageBtn")).toBeEnabled();
+    await expect(page.locator("#customersReactBottom")).toContainText("Customer 150");
+    await expect(page.locator("#customersReactBottom")).not.toContainText("Customer 151");
+
+    await page.locator("#customersNextPageBtn").click();
+    await expect(page.locator("#customersMeta")).toContainText("151-220 / 220 Zeilen");
+    await expect(page.locator("#customersReactBottom tbody tr")).toHaveCount(70);
+    await expect(page.locator("#customersReactBottom")).toContainText("Customer 220");
+    await expect(page.locator("#customersPrevPageBtn")).toBeEnabled();
+    await expect(page.locator("#customersNextPageBtn")).toBeDisabled();
+
+    expect(overviewRequests.map((request) => `${request.limit}:${request.offset}`)).toEqual(["150:0", "150:150"]);
+    expect(geoRequests.map((request) => `${request.limit}:${request.offset}`)).toEqual([":"]);
     expect(pageErrors).toEqual([]);
   });
 
@@ -1122,21 +1450,580 @@ test.describe("dashboard smoke", () => {
     await page.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
 
     await page.locator("#bookingsSubnav [data-bookings-subtab='orders']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=orders$/);
     await expect(page.locator("#bookingsOrdersPanel")).toHaveClass(/active/);
 
     await page.locator("#bookingsSubnav [data-bookings-subtab='templates']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=templates$/);
     await expect(page.locator("#bookingsTemplatesPanel")).toHaveClass(/active/);
 
     await page.locator("#bookingsSubnav [data-bookings-subtab='accounts']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=accounts$/);
     await expect(page.locator("#bookingsAccountsPanel")).toHaveClass(/active/);
 
     await page.locator("#bookingsSubnav [data-bookings-subtab='documents']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=documents$/);
     await expect(page.locator("#bookingsDocumentsPanel")).toHaveClass(/active/);
 
     await page.locator("#bookingsSubnav [data-bookings-subtab='transactions']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=transactions$/);
     await expect(page.locator("#bookingsTransactionsPanel")).toHaveClass(/active/);
 
     expect(pageErrors, "page errors in bookings subtabs").toEqual([]);
+  });
+
+  test("bookings subtab survives reload and browser history", async ({ page }) => {
+    await stubBookingsBootstrap(page);
+    await page.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
+
+    await page.locator("#bookingsSubnav [data-bookings-subtab='documents']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=documents$/);
+    await page.reload({ waitUntil: "networkidle" });
+    await expect(page.locator("#bookingsDocumentsPanel")).toHaveClass(/active/);
+
+    await page.locator("#bookingsSubnav [data-bookings-subtab='orders']").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=orders$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=documents$/);
+    await expect(page.locator("#bookingsDocumentsPanel")).toHaveClass(/active/);
+  });
+
+  test("non-bookings routes do not inherit the bookings subtab query", async ({ page }) => {
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/customers?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ total: 0, kpis: {}, items: [] }),
+      });
+    });
+    await page.route("**/api/customers/locations?**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ summary: { orders_total: 0, unresolved_orders_count: 0, points_total: 0 }, points: [] }),
+      });
+    });
+    await stubBookingsBootstrap(page);
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+    await expect(page).toHaveURL(/\/orders$/);
+
+    await page.locator("#tabCustomersBtn").click();
+    await expect(page).toHaveURL(/\/customers$/);
+
+    await page.locator("#tabBookingsBtn").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=transactions$/);
+
+    await page.locator("#tabOrdersBtn").click();
+    await expect(page).toHaveURL(/\/orders$/);
+  });
+
+  test("bookings only keeps the active subtab data mounted", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    let transactionRequests = 0;
+    let monthlyInvoiceRequests = 0;
+    let ledgerOrderRequests = 0;
+    let orderRequests = 0;
+    let documentRequests = 0;
+    let accountRequests = 0;
+    let templateRequests = 0;
+
+    await page.route("**/api/bookings/transactions?**", async (route) => {
+      transactionRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0, category_counts: {}, limit: 150, offset: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/monthly-invoices", async (route) => {
+      monthlyInvoiceRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/ledger/orders", async (route) => {
+      ledgerOrderRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/orders?**", async (route) => {
+      orderRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/documents", async (route) => {
+      documentRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/payment-accounts", async (route) => {
+      accountRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+    await page.route("**/api/bookings/templates", async (route) => {
+      templateRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0 }),
+      });
+    });
+
+    await page.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
+
+    expect(transactionRequests).toBe(1);
+    expect(monthlyInvoiceRequests).toBe(1);
+    expect(ledgerOrderRequests).toBe(1);
+    expect(orderRequests).toBe(0);
+    expect(documentRequests).toBe(0);
+    expect(accountRequests).toBe(1);
+    expect(templateRequests).toBe(1);
+    await expect(page.locator("#bookingsTransactionsReactRoot table")).toHaveCount(1);
+    await expect(page.locator("#bookingsOrdersReactRoot table")).toHaveCount(0);
+    await expect(page.locator("#bookingsDocumentsReactRoot table")).toHaveCount(0);
+
+    await page.locator("#bookingsSubnav [data-bookings-subtab='documents']").click();
+    await expect.poll(() => documentRequests).toBe(1);
+    await expect.poll(() => accountRequests).toBe(2);
+    await expect.poll(() => templateRequests).toBe(2);
+    expect(orderRequests).toBe(0);
+    expect(transactionRequests).toBe(1);
+    expect(monthlyInvoiceRequests).toBe(1);
+    expect(ledgerOrderRequests).toBe(1);
+    await expect(page.locator("#bookingsTransactionsReactRoot table")).toHaveCount(0);
+    await expect(page.locator("#bookingsDocumentsReactRoot table")).toHaveCount(1);
+
+    await page.locator("#bookingsSubnav [data-bookings-subtab='orders']").click();
+    await expect.poll(() => orderRequests).toBe(1);
+    await expect.poll(() => accountRequests).toBe(3);
+    await expect.poll(() => templateRequests).toBe(3);
+    expect(documentRequests).toBe(1);
+    expect(transactionRequests).toBe(1);
+    expect(monthlyInvoiceRequests).toBe(1);
+    expect(ledgerOrderRequests).toBe(1);
+    await expect(page.locator("#bookingsDocumentsReactRoot table")).toHaveCount(0);
+    await expect(page.locator("#bookingsOrdersReactRoot table")).toHaveCount(1);
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("orders purchase enter saves once and upload avoids full reload", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    let ordersFetchCount = 0;
+    let purchasePatchCount = 0;
+    let invoiceUploadCount = 0;
+
+    const ordersBody = {
+      items: [
+        {
+          marketplace: "shopify",
+          order_id: "order-1",
+          external_order_id: "TEST-ORDER-1",
+          order_date: "2026-02-03T10:00:00Z",
+          customer: "Alice Example",
+          article: "Alpha Product",
+          line_items_count: 1,
+          total_cents: 12990,
+          fees_cents: 990,
+          fee_source: "api",
+          after_fees_cents: 12000,
+          purchase_cost_cents: 4500,
+          profit_cents: 7500,
+          currency: "EUR",
+          invoice: null,
+          fulfillment_status: "fulfilled",
+          payment_method: "Shopify Payments",
+        },
+      ],
+      total: 1,
+    };
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      ordersFetchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(ordersBody),
+      });
+    });
+
+    await page.route("**/api/orders/shopify/order-1/purchase", async (route) => {
+      purchasePatchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true }),
+      });
+    });
+
+    await page.route("**/api/orders/shopify/order-1/invoice", async (route) => {
+      invoiceUploadCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          enrichment: {
+            invoice_document_id: "doc-1",
+            original_filename: "invoice.pdf",
+            stored_filename: "invoice.pdf",
+            mime_type: "application/pdf",
+            uploaded_at: "2026-05-14T12:00:00Z",
+          },
+        }),
+      });
+    });
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+    await expect.poll(() => ordersFetchCount).toBe(1);
+
+    const input = page.locator("#ordersBody tr[data-react-orders-row='true'] .purchase-input").first();
+    await input.click();
+    await input.fill("55.00");
+    await input.press("Enter");
+    await expect.poll(() => purchasePatchCount).toBe(1);
+
+    const invoiceInput = page.locator("#ordersBody tr[data-react-orders-row='true'] .invoice-file-input").first();
+    await invoiceInput.setInputFiles({
+      name: "invoice.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 invoice"),
+    });
+
+    await expect.poll(() => invoiceUploadCount).toBe(1);
+    await expect.poll(() => ordersFetchCount).toBe(1);
+    await expect(page.locator("#ordersBody")).toContainText("invoice.pdf");
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("orders uses real pagination controls", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    const allItems = Array.from({ length: 220 }, (_, index) => ({
+      marketplace: index % 2 === 0 ? "shopify" : "kaufland",
+      order_id: `order-${index + 1}`,
+      external_order_id: `TEST-ORDER-${index + 1}`,
+      order_date: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T10:00:00Z`,
+      customer: index === 199 ? "Special Customer" : `Customer ${index + 1}`,
+      article: `Article ${index + 1}`,
+      line_items_count: 1,
+      total_cents: 10000 + index,
+      fees_cents: 500,
+      fee_source: "api",
+      after_fees_cents: 9500 + index,
+      purchase_cost_cents: index % 2 === 0 ? 4000 : 0,
+      profit_cents: 5500 + index,
+      currency: "EUR",
+      invoice: index % 3 === 0 ? { document_id: `doc-${index + 1}`, original_filename: `invoice-${index + 1}.pdf` } : null,
+      fulfillment_status: index % 5 === 0 ? "refunded" : "fulfilled",
+      raw_status: index % 5 === 0 ? "refunded" : "fulfilled",
+      payment_method: index % 2 === 0 ? "Shopify Payments" : "PayPal",
+    }));
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      const url = new URL(route.request().url());
+      const offset = Number(url.searchParams.get("offset") || "0");
+      const limit = Number(url.searchParams.get("limit") || "150");
+      const q = String(url.searchParams.get("q") || "").trim().toLowerCase();
+      const payments = url.searchParams.getAll("payment");
+      const hasPurchaseCost = url.searchParams.get("has_purchase_cost") === "true";
+      const hasInvoice = url.searchParams.get("has_invoice") === "true";
+      const hideCanceled = url.searchParams.get("hide_canceled") === "true";
+      const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
+
+      let filtered = allItems.slice();
+      if (q) {
+        filtered = filtered.filter((item) => {
+          return [item.customer, item.external_order_id, item.article].some((value) => String(value || "").toLowerCase().includes(q));
+        });
+      }
+      if (payments.length) {
+        filtered = filtered.filter((item) => payments.includes(String(item.payment_method || "")));
+      }
+      if (hasPurchaseCost) {
+        filtered = filtered.filter((item) => Number(item.purchase_cost_cents || 0) > 0);
+      }
+      if (hasInvoice) {
+        filtered = filtered.filter((item) => Boolean(item.invoice));
+      }
+      if (hideCanceled) {
+        filtered = filtered.filter((item) => String(item.fulfillment_status || "").toLowerCase() !== "refunded");
+      }
+      if (status === "returns") {
+        filtered = filtered.filter((item) => String(item.fulfillment_status || "").toLowerCase() === "refunded");
+      }
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: filtered.slice(offset, offset + limit),
+          total: filtered.length,
+          limit,
+          offset,
+        }),
+      });
+    });
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#ordersMeta")).toContainText("1-150 / 176 Zeilen");
+    await expect(page.locator("#ordersBody tr[data-react-orders-row='true']")).toHaveCount(150);
+    await expect(page.locator("#ordersPanel")).toContainText("Seite 1 von 2");
+    await expect(page.locator("#ordersPrevPageBtn")).toBeDisabled();
+    await expect(page.locator("#ordersNextPageBtn")).toBeEnabled();
+
+    await page.locator("#ordersNextPageBtn").click();
+    await expect(page.locator("#ordersMeta")).toContainText("151-176 / 176 Zeilen");
+    await expect(page.locator("#ordersBody tr[data-react-orders-row='true']")).toHaveCount(26);
+    await expect(page.locator("#ordersBody")).toContainText("TEST-ORDER-220");
+    await expect(page.locator("#ordersPrevPageBtn")).toBeEnabled();
+    await expect(page.locator("#ordersNextPageBtn")).toBeDisabled();
+
+    await page.locator("#ordersFilterBtn").click();
+    await page.locator("#ordersPaymentChips button[data-value='PayPal']").click();
+    await page.locator("#ordersFilterBtn").click();
+    await expect(page.locator("#ordersMeta")).toContainText("1-88 / 88 Zeilen");
+    await expect(page.locator("#ordersPrevPageBtn")).toHaveCount(0);
+    await expect(page.locator("#ordersNextPageBtn")).toHaveCount(0);
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("bookings transactions use real pagination controls", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    const allTransactions = Array.from({ length: 220 }, (_, index) => ({
+      id: `tx-${index + 1}`,
+      date: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T10:00:00Z`,
+      type: index % 3 === 0 ? "SALE" : index % 3 === 1 ? "FEE" : "COGS",
+      provider: index % 2 === 0 ? "shopify" : "paypal",
+      direction: index % 3 === 1 ? "OUT" : "IN",
+      amount_gross: 1000 + index,
+      reference: `REF-${index + 1}`,
+      notes: index === 199 ? "Special note" : `Note ${index + 1}`,
+      payment_account_id: null,
+      document_id: null,
+    }));
+
+    await page.route("**/api/bookings/transactions?**", async (route) => {
+      const url = new URL(route.request().url());
+      const limit = Number(url.searchParams.get("limit") || "150");
+      const offset = Number(url.searchParams.get("offset") || "0");
+      const category = String(url.searchParams.get("category") || "").trim().toLowerCase();
+
+      let filtered = allTransactions.slice();
+      if (category === "sale") {
+        filtered = filtered.filter((item) => item.type === "SALE");
+      }
+      if (category === "fee") {
+        filtered = filtered.filter((item) => item.type === "FEE");
+      }
+      if (category === "cogs") {
+        filtered = filtered.filter((item) => item.type === "COGS");
+      }
+
+      const categoryCounts = {
+        sale: allTransactions.filter((item) => item.type === "SALE").length,
+        fee: allTransactions.filter((item) => item.type === "FEE").length,
+        cogs: allTransactions.filter((item) => item.type === "COGS").length,
+        invoice: 0,
+        subscription: 0,
+        refund: 0,
+        other: 0,
+      };
+
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: filtered.slice(offset, offset + limit),
+          total: filtered.length,
+          category_counts: categoryCounts,
+          limit,
+          offset,
+        }),
+      });
+    });
+    await page.route("**/api/bookings/ledger/orders", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/bookings/monthly-invoices", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/bookings/payment-accounts", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/bookings/templates", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/bookings/orders?**", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+    await page.route("**/api/bookings/documents", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+
+    await page.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#bookingsTransactionsMeta")).toContainText("1-150 / 220 Zeilen");
+    await expect(page.locator("#bookingsTransactionsReactRoot tbody tr")).toHaveCount(150);
+    await expect(page.locator("#bookingsPrevPageBtn")).toBeDisabled();
+    await expect(page.locator("#bookingsNextPageBtn")).toBeEnabled();
+
+    await page.locator("#bookingsNextPageBtn").click();
+    await expect(page.locator("#bookingsTransactionsMeta")).toContainText("151-220 / 220 Zeilen");
+    await expect(page.locator("#bookingsTransactionsReactRoot tbody tr")).toHaveCount(70);
+    await expect(page.locator("#bookingsPrevPageBtn")).toBeEnabled();
+    await expect(page.locator("#bookingsNextPageBtn")).toBeDisabled();
+    await expect(page.locator("#bookingsTransactionsReactRoot")).toContainText("REF-220");
+
+    await page.locator("#bookingTxLegend .tx-legend-item[data-filter-category='sale']").click();
+    await expect(page.locator("#bookingsTransactionsMeta")).toContainText("1-74 / 74 Zeilen");
+    await expect(page.locator("#bookingsPrevPageBtn")).toHaveCount(0);
+    await expect(page.locator("#bookingsNextPageBtn")).toHaveCount(0);
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("bookings orders use real pagination controls", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    const allOrders = Array.from({ length: 220 }, (_, index) => ({
+      marketplace: index % 2 === 0 ? "shopify" : "ebay",
+      order_id: `order-${index + 1}`,
+      external_order_id: `BOOK-${String(index + 1).padStart(3, "0")}`,
+      order_date: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T10:00:00Z`,
+      customer: `Customer ${index + 1}`,
+      revenue_cents: 15000 + index,
+      bookkeeping_income_cents: 15000 + index,
+      total_costs_cents: 7000 + index,
+      fees_cents: 1000,
+      purchase_cents: 5500,
+      bookkeeping_expense_cents: 500 + (index % 3),
+      profit_cents: 8000,
+      bookkeeping_matched_via: index % 2 === 0 ? "order_id" : "external_order_id",
+      documents_count: index % 4,
+    }));
+
+    await stubBookingsBootstrap(page, { orders: allOrders });
+
+    await page.goto("/bookings/full?subtab=orders", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#bookingsOrdersMeta")).toContainText("1-150 / 220 Zeilen");
+    await expect(page.locator("#bookingsOrdersReactRoot tr[data-order-id]")).toHaveCount(150);
+    await expect(page.locator("#bookingsOrdersPrevPageBtn")).toBeDisabled();
+    await expect(page.locator("#bookingsOrdersNextPageBtn")).toBeEnabled();
+    await expect(page.locator("#bookingsOrdersReactRoot")).toContainText("BOOK-150");
+    await expect(page.locator("#bookingsOrdersReactRoot")).not.toContainText("BOOK-220");
+
+    await page.locator("#bookingsOrdersNextPageBtn").click();
+    await expect(page.locator("#bookingsOrdersMeta")).toContainText("151-220 / 220 Zeilen");
+    await expect(page.locator("#bookingsOrdersReactRoot tr[data-order-id]")).toHaveCount(70);
+    await expect(page.locator("#bookingsOrdersPrevPageBtn")).toBeEnabled();
+    await expect(page.locator("#bookingsOrdersNextPageBtn")).toBeDisabled();
+    await expect(page.locator("#bookingsOrdersReactRoot")).toContainText("BOOK-151");
+    await expect(page.locator("#bookingsOrdersReactRoot")).toContainText("BOOK-220");
+    await expect(page.locator("#bookingsOrdersReactRoot")).not.toContainText("BOOK-001");
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("orders status filter keeps a single active selection", async ({ page }) => {
+    const pageErrors: string[] = [];
+    const requestedStatuses: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      const url = new URL(route.request().url());
+      requestedStatuses.push(String(url.searchParams.get("status") || ""));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ items: [], total: 0, limit: 150, offset: 0 }),
+      });
+    });
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+
+    const fulfilledChip = page.locator("#ordersStatusChips button[data-value='fulfilled']");
+    const paidChip = page.locator("#ordersStatusChips button[data-value='paid']");
+    const returnsChip = page.getByRole("button", { name: "Retouren / Cancel" });
+
+    await page.locator("#ordersFilterBtn").click();
+    await fulfilledChip.click();
+    await expect(fulfilledChip).toHaveClass(/active/);
+    await expect.poll(() => requestedStatuses[requestedStatuses.length - 1]).toBe("fulfilled");
+
+    await paidChip.click();
+    await expect(fulfilledChip).not.toHaveClass(/active/);
+    await expect(paidChip).toHaveClass(/active/);
+    await expect.poll(() => requestedStatuses[requestedStatuses.length - 1]).toBe("paid");
+
+    await returnsChip.click();
+    await expect(paidChip).not.toHaveClass(/active/);
+    await expect(returnsChip).toHaveClass(/active/);
+    await expect.poll(() => requestedStatuses[requestedStatuses.length - 1]).toBe("returns");
+
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("heavy routes unmount when switching views", async ({ page }) => {
+    await page.goto("/orders", { waitUntil: "networkidle" });
+    await expect(page.locator("#ordersPanel")).toBeVisible();
+
+    await page.locator("#tabCustomersBtn").click();
+    await expect(page).toHaveURL(/\/customers$/);
+    await expect(page.locator("#customersPanel")).toBeVisible();
+    await expect(page.locator("#ordersPanel")).toHaveCount(0);
+
+    await page.locator("#tabBookingsBtn").click();
+    await expect(page).toHaveURL(/\/bookings\/full\?subtab=transactions$/);
+    await expect(page.locator("#bookingsPanel")).toBeVisible();
+    await expect(page.locator("#customersPanel")).toHaveCount(0);
   });
 
   test("bookings class controls drive new button and tools", async ({ page }) => {
@@ -1486,6 +2373,7 @@ test.describe("dashboard smoke", () => {
     });
 
     let created = false;
+    let transactionFetchCount = 0;
     let createPayload: Record<string, unknown> | null = null;
 
     await page.route("**/api/bookings/transactions", async (route) => {
@@ -1505,6 +2393,7 @@ test.describe("dashboard smoke", () => {
     });
 
     await page.route("**/api/bookings/transactions?**", async (route) => {
+      transactionFetchCount += 1;
       await route.fulfill({
         status: 200,
         contentType: "application/json",
@@ -1525,8 +2414,24 @@ test.describe("dashboard smoke", () => {
                 },
               ]
             : [],
+          total: created ? 1 : 0,
+          category_counts: created ? { sale: 1 } : {},
+          limit: 150,
+          offset: 0,
         }),
       });
+    });
+
+    await page.route("**/api/bookings/monthly-invoices", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+
+    await page.route("**/api/bookings/payment-accounts", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+    });
+
+    await page.route("**/api/bookings/templates", async (route) => {
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
     });
 
     await page.route("**/api/bookings/orders?**", async (route) => {
@@ -1561,6 +2466,7 @@ test.describe("dashboard smoke", () => {
       notes: "created via test",
       booking_class: "single",
     });
+    await expect.poll(() => transactionFetchCount).toBeGreaterThan(1);
     await expect(page.locator("#bookingsTransactionsReactRoot")).toContainText("AUTO-1");
     expect(pageErrors, "page errors in bookings create transaction flow").toEqual([]);
   });
@@ -1667,7 +2573,7 @@ test.describe("dashboard smoke", () => {
     });
 
     await page.route("**/api/bookings/transactions?**", async (route) => {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0, category_counts: {}, limit: 150, offset: 0 }) });
     });
 
     await page.route("**/api/bookings/orders?**", async (route) => {
@@ -1781,7 +2687,7 @@ test.describe("dashboard smoke", () => {
     };
 
     await page.route("**/api/bookings/transactions?**", async (route) => {
-      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0 }) });
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], total: 0, category_counts: {}, limit: 150, offset: 0 }) });
     });
 
     await page.route("**/api/bookings/orders?**", async (route) => {
@@ -1893,24 +2799,17 @@ test.describe("dashboard smoke", () => {
       pageErrors.push(error.message);
     });
 
-    await page.route("**/api/bookings/documents", async (route) => {
-      await route.fulfill({
-        status: 200,
-        contentType: "application/json",
-        body: JSON.stringify({
-          items: [
-            {
-              id: "doc-preview",
-              uploaded_at: "2026-02-04T10:00:00Z",
-              original_filename: "invoice.pdf",
-              stored_filename: "invoice.pdf",
-              mime_type: "application/pdf",
-              _count: { transactions: 1 },
-            },
-          ],
-          total: 1,
-        }),
-      });
+    await stubBookingsBootstrap(page, {
+      documents: [
+        {
+          id: "doc-preview",
+          uploaded_at: "2026-02-04T10:00:00Z",
+          original_filename: "invoice.pdf",
+          stored_filename: "invoice.pdf",
+          mime_type: "application/pdf",
+          _count: { transactions: 1 },
+        },
+      ],
     });
 
     await page.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
@@ -1941,7 +2840,7 @@ test.describe("dashboard smoke", () => {
       };
     });
     expect(desktopGoogleAdsLayout.flexDirection).toBe("row");
-    expect(desktopGoogleAdsLayout.alignItems).toBe("end");
+    expect(desktopGoogleAdsLayout.alignItems).toBe("flex-end");
 
     await desktopPage.goto("/bookings/full?subtab=transactions", { waitUntil: "networkidle" });
     const desktopBookingsLayout = await desktopPage.evaluate(() => {

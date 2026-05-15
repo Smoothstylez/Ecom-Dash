@@ -324,8 +324,8 @@ def _estimate_shopify_payments_fee_cents(
     return int(round(fee_eur * 100))
 
 
-def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
-    order_payload = _safe_json_load(row["raw_json"])
+def _shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = True) -> dict[str, Any]:
+    order_payload = _safe_json_load(row["raw_json"]) if include_raw_fallbacks else {}
 
     financial_status_raw = str(row["financial_status"] or "").strip().lower()
     gross_total_cents = _to_eur_cents(row["total_price"]) or 0
@@ -380,7 +380,7 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         customer = _first_non_empty(row["customer_email"], row["email"], order_payload.get("email"), "Unbekannt")
 
     article = _first_non_empty(row["first_article"])
-    if not article:
+    if not article and include_raw_fallbacks:
         line_items = order_payload.get("line_items")
         if isinstance(line_items, list) and line_items:
             first = line_items[0]
@@ -390,7 +390,7 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
         article = "-"
 
     created_iso = _to_iso_utc(row["created_at"])
-    shipping_cents = _extract_shopify_shipping_cents(order_payload)
+    shipping_cents = _extract_shopify_shipping_cents(order_payload) if include_raw_fallbacks else 0
 
     # Line items count (from subquery, fallback to 1)
     try:
@@ -420,8 +420,8 @@ def _shopify_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return summary
 
 
-def _kaufland_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
-    raw_payload = _safe_json_load(row["raw_json"])
+def _kaufland_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = True) -> dict[str, Any]:
+    raw_payload = _safe_json_load(row["raw_json"]) if include_raw_fallbacks else {}
     total_cents = _to_kaufland_cents(row["units_price_sum"]) or 0
     after_fees_cents = _to_kaufland_cents(row["revenue_gross_sum"]) or total_cents
     fees_cents = total_cents - after_fees_cents
@@ -431,12 +431,14 @@ def _kaufland_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     shipping_cents = _to_kaufland_cents(row["shipping_sum"]) or 0
 
     customer = _first_non_empty(row["customer_name"])
-    if not customer:
+    if not customer and include_raw_fallbacks:
         buyer = raw_payload.get("buyer") if isinstance(raw_payload.get("buyer"), dict) else {}
         customer = _first_non_empty(buyer.get("email"), "Unbekannt")
+    if not customer:
+        customer = "Unbekannt"
 
     article = _first_non_empty(row["first_article"])
-    if not article:
+    if not article and include_raw_fallbacks:
         order_units = raw_payload.get("order_units")
         if isinstance(order_units, list) and order_units:
             first_unit = order_units[0]
@@ -448,8 +450,8 @@ def _kaufland_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
 
     order_date_iso = _to_iso_utc(row["ts_created_iso"])
 
-    currency = _first_non_empty(raw_payload.get("currency"))
-    if not currency:
+    currency = _first_non_empty(raw_payload.get("currency")) if include_raw_fallbacks else ""
+    if not currency and include_raw_fallbacks:
         order_units = raw_payload.get("order_units")
         if isinstance(order_units, list) and order_units:
             first_unit = order_units[0]
@@ -484,7 +486,7 @@ def _kaufland_summary_from_row(row: sqlite3.Row) -> dict[str, Any]:
     return summary
 
 
-def _load_shopify_orders() -> list[dict[str, Any]]:
+def _load_shopify_orders(*, include_raw_fallbacks: bool = True) -> list[dict[str, Any]]:
     if not SHOPIFY_DB_PATH.exists():
         return []
 
@@ -544,10 +546,10 @@ def _load_shopify_orders() -> list[dict[str, Any]]:
             """
         ).fetchall()
 
-    return [_shopify_summary_from_row(row) for row in rows]
+    return [_shopify_summary_from_row(row, include_raw_fallbacks=include_raw_fallbacks) for row in rows]
 
 
-def _load_kaufland_orders() -> list[dict[str, Any]]:
+def _load_kaufland_orders(*, include_raw_fallbacks: bool = True) -> list[dict[str, Any]]:
     if not KAUFLAND_DB_PATH.exists():
         return []
 
@@ -620,7 +622,7 @@ def _load_kaufland_orders() -> list[dict[str, Any]]:
             """
         ).fetchall()
 
-    return [_kaufland_summary_from_row(row) for row in rows]
+    return [_kaufland_summary_from_row(row, include_raw_fallbacks=include_raw_fallbacks) for row in rows]
 
 
 def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str, str], dict[str, Any]]) -> dict[str, Any]:
@@ -722,6 +724,18 @@ def _normalize_status_token(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
+def _status_tokens_for_row(row: dict[str, Any]) -> set[str]:
+    return {
+        token
+        for token in (
+            _normalize_status_token(row.get("fulfillment_status")),
+            _normalize_status_token(row.get("financial_status")),
+            _normalize_status_token(row.get("raw_status")),
+        )
+        if token
+    }
+
+
 def _is_return_like_status(value: Any) -> bool:
     token = _normalize_status_token(value)
     if not token:
@@ -743,24 +757,79 @@ def _is_return_like_status(value: Any) -> bool:
     return any(keyword in token for keyword in keywords)
 
 
+def _status_filter_aliases(token: str) -> set[str]:
+    if token in {"cancelled", "canceled"}:
+        return {"cancelled", "canceled"}
+    if token == "refunded":
+        return {"refunded", "partially_refunded"}
+    if token == "sent":
+        return {"sent", "sent_and_autopaid"}
+    return {token}
+
+
 def _apply_status_filter(rows: list[dict[str, Any]], status_filter: Optional[str]) -> list[dict[str, Any]]:
-    token = str(status_filter or "").strip().lower()
+    token = _normalize_status_token(status_filter)
     if not token:
-        return rows
-    if token != "returns":
         return rows
 
     filtered: list[dict[str, Any]] = []
+    aliases = _status_filter_aliases(token)
     for row in rows:
-        if _is_return_like_status(row.get("fulfillment_status")):
-            filtered.append(row)
+        row_tokens = _status_tokens_for_row(row)
+        if token == "returns":
+            if any(_is_return_like_status(value) for value in row_tokens):
+                filtered.append(row)
             continue
-        if _is_return_like_status(row.get("financial_status")):
+        if row_tokens & aliases:
             filtered.append(row)
+    return filtered
+
+
+def _apply_payment_filter(rows: list[dict[str, Any]], payment_filters: Optional[list[str]]) -> list[dict[str, Any]]:
+    selected = {
+        str(value or "").strip()
+        for value in (payment_filters or [])
+        if str(value or "").strip()
+    }
+    if not selected:
+        return rows
+    return [row for row in rows if str(row.get("payment_method") or "").strip() in selected]
+
+
+def _apply_enrichment_filters(
+    rows: list[dict[str, Any]],
+    *,
+    hide_canceled: bool,
+    has_purchase_cost: bool,
+    no_purchase_cost: bool,
+    has_invoice: bool,
+    no_invoice: bool,
+    status_filter: Optional[str],
+) -> list[dict[str, Any]]:
+    explicit_cancel_status = str(status_filter or "").strip().lower() in {"cancelled", "canceled", "refunded", "returns"}
+    filtered: list[dict[str, Any]] = []
+
+    for row in rows:
+        is_canceled = (
+            _is_return_like_status(row.get("fulfillment_status"))
+            or _is_return_like_status(row.get("financial_status"))
+            or _is_return_like_status(row.get("raw_status"))
+        )
+        purchase_cost_cents = int(row.get("purchase_cost_cents") or 0)
+        has_invoice_value = isinstance(row.get("invoice"), dict) and bool(row.get("invoice"))
+
+        if hide_canceled and not explicit_cancel_status and is_canceled:
             continue
-        if _is_return_like_status(row.get("raw_status")):
-            filtered.append(row)
+        if has_purchase_cost and purchase_cost_cents <= 0:
             continue
+        if no_purchase_cost and purchase_cost_cents > 0:
+            continue
+        if has_invoice and not has_invoice_value:
+            continue
+        if no_invoice and has_invoice_value:
+            continue
+        filtered.append(row)
+
     return filtered
 
 
@@ -771,10 +840,20 @@ def list_orders(
     marketplace: Optional[str],
     query: Optional[str],
     status_filter: Optional[str] = None,
+    payment_filters: Optional[list[str]] = None,
+    hide_canceled: bool = False,
+    has_purchase_cost: bool = False,
+    no_purchase_cost: bool = False,
+    has_invoice: bool = False,
+    no_invoice: bool = False,
     limit: int,
     offset: int,
+    include_raw_fallbacks: bool = True,
 ) -> dict[str, Any]:
-    source_rows = [*_load_shopify_orders(), *_load_kaufland_orders()]
+    source_rows = [
+        *_load_shopify_orders(include_raw_fallbacks=include_raw_fallbacks),
+        *_load_kaufland_orders(include_raw_fallbacks=include_raw_fallbacks),
+    ]
     enrichment_map = fetch_enrichment_map()
     merged_rows = [_merge_enrichment(row, enrichment_map) for row in source_rows]
 
@@ -782,6 +861,16 @@ def list_orders(
     filtered = _apply_date_filter(filtered, from_date, to_date)
     filtered = _apply_search_filter(filtered, query)
     filtered = _apply_status_filter(filtered, status_filter)
+    filtered = _apply_payment_filter(filtered, payment_filters)
+    filtered = _apply_enrichment_filters(
+        filtered,
+        hide_canceled=hide_canceled,
+        has_purchase_cost=has_purchase_cost,
+        no_purchase_cost=no_purchase_cost,
+        has_invoice=has_invoice,
+        no_invoice=no_invoice,
+        status_filter=status_filter,
+    )
 
     filtered.sort(key=lambda item: item.get("order_date") or "", reverse=True)
 
@@ -1082,8 +1171,15 @@ def list_all_orders_without_pagination(
         marketplace=marketplace,
         query=query,
         status_filter=status_filter,
+        payment_filters=None,
+        hide_canceled=False,
+        has_purchase_cost=False,
+        no_purchase_cost=False,
+        has_invoice=False,
+        no_invoice=False,
         limit=1_000_000,
         offset=0,
+        include_raw_fallbacks=True,
     )
     items = payload.get("items")
     if not isinstance(items, list):

@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode 
 
 import {
   fetchOrders,
+  type OrdersQuery,
   updateOrderPurchase,
   uploadOrderInvoice,
   type OrderSummary,
@@ -28,6 +29,9 @@ type StatusMessage = {
 
 type DraftState = Record<string, string>;
 type BusyState = Record<string, boolean>;
+type PendingBlurSaveState = Record<string, boolean>;
+
+const ORDERS_PAGE_SIZE = 150;
 
 const EMPTY_FILTERS: OrderFilterState = {
   status: new Set(),
@@ -156,53 +160,6 @@ function invoiceHref(order: OrderSummary) {
   return `/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/invoice/${encodeURIComponent(documentId)}/download?disposition=inline`;
 }
 
-function filterOrders(items: OrderSummary[], filters: OrderFilterState) {
-  return items.filter((order) => {
-    const isCanceled = isReturnLikeStatus(order.fulfillment_status)
-      || isReturnLikeStatus(order.financial_status)
-      || isReturnLikeStatus(order.raw_status);
-
-    if (filters.hideCanceled && !filters.returnsOnly && !filters.status.has("cancelled") && !filters.status.has("refunded") && !filters.status.has("canceled")) {
-      if (isCanceled) {
-        return false;
-      }
-    }
-
-    if (filters.status.size) {
-      const status = String(order.fulfillment_status || "").trim().toLowerCase();
-      if (!filters.status.has(status)) {
-        return false;
-      }
-    }
-
-    if (filters.payment.size) {
-      const payment = String(order.payment_method || "").trim();
-      if (!filters.payment.has(payment)) {
-        return false;
-      }
-    }
-
-    if (filters.returnsOnly && !isCanceled) {
-      return false;
-    }
-
-    if (filters.hasPurchaseCost && !(Number(order.purchase_cost_cents) > 0)) {
-      return false;
-    }
-    if (filters.noPurchaseCost && Number(order.purchase_cost_cents) > 0) {
-      return false;
-    }
-    if (filters.hasInvoice && !order.invoice) {
-      return false;
-    }
-    if (filters.noInvoice && order.invoice) {
-      return false;
-    }
-
-    return true;
-  });
-}
-
 function cloneFilters(current: OrderFilterState): OrderFilterState {
   return {
     status: new Set(current.status),
@@ -233,21 +190,48 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   const [drafts, setDrafts] = useState<DraftState>({});
   const [savingPurchase, setSavingPurchase] = useState<BusyState>({});
   const [uploadingInvoice, setUploadingInvoice] = useState<BusyState>({});
+  const [pageIndex, setPageIndex] = useState(0);
+  const skipNextBlurSaveRef = useRef<PendingBlurSaveState>({});
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
 
-  const query = useMemo(() => ({
+  const activeStatusFilters = useMemo(() => Array.from(filters.status), [filters.status]);
+  const activePaymentFilters = useMemo(() => Array.from(filters.payment), [filters.payment]);
+
+  const statusQueryValue = useMemo(() => {
+    if (filters.returnsOnly) {
+      return "returns";
+    }
+    return activeStatusFilters.length === 1 ? activeStatusFilters[0] : "";
+  }, [activeStatusFilters, filters.returnsOnly]);
+
+  const query = useMemo<OrdersQuery>(() => ({
     from: shellFilters.from,
     to: shellFilters.to,
     marketplace: shellFilters.marketplace,
     q: shellFilters.q,
-    limit: 5000,
-  }), [shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
+    status: statusQueryValue || undefined,
+    payment: activePaymentFilters,
+    hideCanceled: filters.hideCanceled && !filters.returnsOnly && !activeStatusFilters.some((value) => value === "cancelled" || value === "canceled" || value === "refunded"),
+    hasPurchaseCost: filters.hasPurchaseCost,
+    noPurchaseCost: filters.noPurchaseCost,
+    hasInvoice: filters.hasInvoice,
+    noInvoice: filters.noInvoice,
+    limit: ORDERS_PAGE_SIZE,
+    offset: pageIndex * ORDERS_PAGE_SIZE,
+  }), [activePaymentFilters, activeStatusFilters, filters.hasInvoice, filters.hasPurchaseCost, filters.hideCanceled, filters.noInvoice, filters.noPurchaseCost, filters.returnsOnly, pageIndex, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to, statusQueryValue]);
 
-  const filteredItems = useMemo(() => filterOrders(items, filters), [filters, items]);
+  const currentPage = pageIndex + 1;
+  const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
+  const pageStart = total > 0 ? (pageIndex * ORDERS_PAGE_SIZE) + 1 : 0;
+  const pageEnd = total > 0 ? Math.min(total, pageStart + items.length - 1) : 0;
   const activeFilters = getActiveOrdersFilterCount(filters);
-  const metaText = activeFilters > 0 && filteredItems.length !== total
-    ? `${NUMBER_FORMATTER.format(filteredItems.length)} / ${NUMBER_FORMATTER.format(total)} Zeilen`
-    : `${NUMBER_FORMATTER.format(filteredItems.length)} Zeilen`;
+  const metaText = total > 0
+    ? `${NUMBER_FORMATTER.format(pageStart)}-${NUMBER_FORMATTER.format(pageEnd)} / ${NUMBER_FORMATTER.format(total)} Zeilen`
+    : "0 Zeilen";
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [filters, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
 
   useEffect(() => {
     if (!isActive) {
@@ -262,16 +246,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
           return;
         }
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
-        setItems(nextItems);
-        setTotal(Number(payload.total || nextItems.length || 0));
-        setDrafts((current) => {
-          const next: DraftState = {};
-          for (const order of nextItems) {
-            const key = rowKey(order);
-            next[key] = key in current ? current[key] : centsToInputValue(order.purchase_cost_cents);
-          }
-          return next;
-        });
+        applyOrdersPayload(nextItems, Number(payload.total || nextItems.length || 0));
         setError("");
       })
       .catch((nextError: Error) => {
@@ -306,8 +281,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
     void fetchOrders(query)
       .then((payload) => {
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
-        setItems(nextItems);
-        setTotal(Number(payload.total || nextItems.length || 0));
+        applyOrdersPayload(nextItems, Number(payload.total || nextItems.length || 0));
         setError("");
       })
       .catch((nextError: Error) => {
@@ -351,10 +325,51 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
       mutator(next);
       return next;
     });
+    setPageIndex(0);
   }
 
   function updateOrder(orderKeyValue: string, updater: (order: OrderSummary) => OrderSummary) {
     setItems((current) => current.map((order) => (rowKey(order) === orderKeyValue ? updater(order) : order)));
+  }
+
+  function applyOrdersPayload(nextItems: OrderSummary[], nextTotal?: number) {
+    setItems(nextItems);
+    setTotal(Number(nextTotal || nextItems.length || 0));
+    setDrafts((current) => {
+      const next: DraftState = {};
+      for (const order of nextItems) {
+        const key = rowKey(order);
+        next[key] = key in current ? current[key] : centsToInputValue(order.purchase_cost_cents);
+      }
+      return next;
+    });
+  }
+
+  function applyUploadedInvoiceToOrder(order: OrderSummary, uploadResult: Record<string, unknown>, purchaseCostCents: number | null) {
+    const enrichment = uploadResult.enrichment;
+    const enrichmentPayload = enrichment && typeof enrichment === "object"
+      ? enrichment as Record<string, unknown>
+      : {};
+    const documentId = String(enrichmentPayload.invoice_document_id || "").trim();
+    const nextInvoice = documentId
+      ? {
+          document_id: documentId,
+          original_filename: String(enrichmentPayload.original_filename || "").trim() || order.invoice?.original_filename,
+          stored_filename: String(enrichmentPayload.stored_filename || "").trim() || order.invoice?.stored_filename,
+          mime_type: String(enrichmentPayload.mime_type || "").trim() || order.invoice?.mime_type,
+          uploaded_at: String(enrichmentPayload.uploaded_at || "").trim() || order.invoice?.uploaded_at,
+        }
+      : order.invoice ?? null;
+
+    updateOrder(rowKey(order), (currentOrder) => {
+      const nextPurchase = purchaseCostCents ?? Number(currentOrder.purchase_cost_cents || 0);
+      return {
+        ...currentOrder,
+        purchase_cost_cents: nextPurchase,
+        profit_cents: Number(currentOrder.after_fees_cents || 0) - nextPurchase,
+        invoice: nextInvoice,
+      };
+    });
   }
 
   async function handleSavePurchase(order: OrderSummary) {
@@ -407,18 +422,13 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
 
     setUploadingInvoice((current) => ({ ...current, [key]: true }));
     try {
-      await uploadOrderInvoice(String(order.marketplace || ""), String(order.order_id || ""), form);
-      const refresh = await fetchOrders(query);
-      const nextItems = Array.isArray(refresh.items) ? refresh.items : [];
-      setItems(nextItems);
-      setTotal(Number(refresh.total || nextItems.length || 0));
-      setDrafts((current) => {
-        const next: DraftState = { ...current };
-        for (const nextOrder of nextItems) {
-          next[rowKey(nextOrder)] = centsToInputValue(nextOrder.purchase_cost_cents);
-        }
-        return next;
-      });
+      const uploadResult = await uploadOrderInvoice(String(order.marketplace || ""), String(order.order_id || ""), form);
+      const nextPurchaseCostCents = parsed.value === null ? null : parsed.cents;
+      applyUploadedInvoiceToOrder(order, uploadResult, nextPurchaseCostCents);
+      setDrafts((current) => ({
+        ...current,
+        [key]: parsed.value === null ? "" : centsToInputValue(parsed.cents),
+      }));
       const priceHint = parsed.value !== null ? " inkl. Einkaufspreis" : "";
       setStatus(`Rechnung hochgeladen${priceHint}: ${order.marketplace} ${order.order_id}`, "ok");
     } catch (nextError) {
@@ -480,7 +490,8 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                             if (next.status.has(value)) {
                               next.status.delete(value);
                             } else {
-                              next.status.add(value);
+                              next.status = new Set([value]);
+                              next.returnsOnly = false;
                             }
                           });
                         }}
@@ -521,6 +532,9 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                     <button className={`ofd-chip${filters.returnsOnly ? " active" : ""}`} type="button" onClick={() => {
                       mutateFilters((next) => {
                         next.returnsOnly = !next.returnsOnly;
+                        if (next.returnsOnly) {
+                          next.status.clear();
+                        }
                       });
                     }}>Retouren / Cancel</button>
                     <button className={`ofd-chip${filters.hideCanceled ? " active" : ""}`} type="button" onClick={() => {
@@ -579,6 +593,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                     type="button"
                     onClick={() => {
                       setFilters(cloneFilters(EMPTY_FILTERS));
+                      setPageIndex(0);
                     }}
                   >
                     Alle Filter zuruecksetzen
@@ -610,7 +625,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                 <tr>
                   <td colSpan={10}>Orders werden geladen...</td>
                 </tr>
-              ) : filteredItems.length ? filteredItems.map((order) => {
+              ) : items.length ? items.map((order) => {
                 const key = rowKey(order);
                 const marketplaceToken = String(order.marketplace || "").trim().toLowerCase();
                 const rowClass = marketplaceToken === "shopify"
@@ -679,11 +694,17 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                           setDrafts((current) => ({ ...current, [key]: value }));
                         }}
                         onBlur={() => {
+                          if (skipNextBlurSaveRef.current[key]) {
+                            delete skipNextBlurSaveRef.current[key];
+                            return;
+                          }
                           void handleSavePurchase(order);
                         }}
                         onKeyDown={(event) => {
                           if (event.key === "Enter") {
                             event.preventDefault();
+                            skipNextBlurSaveRef.current[key] = true;
+                            (event.currentTarget as HTMLInputElement).blur();
                             void handleSavePurchase(order);
                           }
                         }}
@@ -727,6 +748,37 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
             </tbody>
           </table>
         </div>
+        {!loading && totalPages > 1 ? (
+          <div className="orders-pagination-row">
+            <div className="table-meta">
+              {`Seite ${NUMBER_FORMATTER.format(currentPage)} von ${NUMBER_FORMATTER.format(totalPages)}`}
+            </div>
+            <div className="orders-pagination-actions">
+              <button
+                id="ordersPrevPageBtn"
+                className="btn-inline ghost"
+                type="button"
+                disabled={pageIndex <= 0}
+                onClick={() => {
+                  setPageIndex((current) => Math.max(0, current - 1));
+                }}
+              >
+                Vorherige
+              </button>
+              <button
+                id="ordersNextPageBtn"
+                className="btn-inline ghost"
+                type="button"
+                disabled={pageIndex >= totalPages - 1}
+                onClick={() => {
+                  setPageIndex((current) => Math.min(totalPages - 1, current + 1));
+                }}
+              >
+                Naechste
+              </button>
+            </div>
+          </div>
+        ) : null}
       </section>
     </div>
   );

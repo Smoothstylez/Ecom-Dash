@@ -1307,15 +1307,33 @@ def list_booking_orders(
     to_date: Optional[str],
     marketplace: Optional[str],
     query: Optional[str],
+    limit: Optional[int] = None,
+    offset: int = 0,
 ) -> dict[str, Any]:
-    from app.services.orders import list_all_orders_without_pagination
+    from app.services.orders import list_orders
 
-    orders = list_all_orders_without_pagination(
+    safe_limit = None if limit is None else max(int(limit), 0)
+    safe_offset = max(int(offset), 0)
+    fetch_limit = safe_limit if safe_limit is not None and safe_limit > 0 else 1_000_000
+
+    payload = list_orders(
         from_date=from_date,
         to_date=to_date,
         marketplace=marketplace,
         query=query,
+        status_filter=None,
+        payment_filters=None,
+        hide_canceled=False,
+        has_purchase_cost=False,
+        no_purchase_cost=False,
+        has_invoice=False,
+        no_invoice=False,
+        limit=fetch_limit,
+        offset=safe_offset,
+        include_raw_fallbacks=True,
     )
+    orders = payload.get("items") if isinstance(payload.get("items"), list) else []
+    total = int(payload.get("total") or 0)
 
     items: list[dict[str, Any]] = []
     for order in orders:
@@ -1377,6 +1395,8 @@ def list_booking_orders(
 
     items.sort(key=lambda row: str(row.get("order_date") or ""), reverse=True)
     return {
-        "total": len(items),
+        "total": total,
         "items": items,
+        "limit": safe_limit,
+        "offset": safe_offset,
     }

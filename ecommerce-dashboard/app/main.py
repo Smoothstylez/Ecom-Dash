@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
+from html import escape
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,6 +50,57 @@ FRONTEND_DIST_DIR = (
     _FRONTEND_DIST_CONTAINER if _FRONTEND_DIST_CONTAINER.is_dir() else _FRONTEND_DIST_WORKSPACE
 )
 LOGGER = logging.getLogger("combined_dashboard")
+
+
+def _normalize_external_base_path(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text or text == "/":
+        return ""
+    if "://" in text:
+        text = urlsplit(text).path or ""
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = f"/{text}"
+    return text[:-1] if text.endswith("/") else text
+
+
+def _dashboard_external_base_path(request: Request) -> str:
+    return _normalize_external_base_path(
+        request.headers.get("x-ingress-path")
+        or request.headers.get("x-forwarded-prefix")
+        or request.scope.get("root_path")
+    )
+
+
+def _with_dashboard_external_base_path(request: Request, path: str) -> str:
+    normalized_path = str(path or "").strip() or "/"
+    if not normalized_path.startswith("/"):
+        normalized_path = f"/{normalized_path}"
+    base_path = _dashboard_external_base_path(request)
+    if not base_path:
+        return normalized_path
+    if normalized_path == "/":
+        return f"{base_path}/"
+    if normalized_path == base_path or normalized_path.startswith(f"{base_path}/"):
+        return normalized_path
+    return f"{base_path}{normalized_path}"
+
+
+def _rewrite_html_attribute_prefix(html: str, attribute: str, source_prefix: str, replacement_prefix: str) -> str:
+    html = html.replace(f'{attribute}="{source_prefix}', f'{attribute}="{replacement_prefix}')
+    return html.replace(f"{attribute}='{source_prefix}", f"{attribute}='{replacement_prefix}")
+
+
+def _inject_dashboard_shell_bootstrap(request: Request, html: str) -> str:
+    base_path = _dashboard_external_base_path(request)
+    bootstrap = (
+        f'    <base href="{escape(f"{base_path}/" if base_path else "/", quote=True)}">\n'
+        f'    <script>window.__DASHBOARD_BASE_PATH__ = {json.dumps(base_path)};</script>\n'
+    )
+    if "window.__DASHBOARD_BASE_PATH__" in html or "<base " in html:
+        return html
+    return html.replace("<head>", f"<head>\n{bootstrap}", 1)
 
 
 def _source_sync_has_mutation(summary: dict[str, object] | None) -> bool:
@@ -147,8 +201,8 @@ def on_shutdown() -> None:
 
 
 @app.get("/", include_in_schema=False)
-def root() -> Response:
-    return _dashboard_shell_response()
+def root(request: Request) -> Response:
+    return _dashboard_shell_response(request)
 
 
 @app.get("/bookings", include_in_schema=False)
@@ -158,16 +212,19 @@ def root() -> Response:
 @app.get("/ebay", include_in_schema=False)
 @app.get("/google-ads", include_in_schema=False)
 @app.get("/customers", include_in_schema=False)
-def dashboard_alias() -> Response:
-    return _dashboard_shell_response()
+def dashboard_alias(request: Request) -> Response:
+    return _dashboard_shell_response(request)
 
 
 @app.get("/bookings/module", include_in_schema=False)
-def deprecated_bookings_module() -> RedirectResponse:
-    return RedirectResponse(url="bookings/full?subtab=transactions", status_code=307)
+def deprecated_bookings_module(request: Request) -> RedirectResponse:
+    return RedirectResponse(
+        url=_with_dashboard_external_base_path(request, "/bookings/full?subtab=transactions"),
+        status_code=307,
+    )
 
 
-def _dashboard_shell_response() -> Response:
+def _dashboard_shell_response(request: Request) -> Response:
     index_path = FRONTEND_DIST_DIR / "index.html"
     if not index_path.is_file():
         return Response(
@@ -176,9 +233,40 @@ def _dashboard_shell_response() -> Response:
             status_code=503,
         )
     html = index_path.read_text(encoding="utf-8")
+    base_path = _dashboard_external_base_path(request)
     version_suffix = f"?v={APP_VERSION}"
-    html = html.replace('/static/css/themes.css', f'/static/css/themes.css{version_suffix}')
-    html = html.replace('/static/css/main.css', f'/static/css/main.css{version_suffix}')
+    themes_path = _with_dashboard_external_base_path(request, f"/static/css/themes.css{version_suffix}")
+    main_path = _with_dashboard_external_base_path(request, f"/static/css/main.css{version_suffix}")
+    html = html.replace('href="/static/css/themes.css"', f'href="{themes_path}"')
+    html = html.replace("href='/static/css/themes.css'", f"href='{themes_path}'")
+    html = html.replace('href="/static/css/main.css"', f'href="{main_path}"')
+    html = html.replace("href='/static/css/main.css'", f"href='{main_path}'")
+    html = _rewrite_html_attribute_prefix(
+        html,
+        "src",
+        "/assets/",
+        _with_dashboard_external_base_path(request, "/assets/"),
+    )
+    html = _rewrite_html_attribute_prefix(
+        html,
+        "href",
+        "/assets/",
+        _with_dashboard_external_base_path(request, "/assets/"),
+    )
+    if base_path:
+        html = _rewrite_html_attribute_prefix(
+            html,
+            "src",
+            "/static/",
+            f"{base_path}/static/",
+        )
+        html = _rewrite_html_attribute_prefix(
+            html,
+            "href",
+            "/static/",
+            f"{base_path}/static/",
+        )
+    html = _inject_dashboard_shell_bootstrap(request, html)
     return HTMLResponse(content=html)
 
 
@@ -195,7 +283,7 @@ def frontend_preview(request: Request, frontend_path: str = "") -> RedirectRespo
     if query_string:
         separator = "&" if "?" in target else "?"
         target = f"{target}{separator}{query_string}"
-    return RedirectResponse(url=target, status_code=307)
+    return RedirectResponse(url=_with_dashboard_external_base_path(request, target), status_code=307)
 
 
 @app.get("/api/health")

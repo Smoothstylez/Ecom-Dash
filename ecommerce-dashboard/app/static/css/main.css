@@ -2569,7 +2569,7 @@ button:hover {
 
 .google-ads-import-row {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   gap: 10px;
   flex-wrap: wrap;
 }
@@ -2636,7 +2636,7 @@ button:hover {
 .google-ads-action-field {
   display: flex;
   gap: 6px;
-  align-items: end;
+  align-items: flex-end;
   flex-shrink: 0;
 }
 
@@ -3263,6 +3263,22 @@ tbody tr:nth-child(even) {
 .orders-table thead th:nth-child(9) { width: 110px; }
 .orders-table thead th:nth-child(10) { width: 180px; }
 .orders-table thead th:nth-child(11) { width: 120px; }
+
+.orders-pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--th-line-2);
+}
+
+.orders-pagination-actions {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
 
 .cell-sub {
   margin-top: 3px;
@@ -4201,6 +4217,16 @@ tbody tr:nth-child(even) {
 
   .orders-table .order-invoice-link {
     max-width: 160px;
+  }
+
+  .orders-pagination-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .orders-pagination-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
   }
 }
 

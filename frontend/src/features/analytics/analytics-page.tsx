@@ -980,7 +980,6 @@ export function AnalyticsPage({ isActive }: AnalyticsPageProps) {
 
     return () => {
       if (layoutEditMenuBtn instanceof HTMLButtonElement) {
-        layoutEditMenuBtn.disabled = false;
         layoutEditMenuBtn.removeEventListener("click", handleOpenLayoutEdit);
       }
     };

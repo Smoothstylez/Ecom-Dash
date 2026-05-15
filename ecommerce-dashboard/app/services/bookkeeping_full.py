@@ -7,9 +7,10 @@ import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, BinaryIO, Optional
 
 from app.config import BOOKKEEPING_DB_PATH, BOOKKEEPING_DOCUMENTS_DIR, BOOKKEEPING_PROJECT_ROOT, MAX_UPLOAD_BYTES
+from app.uploads import EmptyUploadError, UploadTooLargeError, stream_fileobj_to_path
 
 
 TRANSACTION_TYPES = {
@@ -28,6 +29,20 @@ TRANSACTION_STATUSES = {"pending", "confirmed", "reconciled"}
 RECURRING_SCHEDULES = {"monthly", "quarterly", "yearly"}
 BOOKING_CLASSES = {"automatic", "monthly", "single"}
 MONTHLY_INVOICE_STATUSES = {"draft", "matched", "mismatch"}
+TRANSACTION_CATEGORY_TYPES = {
+    "sale": {"SALE"},
+    "fee": {"FEE"},
+    "cogs": {"COGS"},
+    "invoice": {"EXPENSE"},
+    "subscription": {"SUBSCRIPTION"},
+    "refund": {"REFUND"},
+    "other": {"PAYOUT", "ADJUSTMENT"},
+}
+TRANSACTION_TYPE_TO_CATEGORY = {
+    tx_type: category
+    for category, tx_types in TRANSACTION_CATEGORY_TYPES.items()
+    for tx_type in tx_types
+}
 
 
 class BookkeepingServiceError(Exception):
@@ -740,6 +755,10 @@ def _parse_transaction_filters(raw_filters: dict[str, str | None]) -> dict[str, 
         "templateId": None,
         "paymentAccountId": None,
         "bookingClass": None,
+        "q": None,
+        "category": None,
+        "limit": None,
+        "offset": 0,
     }
 
     if raw_filters.get("dateFrom"):
@@ -799,7 +818,114 @@ def _parse_transaction_filters(raw_filters: dict[str, str | None]) -> dict[str, 
             raise BookkeepingServiceError(400, "invalid bookingClass filter")
         parsed["bookingClass"] = booking_class
 
+    query = str(raw_filters.get("q") or "").strip().lower()
+    if query:
+        parsed["q"] = query
+
+    category = str(raw_filters.get("category") or "").strip().lower()
+    if category:
+        if category not in TRANSACTION_CATEGORY_TYPES:
+            raise BookkeepingServiceError(400, "invalid category filter")
+        parsed["category"] = category
+
+    raw_limit = raw_filters.get("limit")
+    if raw_limit not in {None, ""}:
+        try:
+            limit = int(raw_limit)
+        except (TypeError, ValueError) as error:
+            raise BookkeepingServiceError(400, "invalid limit") from error
+        if limit < 1 or limit > 1000:
+            raise BookkeepingServiceError(400, "invalid limit")
+        parsed["limit"] = limit
+
+    raw_offset = raw_filters.get("offset")
+    if raw_offset not in {None, ""}:
+        try:
+            offset = int(raw_offset)
+        except (TypeError, ValueError) as error:
+            raise BookkeepingServiceError(400, "invalid offset") from error
+        if offset < 0:
+            raise BookkeepingServiceError(400, "invalid offset")
+        parsed["offset"] = offset
+
     return parsed
+
+
+def _transaction_type_to_category_key(tx_type: str | None) -> str:
+    normalized = str(tx_type or "").strip().upper()
+    return TRANSACTION_TYPE_TO_CATEGORY.get(normalized, "other")
+
+
+def _build_transaction_where_clauses(
+    parsed_filters: dict[str, Any],
+    *,
+    include_search: bool,
+    include_category: bool,
+) -> tuple[list[str], list[Any]]:
+    clauses: list[str] = []
+    args: list[Any] = []
+
+    if parsed_filters.get("dateFrom"):
+        clauses.append("t.date >= ?")
+        args.append(parsed_filters["dateFrom"])
+    if parsed_filters.get("dateTo"):
+        clauses.append("t.date <= ?")
+        args.append(parsed_filters["dateTo"])
+    if parsed_filters.get("type"):
+        clauses.append("t.type = ?")
+        args.append(parsed_filters["type"])
+    if parsed_filters.get("marketplace"):
+        clauses.append(
+            "(" \
+            "LOWER(COALESCE(o.provider, '')) = ? "
+            "OR (t.order_id IS NULL AND LOWER(COALESCE(t.provider, '')) = ?)" \
+            ")"
+        )
+        args.append(parsed_filters["marketplace"])
+        args.append(parsed_filters["marketplace"])
+    if parsed_filters.get("provider"):
+        clauses.append("t.provider = ?")
+        args.append(parsed_filters["provider"])
+    if parsed_filters.get("direction"):
+        clauses.append("t.direction = ?")
+        args.append(parsed_filters["direction"])
+    if parsed_filters.get("orderId"):
+        clauses.append("t.order_id = ?")
+        args.append(parsed_filters["orderId"])
+    if parsed_filters.get("templateId"):
+        clauses.append("t.template_id = ?")
+        args.append(parsed_filters["templateId"])
+    if parsed_filters.get("paymentAccountId"):
+        clauses.append("t.payment_account_id = ?")
+        args.append(parsed_filters["paymentAccountId"])
+    if parsed_filters.get("hasDocument") is True:
+        clauses.append("t.document_id IS NOT NULL")
+    if parsed_filters.get("hasDocument") is False:
+        clauses.append("t.document_id IS NULL")
+    if parsed_filters.get("bookingClass"):
+        clauses.append("t.booking_class = ?")
+        args.append(parsed_filters["bookingClass"])
+
+    if include_category and parsed_filters.get("category"):
+        category_types = sorted(TRANSACTION_CATEGORY_TYPES[str(parsed_filters["category"])])
+        placeholders = ", ".join("?" for _ in category_types)
+        clauses.append(f"UPPER(COALESCE(t.type, '')) IN ({placeholders})")
+        args.extend(category_types)
+
+    if include_search and parsed_filters.get("q"):
+        needle = f"%{parsed_filters['q']}%"
+        clauses.append(
+            "(" \
+            "LOWER(COALESCE(t.provider, '')) LIKE ? "
+            "OR LOWER(COALESCE(t.counterparty_name, '')) LIKE ? "
+            "OR LOWER(COALESCE(t.reference, '')) LIKE ? "
+            "OR LOWER(COALESCE(t.notes, '')) LIKE ? "
+            "OR LOWER(COALESCE(t.type, '')) LIKE ?" \
+            ")"
+        )
+        args.extend([needle, needle, needle, needle, needle])
+
+    return clauses, args
 
 
 def _fetch_order(connection: sqlite3.Connection, order_id: str) -> dict[str, Any] | None:
@@ -1448,65 +1574,69 @@ def list_bookkeeping_orders() -> dict[str, Any]:
     return {"total": len(items), "items": items, "db_available": True}
 
 
-def list_bookkeeping_transactions(filters: dict[str, str | None]) -> dict[str, Any]:
+def list_bookkeeping_transactions(filters: dict[str, Any]) -> dict[str, Any]:
     if not BOOKKEEPING_DB_PATH.exists():
         return {"total": 0, "items": [], "db_available": False}
 
     parsed_filters = _parse_transaction_filters(filters)
-    clauses: list[str] = []
-    args: list[Any] = []
+    base_clauses, base_args = _build_transaction_where_clauses(
+        parsed_filters,
+        include_search=False,
+        include_category=False,
+    )
+    filtered_clauses, filtered_args = _build_transaction_where_clauses(
+        parsed_filters,
+        include_search=True,
+        include_category=True,
+    )
 
-    if parsed_filters.get("dateFrom"):
-        clauses.append("t.date >= ?")
-        args.append(parsed_filters["dateFrom"])
-    if parsed_filters.get("dateTo"):
-        clauses.append("t.date <= ?")
-        args.append(parsed_filters["dateTo"])
-    if parsed_filters.get("type"):
-        clauses.append("t.type = ?")
-        args.append(parsed_filters["type"])
-    if parsed_filters.get("marketplace"):
-        clauses.append(
-            "(" \
-            "LOWER(COALESCE(o.provider, '')) = ? "
-            "OR (t.order_id IS NULL AND LOWER(COALESCE(t.provider, '')) = ?)" \
-            ")"
-        )
-        args.append(parsed_filters["marketplace"])
-        args.append(parsed_filters["marketplace"])
-    if parsed_filters.get("provider"):
-        clauses.append("t.provider = ?")
-        args.append(parsed_filters["provider"])
-    if parsed_filters.get("direction"):
-        clauses.append("t.direction = ?")
-        args.append(parsed_filters["direction"])
-    if parsed_filters.get("orderId"):
-        clauses.append("t.order_id = ?")
-        args.append(parsed_filters["orderId"])
-    if parsed_filters.get("templateId"):
-        clauses.append("t.template_id = ?")
-        args.append(parsed_filters["templateId"])
-    if parsed_filters.get("paymentAccountId"):
-        clauses.append("t.payment_account_id = ?")
-        args.append(parsed_filters["paymentAccountId"])
-    if parsed_filters.get("hasDocument") is True:
-        clauses.append("t.document_id IS NOT NULL")
-    if parsed_filters.get("hasDocument") is False:
-        clauses.append("t.document_id IS NULL")
-    if parsed_filters.get("bookingClass"):
-        clauses.append("t.booking_class = ?")
-        args.append(parsed_filters["bookingClass"])
+    category_counts_sql = """
+        SELECT t.type AS tx_type, COUNT(*) AS total
+        FROM transactions t
+        LEFT JOIN orders o ON o.id = t.order_id
+    """
+    if base_clauses:
+        category_counts_sql += " WHERE " + " AND ".join(base_clauses)
+    category_counts_sql += " GROUP BY t.type"
+
+    total_sql = """
+        SELECT COUNT(*) AS total
+        FROM transactions t
+        LEFT JOIN orders o ON o.id = t.order_id
+    """
+    if filtered_clauses:
+        total_sql += " WHERE " + " AND ".join(filtered_clauses)
 
     sql = _transactions_select_sql()
-    if clauses:
-        sql += " WHERE " + " AND ".join(clauses)
+    if filtered_clauses:
+        sql += " WHERE " + " AND ".join(filtered_clauses)
     sql += " ORDER BY t.date DESC, t.id DESC"
 
-    with _connect_bookkeeping_db() as connection:
-        rows = connection.execute(sql, tuple(args)).fetchall()
+    query_args = list(filtered_args)
+    if parsed_filters.get("limit") is not None:
+        sql += " LIMIT ? OFFSET ?"
+        query_args.extend([parsed_filters["limit"], parsed_filters["offset"]])
 
+    with _connect_bookkeeping_db() as connection:
+        total_row = connection.execute(total_sql, tuple(filtered_args)).fetchone()
+        category_rows = connection.execute(category_counts_sql, tuple(base_args)).fetchall()
+        rows = connection.execute(sql, tuple(query_args)).fetchall()
+
+    category_counts = {key: 0 for key in TRANSACTION_CATEGORY_TYPES}
+    for row in category_rows:
+        category_key = _transaction_type_to_category_key(row["tx_type"])
+        category_counts[category_key] += int(row["total"] or 0)
+
+    total = int(total_row["total"] or 0) if total_row is not None else 0
     items = [_transaction_row_to_dict(row) for row in rows]
-    return {"total": len(items), "items": items, "db_available": True}
+    return {
+        "total": total,
+        "items": items,
+        "db_available": True,
+        "category_counts": category_counts,
+        "limit": parsed_filters.get("limit"),
+        "offset": parsed_filters.get("offset", 0),
+    }
 
 
 def create_bookkeeping_transaction(payload: Any) -> dict[str, Any]:
@@ -2006,8 +2136,9 @@ def list_documents() -> dict[str, Any]:
 def upload_document(
     *,
     filename: str,
-    content: bytes,
-    mime_type: Optional[str],
+    content: bytes | None = None,
+    mime_type: Optional[str] = None,
+    file_stream: BinaryIO | None = None,
     notes: Optional[str] = None,
     transaction_id: Optional[str] = None,
     provider: Optional[str] = None,
@@ -2021,9 +2152,11 @@ def upload_document(
     original_filename = Path(str(filename or "")).name
     if not original_filename:
         raise BookkeepingServiceError(400, "missing file name")
-    if not content:
+    if content is None and file_stream is None:
         raise BookkeepingServiceError(400, "uploaded file is empty")
-    if len(content) > MAX_UPLOAD_BYTES:
+    if content is not None and not content:
+        raise BookkeepingServiceError(400, "uploaded file is empty")
+    if content is not None and len(content) > MAX_UPLOAD_BYTES:
         raise BookkeepingServiceError(413, "file too large")
 
     clean_notes = str(notes or "").strip() or None
@@ -2077,7 +2210,15 @@ def upload_document(
             target_path = BOOKKEEPING_DOCUMENTS_DIR / f"{target_path.stem}-{collision_suffix}{target_path.suffix}"
             stored_name = target_path.name
 
-        target_path.write_bytes(content)
+        try:
+            if file_stream is not None:
+                stream_fileobj_to_path(file_stream, target_path, max_bytes=MAX_UPLOAD_BYTES)
+            else:
+                target_path.write_bytes(content or b"")
+        except EmptyUploadError as exc:
+            raise BookkeepingServiceError(400, "uploaded file is empty") from exc
+        except UploadTooLargeError as exc:
+            raise BookkeepingServiceError(413, "file too large") from exc
 
         uploaded_at = _now_iso()
         safe_mime = mime_type or mimetypes.guess_type(original_filename)[0] or "application/octet-stream"

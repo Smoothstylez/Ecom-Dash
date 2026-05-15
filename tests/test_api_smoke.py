@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -49,6 +50,79 @@ class ApiSmokeTests(unittest.TestCase):
         payload = response.json()
         self.assertIn("items", payload)
         self.assertIn("total", payload)
+
+    def test_bookings_orders_endpoint_forwards_pagination_query(self) -> None:
+        expected_payload = {
+            "items": [
+                {
+                    "marketplace": "shopify",
+                    "order_id": "order-151",
+                    "external_order_id": "#2151",
+                }
+            ],
+            "total": 305,
+            "limit": 150,
+            "offset": 150,
+        }
+
+        with patch("app.routers.bookings.list_booking_orders", return_value=expected_payload) as list_booking_orders_mock:
+            response = self.client.get(
+                "/api/bookings/orders",
+                params={
+                    "from": "2026-02-01",
+                    "to": "2026-02-29",
+                    "marketplace": "shopify",
+                    "q": "alice",
+                    "limit": 150,
+                    "offset": 150,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected_payload)
+        list_booking_orders_mock.assert_called_once_with(
+            from_date="2026-02-01",
+            to_date="2026-02-29",
+            marketplace="shopify",
+            query="alice",
+            limit=150,
+            offset=150,
+        )
+
+    def test_order_invoice_upload_stores_streamed_file(self) -> None:
+        invoice_content = b"%PDF-1.4 invoice"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_path = Path(temp_dir) / "stored-invoice.pdf"
+
+            def fake_create_invoice_document(*, marketplace: str, order_id: str, original_filename: str, stored_filename: str, mime_type: str, file_path: Path):
+                self.assertEqual(marketplace, "shopify")
+                self.assertEqual(order_id, "order-1")
+                self.assertEqual(file_path, target_path)
+                self.assertEqual(file_path.read_bytes(), invoice_content)
+                self.assertEqual(mime_type, "application/pdf")
+                self.assertEqual(stored_filename, target_path.name)
+                self.assertTrue(original_filename.endswith(".pdf"))
+                return {
+                    "purchase_cost_cents": None,
+                    "purchase_currency": "EUR",
+                    "supplier_name": None,
+                    "purchase_notes": None,
+                }
+
+            with patch("app.routers.orders.build_invoice_storage_path", return_value=target_path), \
+                 patch("app.routers.orders.create_invoice_document", side_effect=fake_create_invoice_document), \
+                 patch("app.routers.orders.upsert_purchase_enrichment", return_value={"invoice_document_id": "doc-1"}), \
+                 patch("app.routers.orders.sync_combined_orders_into_bookkeeping", return_value={"orders_inserted": 0}):
+                response = self.client.post(
+                    "/api/orders/shopify/order-1/invoice",
+                    headers=self.admin_headers,
+                    files={"file": ("invoice.pdf", invoice_content, "application/pdf")},
+                )
+                stored = target_path.read_bytes()
+
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(stored, invoice_content)
 
     def test_customers_endpoint(self) -> None:
         response = self.client.get("/api/customers?limit=5")

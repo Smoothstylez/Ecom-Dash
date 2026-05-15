@@ -1,3 +1,5 @@
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
+
 export type CustomerAddress = {
   street?: string;
   postcode?: string;
@@ -146,10 +148,10 @@ async function fetchJson<T>(url: string): Promise<T> {
 
 export function fetchCustomersOverview(query: CustomersQuery): Promise<CustomersOverviewResponse> {
   const search = buildCustomersQuery(query);
-  return fetchJson<CustomersOverviewResponse>(search ? `/api/customers?${search}` : "/api/customers");
+  return fetchJson<CustomersOverviewResponse>(buildDashboardApiUrl(search ? `/api/customers?${search}` : "/api/customers"));
 }
 
 export function fetchCustomerLocations(query: CustomersQuery): Promise<CustomerLocationsResponse> {
   const search = buildCustomersQuery(query);
-  return fetchJson<CustomerLocationsResponse>(search ? `/api/customers/locations?${search}` : "/api/customers/locations");
+  return fetchJson<CustomerLocationsResponse>(buildDashboardApiUrl(search ? `/api/customers/locations?${search}` : "/api/customers/locations"));
 }

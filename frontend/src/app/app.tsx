@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import { DashboardShellStateProvider } from "@/app/dashboard-shell-state";
 import { DashboardControls } from "@/app/dashboard-controls";
 import { ErrorBoundary } from "@/app/error-boundary";
@@ -16,35 +16,40 @@ import { OrdersShell } from "@/features/orders/orders-shell";
 import { OrderDetailRuntime } from "@/features/orders/order-detail-runtime";
 import { useRoute } from "@/shared/runtime/use-route";
 import type { DashboardRoute } from "@/shared/runtime/dashboard-route";
-import type { ReactElement } from "react";
 import { ThemeProvider } from "@/shared/theme/theme-provider";
 
-// Each route is mounted lazily on first visit, then kept alive (hidden via CSS).
-// This prevents re-fetching data when switching tabs.
-const ROUTE_SHELLS: Record<DashboardRoute, () => ReactElement> = {
-  analytics: () => <AnalyticsShell isActive={false} />,
-  orders: () => <OrdersShell isActive={false} />,
-  customers: () => <CustomersShell isActive={false} />,
-  bookings: () => <BookingsShell isActive={false} />,
-  "google-ads": () => <GoogleAdsShell isActive={false} />,
-  ebay: () => <EbayShell isActive={false} />,
-};
+const HEAVY_ROUTES: ReadonlySet<DashboardRoute> = new Set([
+  "orders",
+  "customers",
+  "bookings",
+  "google-ads",
+  "ebay",
+]);
+
+function renderRouteShell(route: DashboardRoute) {
+  if (route === "analytics") {
+    return <AnalyticsShell isActive={true} />;
+  }
+  if (route === "orders") {
+    return <OrdersShell isActive={true} />;
+  }
+  if (route === "customers") {
+    return <CustomersShell isActive={true} />;
+  }
+  if (route === "bookings") {
+    return <BookingsShell isActive={true} />;
+  }
+  if (route === "google-ads") {
+    return <GoogleAdsShell isActive={true} />;
+  }
+  return <EbayShell isActive={true} />;
+}
 
 export function App() {
   const [route, navigate] = useRoute();
-  // Track which routes have been visited so we only mount them once.
-  const [mounted, setMounted] = useState<Set<DashboardRoute>>(() => new Set([route]));
-
-  function ensureMounted(r: DashboardRoute) {
-    if (!mounted.has(r)) {
-      setMounted((prev) => new Set([...prev, r]));
-    }
-  }
-
-  // Ensure the current route is mounted before rendering.
-  if (!mounted.has(route)) {
-    ensureMounted(route);
-  }
+  const routeKey = useMemo(() => {
+    return HEAVY_ROUTES.has(route) ? `${route}:${window.location.search}` : route;
+  }, [route]);
 
   return (
     <ThemeProvider>
@@ -52,21 +57,9 @@ export function App() {
         <DashboardRuntimeProvider>
           <div className="app-root" data-dashboard-route={route}>
             <AppShell route={route} navigate={navigate}>
-              {(Object.keys(ROUTE_SHELLS) as DashboardRoute[]).map((r) => {
-                if (!mounted.has(r)) return null;
-                return (
-                  <div key={r} style={r !== route ? { display: "none" } : undefined}>
-                    <ErrorBoundary fallbackTitle="Ansicht konnte nicht geladen werden">
-                      {r === "analytics" ? <AnalyticsShell isActive={r === route} /> : null}
-                      {r === "orders" ? <OrdersShell isActive={r === route} /> : null}
-                      {r === "customers" ? <CustomersShell isActive={r === route} /> : null}
-                      {r === "bookings" ? <BookingsShell isActive={r === route} /> : null}
-                      {r === "google-ads" ? <GoogleAdsShell isActive={r === route} /> : null}
-                      {r === "ebay" ? <EbayShell isActive={r === route} /> : null}
-                    </ErrorBoundary>
-                  </div>
-                );
-              })}
+              <ErrorBoundary key={routeKey} fallbackTitle="Ansicht konnte nicht geladen werden">
+                {renderRouteShell(route)}
+              </ErrorBoundary>
             </AppShell>
             <DashboardControls route={route} />
             <DashboardSharedModals />

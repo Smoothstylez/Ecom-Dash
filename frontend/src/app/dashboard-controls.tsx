@@ -29,6 +29,7 @@ import {
   type StatusLevel,
   type StatusSnapshot,
 } from "@/app/dashboard-controls-api";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import type { DashboardRoute } from "@/shared/runtime/dashboard-route";
 
 type StatusMessage = {
@@ -377,7 +378,7 @@ export function DashboardControls({ route }: DashboardControlsProps) {
 
     pollingTimerRef.current = window.setInterval(async () => {
       try {
-        const response = await fetch("/api/sync/changestamp", { headers: { Accept: "application/json" } });
+        const response = await fetch(buildDashboardApiUrl("/api/sync/changestamp"), { headers: { Accept: "application/json" } });
         if (!response.ok) {
           return;
         }
@@ -508,7 +509,7 @@ export function DashboardControls({ route }: DashboardControlsProps) {
   const handleBackupExport = useCallback(async () => {
     closeDataModal();
     try {
-      await triggerDownload("/api/exports/backup", "combined_full_backup.zip");
+      await triggerDownload(buildDashboardApiUrl("/api/exports/backup"), "combined_full_backup.zip");
       applyStatus("Vollbackup heruntergeladen (ZIP Snapshot).", "ok");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Vollbackup fehlgeschlagen";

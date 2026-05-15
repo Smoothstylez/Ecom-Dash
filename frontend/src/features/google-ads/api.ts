@@ -1,4 +1,5 @@
 import { withAdminHeaders } from "@/shared/api/admin-auth";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type GoogleAdsImportMeta = {
   filename?: string;
@@ -104,24 +105,24 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function fetchGoogleAdsAnalytics(query: GoogleAdsQuery): Promise<GoogleAdsAnalytics> {
   const search = buildQueryString(query);
-  return fetchJson<GoogleAdsAnalytics>(search ? `/api/google-ads/analytics?${search}` : "/api/google-ads/analytics");
+  return fetchJson<GoogleAdsAnalytics>(buildDashboardApiUrl(search ? `/api/google-ads/analytics?${search}` : "/api/google-ads/analytics"));
 }
 
 export function fetchGoogleAdsProductDetail(productKey: string, query: GoogleAdsQuery): Promise<GoogleAdsProductDetail> {
   const params = new URLSearchParams(buildQueryString(query));
   params.set("product_key", productKey);
-  return fetchJson<GoogleAdsProductDetail>(`/api/google-ads/product-detail?${params.toString()}`);
+  return fetchJson<GoogleAdsProductDetail>(buildDashboardApiUrl(`/api/google-ads/product-detail?${params.toString()}`));
 }
 
 export function uploadGoogleAdsFiles(formData: FormData): Promise<Record<string, unknown>> {
-  return fetchJson<Record<string, unknown>>("/api/google-ads/upload", {
+  return fetchJson<Record<string, unknown>>(buildDashboardApiUrl("/api/google-ads/upload"), {
     method: "POST",
     body: formData,
   });
 }
 
 export function resetGoogleAds(): Promise<Record<string, unknown>> {
-  return fetchJson<Record<string, unknown>>("/api/google-ads/reset", {
+  return fetchJson<Record<string, unknown>>(buildDashboardApiUrl("/api/google-ads/reset"), {
     method: "DELETE",
   });
 }

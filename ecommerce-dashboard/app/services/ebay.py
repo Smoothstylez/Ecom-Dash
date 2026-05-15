@@ -21,11 +21,13 @@ def get_ebay_orders(
     shop: Optional[str] = None,
     category: Optional[str] = None,
     include_returns: bool = True,
-) -> list[dict[str, Any]]:
+    limit: Optional[int] = None,
+    offset: int = 0,
+) -> dict[str, Any]:
     """Return all eBay orders, optionally filtered by shop/category."""
     conn = _connect()
     if conn is None:
-        return []
+        return {"items": [], "total": 0}
 
     clauses: list[str] = []
     params: list[Any] = []
@@ -41,6 +43,18 @@ def get_ebay_orders(
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
+    total_row = conn.execute(
+        f"SELECT COUNT(*) AS count FROM ebay_orders {where}",
+        params,
+    ).fetchone()
+    total = int(total_row["count"]) if total_row is not None else 0
+
+    query_params = list(params)
+    pagination_sql = ""
+    if limit is not None:
+        pagination_sql = " LIMIT ? OFFSET ?"
+        query_params.extend([max(int(limit), 1), max(int(offset), 0)])
+
     rows = conn.execute(
         f"""
         SELECT id, shop, category, artikel, kunde_name, order_number,
@@ -49,12 +63,13 @@ def get_ebay_orders(
         FROM ebay_orders
         {where}
         ORDER BY datum ASC, id ASC
+        {pagination_sql}
         """,
-        params,
+        query_params,
     ).fetchall()
 
     conn.close()
-    return [dict(r) for r in rows]
+    return {"items": [dict(r) for r in rows], "total": total}
 
 
 def get_ebay_summary() -> dict[str, Any]:

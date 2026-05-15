@@ -1,6 +1,8 @@
-import { createContext, useCallback, useContext, useMemo, useState, type PropsWithChildren } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 
 import { applyDatePreset } from "@/features/analytics/format";
+import { stripDashboardBasePath } from "@/shared/runtime/base-path";
+import { resolveDashboardRoute } from "@/shared/runtime/dashboard-route";
 
 export type DatePreset =
   | "today"
@@ -52,6 +54,10 @@ function readInitialBookingsSubtab() {
   return normalizeBookingsSubtab(params.get("subtab"));
 }
 
+function readCurrentRoute() {
+  return resolveDashboardRoute(stripDashboardBasePath(window.location.pathname));
+}
+
 function readInitialFilters(): ShellFilters {
   const initialRange = applyDatePreset("last_30_days");
   return {
@@ -77,6 +83,35 @@ export function DashboardShellStateProvider({ children }: PropsWithChildren) {
   }, []);
   const requestOpenThemeModal = useCallback(() => {
     setThemeModalRequestToken((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (readCurrentRoute() !== "bookings") {
+      return;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const currentSubtab = params.get("subtab");
+    if (currentSubtab === bookingsSubtab) {
+      return;
+    }
+    params.set("subtab", bookingsSubtab);
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+    if (!currentSubtab || normalizeBookingsSubtab(currentSubtab) === bookingsSubtab) {
+      window.history.replaceState(null, "", nextUrl);
+      return;
+    }
+    window.history.pushState(null, "", nextUrl);
+  }, [bookingsSubtab]);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setBookingsSubtab(readInitialBookingsSubtab());
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => {
+      window.removeEventListener("popstate", handlePopState);
+    };
   }, []);
 
   const value = useMemo<DashboardShellStateContextValue>(() => {

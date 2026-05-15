@@ -6,6 +6,7 @@ import {
   type ShellFilters,
 } from "@/app/dashboard-shell-state";
 import { applyDatePreset, datePresetLabel, formatDateToken } from "@/features/analytics/format";
+import { stripDashboardBasePath, withDashboardBasePath } from "@/shared/runtime/base-path";
 import type { DashboardRoute } from "@/shared/runtime/dashboard-route";
 
 type DateRangeUiState = {
@@ -187,7 +188,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
   const secondMonthLabel = secondMonthDate.toLocaleDateString("de-DE", { month: "long", year: "numeric" });
 
   useEffect(() => {
-    const normalizedPath = String(window.location.pathname || "").trim().toLowerCase();
+    const normalizedPath = stripDashboardBasePath(window.location.pathname).trim().toLowerCase();
     const isBookingsFull = normalizedPath === "/bookings/full";
     document.body.classList.toggle("bookings-full", isBookingsFull);
 
@@ -363,7 +364,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
   return (
     <div className="page">
       <div className="full-back-row">
-        <a className="bookkeeping-link" href="/bookings?subtab=transactions">Zurueck zum Cockpit</a>
+        <a className="bookkeeping-link" href={withDashboardBasePath("/bookings?subtab=transactions")}>Zurueck zum Cockpit</a>
       </div>
 
       <section className="controls-card" aria-hidden="true">

@@ -21,6 +21,7 @@ from app.services.bookkeeping_full import _calculate_amount_net_cents, _calculat
 from app.services.exports import _resolve_backup_manifest_path
 from app.services.google_ads import _parse_ads_report_csv
 from app.services.orders import _kaufland_summary_from_row, _shopify_summary_from_row, _to_kaufland_cents
+from app.uploads import UploadTooLargeError, stream_fileobj_to_path
 
 
 def build_sqlite_row(columns: list[str], values: list[object]) -> sqlite3.Row:
@@ -35,7 +36,63 @@ def build_sqlite_row(columns: list[str], values: list[object]) -> sqlite3.Row:
     return row
 
 
+class GuardedChunkStream:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.offset = 0
+        self.read_sizes: list[int] = []
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        if whence == 0:
+            self.offset = offset
+        elif whence == 1:
+            self.offset += offset
+        elif whence == 2:
+            self.offset = len(self.payload) + offset
+        else:
+            raise ValueError("unsupported whence")
+        return self.offset
+
+    def read(self, size: int = -1) -> bytes:
+        if size <= 0:
+            raise AssertionError("expected chunked reads")
+        self.read_sizes.append(size)
+        if self.offset >= len(self.payload):
+            return b""
+        chunk = self.payload[self.offset:self.offset + size]
+        self.offset += len(chunk)
+        return chunk
+
+
 class RegressionTests(unittest.TestCase):
+    def test_stream_fileobj_to_path_reads_in_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = b"abcdefghij"
+            stream = GuardedChunkStream(payload)
+            target_path = Path(temp_dir) / "invoice.pdf"
+
+            written = stream_fileobj_to_path(stream, target_path, max_bytes=32, chunk_size=4)
+            stored = target_path.read_bytes()
+
+        self.assertEqual(written, len(payload))
+        self.assertEqual(stored, payload)
+        self.assertGreaterEqual(len(stream.read_sizes), 3)
+        self.assertTrue(all(size == 4 for size in stream.read_sizes))
+
+    def test_stream_fileobj_to_path_cleans_up_temp_file_on_oversize(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            stream = GuardedChunkStream(b"abcdefghijk")
+            target_path = Path(temp_dir) / "invoice.pdf"
+
+            with self.assertRaises(UploadTooLargeError):
+                stream_fileobj_to_path(stream, target_path, max_bytes=10, chunk_size=4)
+
+            leftover_parts = list(Path(temp_dir).glob(".invoice.pdf*.upload"))
+            target_exists = target_path.exists()
+
+        self.assertFalse(target_exists)
+        self.assertEqual(leftover_parts, [])
+
     def test_kaufland_cents_handle_decimal_eur_and_integral_real_values(self) -> None:
         self.assertEqual(_to_kaufland_cents(12.34), 1234)
         self.assertEqual(_to_kaufland_cents(10000.0), 10000)
@@ -460,6 +517,224 @@ class RegressionTests(unittest.TestCase):
         assert detail_payload is not None
         self.assertEqual(detail_payload["summary"]["total_cents"], 7500)
         self.assertEqual(detail_payload["summary"]["after_fees_cents"], 7238)
+
+    def test_shopify_list_orders_light_mode_does_not_require_raw_json(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "shopify.sqlite3"
+            connection = sqlite3.connect(db_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE orders (
+                        id TEXT PRIMARY KEY,
+                        order_number INTEGER,
+                        name TEXT,
+                        email TEXT,
+                        created_at TEXT,
+                        updated_at TEXT,
+                        financial_status TEXT,
+                        fulfillment_status TEXT,
+                        total_price TEXT,
+                        subtotal_price TEXT,
+                        total_tax TEXT,
+                        total_discounts TEXT,
+                        currency TEXT,
+                        tags TEXT,
+                        note TEXT,
+                        customer_id TEXT,
+                        customer_email TEXT,
+                        customer_first_name TEXT,
+                        customer_last_name TEXT,
+                        shipping_country TEXT,
+                        shipping_city TEXT,
+                        line_items_count INTEGER,
+                        fulfillments_count INTEGER,
+                        refunds_count INTEGER,
+                        raw_json TEXT NOT NULL,
+                        synced_at TEXT NOT NULL,
+                        estimated_paypal_fee TEXT,
+                        estimated_net_after_fee TEXT,
+                        fee_estimation_note TEXT,
+                        payment_method TEXT
+                    )
+                    """
+                )
+                connection.execute(
+                    "CREATE TABLE order_line_items (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, title TEXT, product_id TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_refunds (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, created_at TEXT, transactions_json TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_fulfillments (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, created_at TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "CREATE TABLE order_transactions (id TEXT PRIMARY KEY, order_id TEXT NOT NULL, fee_amount TEXT, net_amount TEXT, processed_at TEXT, raw_json TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO orders (id, name, created_at, updated_at, financial_status, fulfillment_status, total_price, currency, customer_email, customer_first_name, customer_last_name, line_items_count, fulfillments_count, refunds_count, raw_json, synced_at, estimated_paypal_fee, estimated_net_after_fee, payment_method) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "light-1",
+                        "#2001",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                        "paid",
+                        "fulfilled",
+                        "100.00",
+                        "EUR",
+                        "light@example.com",
+                        "Light",
+                        "Mode",
+                        1,
+                        0,
+                        0,
+                        "not-json",
+                        "2026-01-01T00:00:00Z",
+                        "3.50",
+                        "96.50",
+                        "PayPal",
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO order_line_items (id, order_id, title, product_id, raw_json) VALUES (?, ?, ?, ?, ?)",
+                    ("li-light-1", "light-1", "Artikel Light", "prod-1", "{}"),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            from app.services import orders as orders_service
+
+            with patch.object(orders_service, "SHOPIFY_DB_PATH", db_path), \
+                 patch.object(orders_service, "KAUFLAND_DB_PATH", Path(temp_dir) / "missing-kaufland.sqlite3"), \
+                 patch("app.services.orders.fetch_enrichment_map", return_value={}):
+                light_payload = orders_service.list_orders(
+                    from_date=None,
+                    to_date=None,
+                    marketplace="shopify",
+                    query=None,
+                    limit=10,
+                    offset=0,
+                    include_raw_fallbacks=False,
+                )
+                full_payload = orders_service.list_orders(
+                    from_date=None,
+                    to_date=None,
+                    marketplace="shopify",
+                    query=None,
+                    limit=10,
+                    offset=0,
+                    include_raw_fallbacks=True,
+                )
+
+        self.assertEqual(light_payload["total"], 1)
+        self.assertEqual(full_payload["total"], 1)
+        light_summary = light_payload["items"][0]
+        full_summary = full_payload["items"][0]
+        self.assertEqual(light_summary["order_id"], "light-1")
+        self.assertEqual(light_summary["customer"], "Light Mode")
+        self.assertEqual(light_summary["fees_cents"], 350)
+        self.assertEqual(light_summary["after_fees_cents"], 9650)
+        self.assertEqual(light_summary["shipping_cents"], 0)
+        self.assertEqual(full_summary["fees_cents"], 350)
+        self.assertEqual(full_summary["after_fees_cents"], 9650)
+
+    def test_list_orders_status_filter_matches_supported_status_tokens(self) -> None:
+        from app.services import orders as orders_service
+
+        shopify_rows = [
+            {
+                "marketplace": "shopify",
+                "order_id": "shop-paid",
+                "external_order_id": "#3001",
+                "order_date": "2026-01-03T00:00:00Z",
+                "customer": "Paid Customer",
+                "article": "Artikel Paid",
+                "total_cents": 10000,
+                "fees_cents": 500,
+                "after_fees_cents": 9500,
+                "shipping_cents": 0,
+                "currency": "EUR",
+                "fulfillment_status": "fulfilled",
+                "financial_status": "paid",
+                "raw_status": "fulfilled",
+                "payment_method": "Shopify Payments",
+                "fee_source": "api",
+            },
+            {
+                "marketplace": "shopify",
+                "order_id": "shop-refund",
+                "external_order_id": "#3002",
+                "order_date": "2026-01-02T00:00:00Z",
+                "customer": "Refund Customer",
+                "article": "Artikel Refund",
+                "total_cents": 10000,
+                "fees_cents": 500,
+                "after_fees_cents": 9500,
+                "shipping_cents": 0,
+                "currency": "EUR",
+                "fulfillment_status": "",
+                "financial_status": "partially_refunded",
+                "raw_status": "refunded",
+                "payment_method": "PayPal",
+                "fee_source": "api",
+            },
+        ]
+        kaufland_rows = [
+            {
+                "marketplace": "kaufland",
+                "order_id": "kau-sent",
+                "external_order_id": "ORDER-3003",
+                "order_date": "2026-01-01T00:00:00Z",
+                "customer": "Sent Customer",
+                "article": "Artikel Sent",
+                "total_cents": 10000,
+                "fees_cents": 500,
+                "after_fees_cents": 9500,
+                "shipping_cents": 0,
+                "currency": "EUR",
+                "fulfillment_status": "sent_and_autopaid",
+                "financial_status": "",
+                "raw_status": "sent_and_autopaid",
+                "payment_method": "Kaufland Settlement",
+                "fee_source": "api",
+            },
+        ]
+
+        with patch.object(orders_service, "_load_shopify_orders", return_value=shopify_rows), \
+             patch.object(orders_service, "_load_kaufland_orders", return_value=kaufland_rows), \
+             patch("app.services.orders.fetch_enrichment_map", return_value={}):
+            paid_payload = orders_service.list_orders(
+                from_date=None,
+                to_date=None,
+                marketplace=None,
+                query=None,
+                status_filter="paid",
+                limit=10,
+                offset=0,
+            )
+            refunded_payload = orders_service.list_orders(
+                from_date=None,
+                to_date=None,
+                marketplace=None,
+                query=None,
+                status_filter="refunded",
+                limit=10,
+                offset=0,
+            )
+            sent_payload = orders_service.list_orders(
+                from_date=None,
+                to_date=None,
+                marketplace=None,
+                query=None,
+                status_filter="sent",
+                limit=10,
+                offset=0,
+            )
+
+        self.assertEqual([item["order_id"] for item in paid_payload["items"]], ["shop-paid"])
+        self.assertEqual([item["order_id"] for item in refunded_payload["items"]], ["shop-refund"])
+        self.assertEqual([item["order_id"] for item in sent_payload["items"]], ["kau-sent"])
 
 
 if __name__ == "__main__":

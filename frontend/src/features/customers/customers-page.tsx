@@ -149,6 +149,8 @@ type GeoStatus = {
   log: GeoLogEntry[];
 };
 
+const CUSTOMERS_PAGE_SIZE = 150;
+
 const INITIAL_OVERVIEW: CustomersOverview = {
   total: 0,
   kpis: {},
@@ -341,8 +343,9 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
     log: [],
   });
   const [leafletReady, setLeafletReady] = useState(() => Boolean(window.L));
-  const [globeRuntimeReady, setGlobeRuntimeReady] = useState(() => typeof window.Globe === "function" && Boolean(window.topojson?.feature));
+  const [globeRuntimeReady, setGlobeRuntimeReady] = useState(false);
   const [globeUnavailableReason, setGlobeUnavailableReason] = useState("");
+  const [pageIndex, setPageIndex] = useState(0);
 
   const mapViewRef = useRef<HTMLDivElement | null>(null);
   const globeViewRef = useRef<HTMLDivElement | null>(null);
@@ -355,12 +358,20 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
   const globeAtlasAbortRef = useRef<AbortController | null>(null);
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
 
-  const query = useMemo(() => ({
+  const overviewQuery = useMemo(() => ({
     from: shellFilters.from,
     to: shellFilters.to,
     marketplace: shellFilters.marketplace,
     q: shellFilters.q,
-    limit: 2000,
+    limit: CUSTOMERS_PAGE_SIZE,
+    offset: pageIndex * CUSTOMERS_PAGE_SIZE,
+  }), [pageIndex, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
+
+  const geoQuery = useMemo(() => ({
+    from: shellFilters.from,
+    to: shellFilters.to,
+    marketplace: shellFilters.marketplace,
+    q: shellFilters.q,
   }), [shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
 
   const customersCount = Math.max(Number(overview.kpis.customers_count || overview.total || 0), 0);
@@ -373,11 +384,20 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
     const summary = geo.summary;
     const resolved = Number(summary.orders_total || 0) - Number(summary.unresolved_orders_count || 0);
     const unresolved = Number(summary.unresolved_orders_count || 0);
-    const rangeText = query.from && query.to
-      ? `${formatDateToken(query.from)} - ${formatDateToken(query.to)}`
+    const rangeText = geoQuery.from && geoQuery.to
+      ? `${formatDateToken(geoQuery.from)} - ${formatDateToken(geoQuery.to)}`
       : "Aktueller Filter";
     return `Punkte: ${NUMBER_FORMATTER.format(geo.points.length)} · Orders geolokalisiert: ${NUMBER_FORMATTER.format(Math.max(resolved, 0))} · Unaufgeloest: ${NUMBER_FORMATTER.format(Math.max(unresolved, 0))} · ${rangeText}`;
-  }, [geo.points.length, geo.summary, query.from, query.to]);
+  }, [geo.points.length, geo.summary, geoQuery.from, geoQuery.to]);
+
+  const currentPage = pageIndex + 1;
+  const totalPages = Math.max(1, Math.ceil(Number(overview.total || 0) / CUSTOMERS_PAGE_SIZE));
+  const pageStart = Number(overview.total || 0) > 0 ? (pageIndex * CUSTOMERS_PAGE_SIZE) + 1 : 0;
+  const pageEnd = Number(overview.total || 0) > 0 ? Math.min(Number(overview.total || 0), pageStart + Math.max(overview.items.length - 1, 0)) : 0;
+
+  useEffect(() => {
+    setPageIndex(0);
+  }, [shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
 
   useEffect(() => {
     if (leafletReady) {
@@ -409,7 +429,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
   }, [leafletReady]);
 
   useEffect(() => {
-    if (globeRuntimeReady || globeUnavailableReason) {
+    if (geoMode !== "globe" || globeRuntimeReady || globeUnavailableReason) {
       return;
     }
 
@@ -426,6 +446,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
         }
         const message = error instanceof Error ? error.message : "Hex-Globus konnte nicht geladen werden.";
         setGlobeUnavailableReason(message);
+        setGeoModeState("map");
         setGeoStatus((current) => ({
           ...current,
           log: logGeoEvent(`Globus-Lib Fehler: ${message}`, current.log),
@@ -435,7 +456,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [globeRuntimeReady, globeUnavailableReason]);
+  }, [geoMode, globeRuntimeReady, globeUnavailableReason]);
 
   useEffect(() => {
     const statusElement = document.getElementById("customerGeoStatusInfo");
@@ -448,7 +469,8 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
     if (!isActive) {
       return;
     }
-    const nextOverviewRequest = fetchCustomersOverview(query)
+    setLoadingOverview(true);
+    const nextOverviewRequest = fetchCustomersOverview(overviewQuery)
       .then((payload) => {
         setOverview(normalizeOverview(payload));
         setOverviewError("");
@@ -461,6 +483,14 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
         setLoadingOverview(false);
       });
 
+    void nextOverviewRequest;
+  }, [isActive, overviewQuery]);
+
+  useEffect(() => {
+    if (!isActive) {
+      return;
+    }
+    setLoadingGeo(true);
     const startedAt = performance.now();
     setGeoStatus((current) => ({
       ...current,
@@ -469,7 +499,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
       log: logGeoEvent("Start: /api/customers/locations", current.log),
     }));
 
-    const nextGeoRequest = fetchCustomerLocations(query)
+    const nextGeoRequest = fetchCustomerLocations(geoQuery)
       .then((payload) => {
         const normalized = normalizeGeo(payload);
         setGeo(normalized);
@@ -500,12 +530,8 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
         setLoadingGeo(false);
       });
 
-    setLoadingOverview(true);
-    setLoadingGeo(true);
-
-    void nextOverviewRequest;
     void nextGeoRequest;
-  }, [isActive, query]);
+  }, [geoQuery, isActive]);
 
   useEffect(() => {
     if (refreshRequestToken === 0 || lastRefreshRequestTokenRef.current === refreshRequestToken) {
@@ -518,7 +544,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
 
     setLoadingOverview(true);
     setLoadingGeo(true);
-    fetchCustomersOverview(query)
+    fetchCustomersOverview(overviewQuery)
       .then((payload) => {
         setOverview(normalizeOverview(payload));
         setOverviewError("");
@@ -538,7 +564,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
       text: "Kundenorte werden aktualisiert...",
       log: logGeoEvent("Kundenorte werden aktualisiert...", current.log),
     }));
-    fetchCustomerLocations({ ...query, refresh: true })
+    fetchCustomerLocations({ ...geoQuery, refresh: true })
       .then((payload) => {
         const normalized = normalizeGeo(payload);
         setGeo(normalized);
@@ -564,7 +590,7 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
       .finally(() => {
         setLoadingGeo(false);
       });
-  }, [isActive, query, refreshRequestToken]);
+  }, [geoQuery, isActive, overviewQuery, refreshRequestToken]);
 
   useEffect(() => {
     applyGlobeThemeColors(globeRef.current);
@@ -597,6 +623,19 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
       leafletLayerRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (isActive) {
+      return;
+    }
+    globeAtlasAbortRef.current?.abort();
+    globeAtlasAbortRef.current = null;
+    destroyCustomerGlobe(globeRef.current);
+    globeRef.current = null;
+    globeWorldFeaturesRef.current = null;
+    globeWorldLoadPromiseRef.current = null;
+    setGeoModeState("map");
+  }, [isActive]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -999,10 +1038,10 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
             className={`customer-geo-mode-btn${geoMode === "globe" ? " active" : ""}`}
             type="button"
             data-customer-geo-mode="globe"
-            disabled={!globeRuntimeReady || Boolean(globeUnavailableReason)}
-            title={!globeRuntimeReady ? "Hex-Globus wird geladen..." : globeUnavailableReason || undefined}
+            disabled={Boolean(globeUnavailableReason)}
+            title={globeUnavailableReason || (!globeRuntimeReady ? "Hex-Globus laden" : undefined)}
             onClick={() => {
-              if (globeRuntimeReady && !globeUnavailableReason) {
+              if (!globeUnavailableReason) {
                 setGeoModeState("globe");
               }
             }}
@@ -1033,7 +1072,11 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
     <section className="card table-card" id="customersReactBottom" style={{ marginTop: 12 }}>
       <div className="table-head">
         <h2 className="table-title">Kundenliste</h2>
-        <div className="table-meta">{loadingOverview ? "..." : `${NUMBER_FORMATTER.format(overview.total)} Zeilen`}</div>
+        <div id="customersMeta" className="table-meta">
+          {loadingOverview ? "..." : Number(overview.total || 0) > 0
+            ? `${NUMBER_FORMATTER.format(pageStart)}-${NUMBER_FORMATTER.format(pageEnd)} / ${NUMBER_FORMATTER.format(overview.total)} Zeilen`
+            : "0 Zeilen"}
+        </div>
       </div>
       <div className="table-wrap">
         <table>
@@ -1123,6 +1166,37 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
       {overviewError ? (
         <div className="table-meta" style={{ color: "var(--danger, #c44)", marginTop: 10 }}>
           Kunden konnten nicht geladen werden: {overviewError}
+        </div>
+      ) : null}
+      {!loadingOverview && totalPages > 1 ? (
+        <div className="orders-pagination-row">
+          <div className="table-meta">
+            {`Seite ${NUMBER_FORMATTER.format(currentPage)} von ${NUMBER_FORMATTER.format(totalPages)}`}
+          </div>
+          <div className="orders-pagination-actions">
+            <button
+              id="customersPrevPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={pageIndex <= 0}
+              onClick={() => {
+                setPageIndex((current) => Math.max(0, current - 1));
+              }}
+            >
+              Vorherige
+            </button>
+            <button
+              id="customersNextPageBtn"
+              className="btn-inline ghost"
+              type="button"
+              disabled={pageIndex >= totalPages - 1}
+              onClick={() => {
+                setPageIndex((current) => Math.min(totalPages - 1, current + 1));
+              }}
+            >
+              Naechste
+            </button>
+          </div>
         </div>
       ) : null}
     </section>

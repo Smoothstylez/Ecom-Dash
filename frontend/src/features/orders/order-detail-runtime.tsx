@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useDashboardRuntime } from "@/app/dashboard-runtime";
+import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { fetchOrderDetail, type OrderDetail } from "./api";
 import { OrderDetailContent } from "./order-detail-content";
 
@@ -35,7 +36,7 @@ function defaultState(): RuntimeState {
 }
 
 async function resolveOrderId(marketplace: string, externalOrderId: string) {
-  const response = await fetch(`/api/orders?marketplace=${encodeURIComponent(marketplace)}&q=${encodeURIComponent(externalOrderId)}&limit=50`, {
+  const response = await fetch(buildDashboardApiUrl(`/api/orders?marketplace=${encodeURIComponent(marketplace)}&q=${encodeURIComponent(externalOrderId)}&limit=50`), {
     headers: {
       Accept: "application/json",
     },
