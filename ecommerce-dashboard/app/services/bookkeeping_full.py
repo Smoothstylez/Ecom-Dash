@@ -17,6 +17,7 @@ TRANSACTION_TYPES = {
     "SALE",
     "COGS",
     "FEE",
+    "SHIPPING",
     "SUBSCRIPTION",
     "EXPENSE",
     "REFUND",
@@ -31,7 +32,7 @@ BOOKING_CLASSES = {"automatic", "monthly", "single"}
 MONTHLY_INVOICE_STATUSES = {"draft", "matched", "mismatch"}
 TRANSACTION_CATEGORY_TYPES = {
     "sale": {"SALE"},
-    "fee": {"FEE"},
+    "fee": {"FEE", "SHIPPING"},
     "cogs": {"COGS"},
     "invoice": {"EXPENSE"},
     "subscription": {"SUBSCRIPTION"},

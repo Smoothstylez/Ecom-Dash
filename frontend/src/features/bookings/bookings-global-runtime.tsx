@@ -89,6 +89,7 @@ const BOOKING_TX_CATEGORY_META = {
 const BOOKING_TX_TYPE_TO_CATEGORY: Record<string, keyof typeof BOOKING_TX_CATEGORY_META> = {
   SALE: "sale",
   FEE: "fee",
+  SHIPPING: "fee",
   COGS: "cogs",
   EXPENSE: "invoice",
   SUBSCRIPTION: "subscription",
@@ -97,7 +98,7 @@ const BOOKING_TX_TYPE_TO_CATEGORY: Record<string, keyof typeof BOOKING_TX_CATEGO
   ADJUSTMENT: "other",
 };
 
-const BOOKING_TX_TYPE_OPTIONS = ["SALE", "COGS", "FEE", "SUBSCRIPTION", "EXPENSE", "REFUND", "PAYOUT", "ADJUSTMENT"];
+const BOOKING_TX_TYPE_OPTIONS = ["SALE", "COGS", "FEE", "SHIPPING", "SUBSCRIPTION", "EXPENSE", "REFUND", "PAYOUT", "ADJUSTMENT"];
 const BOOKING_TX_DIRECTION_OPTIONS = ["IN", "OUT"];
 const BOOKING_TX_STATUS_OPTIONS = ["pending", "confirmed", "reconciled"];
 
@@ -131,6 +132,7 @@ function setStatusMessage(message: string, level: StatusLevel = "info") {
   if (statusBox instanceof HTMLElement) {
     statusBox.className = `status ${className}`;
     statusBox.textContent = message;
+    statusBox.style.display = "";
   }
 }
 

@@ -131,6 +131,7 @@ const BOOKING_TX_CATEGORY_META = {
 const BOOKING_TX_TYPE_TO_CATEGORY: Record<string, keyof typeof BOOKING_TX_CATEGORY_META> = {
   SALE: "sale",
   FEE: "fee",
+  SHIPPING: "fee",
   COGS: "cogs",
   EXPENSE: "invoice",
   SUBSCRIPTION: "subscription",
@@ -139,7 +140,7 @@ const BOOKING_TX_TYPE_TO_CATEGORY: Record<string, keyof typeof BOOKING_TX_CATEGO
   ADJUSTMENT: "other",
 };
 
-const BOOKING_TX_TYPE_OPTIONS = ["SALE", "COGS", "FEE", "SUBSCRIPTION", "EXPENSE", "REFUND", "PAYOUT", "ADJUSTMENT"];
+const BOOKING_TX_TYPE_OPTIONS = ["SALE", "COGS", "FEE", "SHIPPING", "SUBSCRIPTION", "EXPENSE", "REFUND", "PAYOUT", "ADJUSTMENT"];
 const BOOKING_TX_DIRECTION_OPTIONS = ["IN", "OUT"];
 const BOOKING_TX_STATUS_OPTIONS = ["pending", "confirmed", "reconciled"];
 
@@ -249,7 +250,12 @@ function setStatusMessage(message: string, level: StatusLevel = "info") {
   if (statusBox instanceof HTMLElement) {
     statusBox.className = `status ${className}`;
     statusBox.textContent = message;
+    statusBox.style.display = "";
   }
+}
+
+function todayDateInputValue() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function toIsoFromLocalInput(value: string) {
@@ -1323,12 +1329,15 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       const directionInput = panelElement.querySelector("#createBookingDirection");
       const amountInput = panelElement.querySelector("#createBookingAmount");
       const providerInput = panelElement.querySelector("#createBookingProvider");
+      const counterpartyInput = panelElement.querySelector("#createBookingCounterparty");
       const statusInput = panelElement.querySelector("#createBookingStatus");
       const referenceInput = panelElement.querySelector("#createBookingReference");
+      const categoryInput = panelElement.querySelector("#createBookingCategory");
       const orderInput = panelElement.querySelector("#createBookingOrder");
       const accountInput = panelElement.querySelector("#createBookingAccount");
       const templateInput = panelElement.querySelector("#createBookingTemplate");
       const notesInput = panelElement.querySelector("#createBookingNotes");
+      const documentInput = panelElement.querySelector("#createBookingDocumentFile");
 
       const dateIso = dateInput instanceof HTMLInputElement ? toIsoFromLocalInput(dateInput.value) : "";
       const amountCents = amountInput instanceof HTMLInputElement ? parseEuroToCents(amountInput.value) : null;
@@ -1347,13 +1356,15 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         return;
       }
 
-      void createBookingTransaction({
+      const createPayload = {
         date: dateIso,
         type: typeInput instanceof HTMLSelectElement ? typeInput.value : "SALE",
         direction: directionInput instanceof HTMLSelectElement ? directionInput.value : "IN",
         amount_gross: amountCents,
         currency: "EUR",
         provider,
+        counterparty_name: counterpartyInput instanceof HTMLInputElement ? String(counterpartyInput.value || "").trim() || null : null,
+        category: categoryInput instanceof HTMLInputElement ? String(categoryInput.value || "").trim() || null : null,
         status: statusInput instanceof HTMLSelectElement ? statusInput.value : "confirmed",
         reference: referenceInput instanceof HTMLInputElement ? String(referenceInput.value || "").trim() || null : null,
         notes: notesInput instanceof HTMLInputElement ? String(notesInput.value || "").trim() || null : null,
@@ -1362,13 +1373,28 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         template_id: templateInput instanceof HTMLSelectElement ? templateInput.value || null : null,
         source: "manual",
         booking_class: "single",
-      })
-        .then(() => {
+      };
+      const file = documentInput instanceof HTMLInputElement ? documentInput.files?.[0] || null : null;
+
+      void createBookingTransaction(createPayload)
+        .then(async (result) => {
+          const transactionId = String(result.transaction?.id || "").trim();
+          if (file && transactionId) {
+            const form = new FormData();
+            form.append("file", file);
+            form.append("transaction_id", transactionId);
+            await uploadBookingDocument(form);
+          }
+          if (dateInput instanceof HTMLInputElement) dateInput.value = todayDateInputValue();
           if (amountInput instanceof HTMLInputElement) amountInput.value = "";
+          if (providerInput instanceof HTMLInputElement) providerInput.value = "";
+          if (counterpartyInput instanceof HTMLInputElement) counterpartyInput.value = "";
           if (referenceInput instanceof HTMLInputElement) referenceInput.value = "";
+          if (categoryInput instanceof HTMLInputElement) categoryInput.value = "";
           if (notesInput instanceof HTMLInputElement) notesInput.value = "";
+          if (documentInput instanceof HTMLInputElement) documentInput.value = "";
           requestRefresh();
-          setStatusMessage("Transaktion angelegt.", "ok");
+          setStatusMessage(file ? "Transaktion mit Beleg angelegt." : "Transaktion angelegt.", "ok");
         })
         .catch((error: Error) => {
           setStatusMessage(`Transaktion konnte nicht angelegt werden: ${error.message}`, "error");
@@ -1881,6 +1907,16 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       roots.accounts?.removeEventListener("change", handleAccountsChange);
     };
   }, [bookingsDetailsApi, orderDetailsApi, panelElement, previewModalApi, roots.accounts, roots.documents, roots.monthlyInvoices, roots.orders, roots.templates, roots.transactions]);
+
+  useEffect(() => {
+    const dateInput = panelElement.querySelector("#createBookingDate");
+    if (!(dateInput instanceof HTMLInputElement)) {
+      return;
+    }
+    if (!dateInput.value) {
+      dateInput.value = todayDateInputValue();
+    }
+  }, [panelElement, bookingClass, bookingsSubtab, openToolPanelId]);
 
   const accountOptions = useMemo<OptionItem[]>(() => data.bookingAccounts, [data.bookingAccounts]);
   const bookingLegendContent = useMemo(() => {

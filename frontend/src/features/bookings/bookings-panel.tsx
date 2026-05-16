@@ -48,6 +48,7 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
                   <option value="SALE">SALE</option>
                   <option value="COGS">COGS</option>
                   <option value="FEE">FEE</option>
+                  <option value="SHIPPING">SHIPPING</option>
                   <option value="SUBSCRIPTION">SUBSCRIPTION</option>
                   <option value="EXPENSE">EXPENSE</option>
                   <option value="REFUND">REFUND</option>
@@ -71,6 +72,10 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
                 <input id="createBookingProvider" type="text" placeholder="shopify" />
               </div>
               <div className="control">
+                <label htmlFor="createBookingCounterparty">Gegenpartei</label>
+                <input id="createBookingCounterparty" type="text" placeholder="Optional" />
+              </div>
+              <div className="control">
                 <label htmlFor="createBookingStatus">Status</label>
                 <select id="createBookingStatus" defaultValue="confirmed">
                   <option value="pending">pending</option>
@@ -81,6 +86,10 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
               <div className="control">
                 <label htmlFor="createBookingReference">Referenz</label>
                 <input id="createBookingReference" type="text" placeholder="Order-ID / Beleg-Nr." />
+              </div>
+              <div className="control">
+                <label htmlFor="createBookingCategory">Kategorie</label>
+                <input id="createBookingCategory" type="text" placeholder="Optional" />
               </div>
               <div className="control">
                 <label htmlFor="createBookingOrder">Order-Link (optional)</label>
@@ -97,6 +106,10 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
               <div className="control" style={{ gridColumn: "1 / -1" }}>
                 <label htmlFor="createBookingNotes">Notiz</label>
                 <input id="createBookingNotes" type="text" placeholder="Optional" />
+              </div>
+              <div className="control" style={{ gridColumn: "1 / -1" }}>
+                <label htmlFor="createBookingDocumentFile">Beleg (optional)</label>
+                <input id="createBookingDocumentFile" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.csv,.zip,.doc,.docx" />
               </div>
             </div>
             <div className="bookings-form-actions">
@@ -177,6 +190,7 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
                   <option value="SUBSCRIPTION">SUBSCRIPTION</option>
                   <option value="EXPENSE">EXPENSE</option>
                   <option value="FEE">FEE</option>
+                  <option value="SHIPPING">SHIPPING</option>
                   <option value="COGS">COGS</option>
                   <option value="SALE">SALE</option>
                 </select>

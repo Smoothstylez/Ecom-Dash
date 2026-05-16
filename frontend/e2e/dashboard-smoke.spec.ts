@@ -44,7 +44,7 @@ async function stubBookingsBootstrap(page: Page, options: StubBookingsBootstrapO
           total: transactions.length,
           category_counts: {
             sale: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "SALE").length,
-            fee: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "FEE").length,
+            fee: transactions.filter((transaction) => ["FEE", "SHIPPING"].includes(String(transaction.type || "").toUpperCase())).length,
             cogs: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "COGS").length,
             invoice: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "EXPENSE").length,
             subscription: transactions.filter((transaction) => String(transaction.type || "").toUpperCase() === "SUBSCRIPTION").length,
@@ -1834,7 +1834,7 @@ test.describe("dashboard smoke", () => {
     const allTransactions = Array.from({ length: 220 }, (_, index) => ({
       id: `tx-${index + 1}`,
       date: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T10:00:00Z`,
-      type: index % 3 === 0 ? "SALE" : index % 3 === 1 ? "FEE" : "COGS",
+      type: index % 4 === 0 ? "SALE" : index % 4 === 1 ? "FEE" : index % 4 === 2 ? "SHIPPING" : "COGS",
       provider: index % 2 === 0 ? "shopify" : "paypal",
       direction: index % 3 === 1 ? "OUT" : "IN",
       amount_gross: 1000 + index,
@@ -1855,7 +1855,7 @@ test.describe("dashboard smoke", () => {
         filtered = filtered.filter((item) => item.type === "SALE");
       }
       if (category === "fee") {
-        filtered = filtered.filter((item) => item.type === "FEE");
+        filtered = filtered.filter((item) => item.type === "FEE" || item.type === "SHIPPING");
       }
       if (category === "cogs") {
         filtered = filtered.filter((item) => item.type === "COGS");
@@ -1863,7 +1863,7 @@ test.describe("dashboard smoke", () => {
 
       const categoryCounts = {
         sale: allTransactions.filter((item) => item.type === "SALE").length,
-        fee: allTransactions.filter((item) => item.type === "FEE").length,
+        fee: allTransactions.filter((item) => item.type === "FEE" || item.type === "SHIPPING").length,
         cogs: allTransactions.filter((item) => item.type === "COGS").length,
         invoice: 0,
         subscription: 0,
@@ -1917,7 +1917,7 @@ test.describe("dashboard smoke", () => {
     await expect(page.locator("#bookingsTransactionsReactRoot")).toContainText("REF-220");
 
     await page.locator("#bookingTxLegend .tx-legend-item[data-filter-category='sale']").click();
-    await expect(page.locator("#bookingsTransactionsMeta")).toContainText("1-74 / 74 Zeilen");
+    await expect(page.locator("#bookingsTransactionsMeta")).toContainText("1-55 / 55 Zeilen");
     await expect(page.locator("#bookingsPrevPageBtn")).toHaveCount(0);
     await expect(page.locator("#bookingsNextPageBtn")).toHaveCount(0);
 
@@ -2375,6 +2375,7 @@ test.describe("dashboard smoke", () => {
     let created = false;
     let transactionFetchCount = 0;
     let createPayload: Record<string, unknown> | null = null;
+    let uploadSeen = false;
 
     await page.route("**/api/bookings/transactions", async (route) => {
       const request = route.request();
@@ -2403,7 +2404,7 @@ test.describe("dashboard smoke", () => {
                 {
                   id: "tx-new",
                   date: "2026-02-03T00:00:00Z",
-                  type: "SALE",
+                  type: "SHIPPING",
                   provider: "shopify",
                   direction: "IN",
                   amount_gross: 12345,
@@ -2415,10 +2416,19 @@ test.describe("dashboard smoke", () => {
               ]
             : [],
           total: created ? 1 : 0,
-          category_counts: created ? { sale: 1 } : {},
+          category_counts: created ? { fee: 1 } : {},
           limit: 150,
           offset: 0,
         }),
+      });
+    });
+
+    await page.route("**/api/bookings/documents/upload", async (route) => {
+      uploadSeen = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ document: { id: "doc-new" } }),
       });
     });
 
@@ -2451,17 +2461,28 @@ test.describe("dashboard smoke", () => {
     await page.locator("#bookingsNewBtn").click();
 
     await page.fill("#createBookingDate", "2026-02-03");
+    await page.selectOption("#createBookingType", "SHIPPING");
     await page.fill("#createBookingAmount", "123,45");
     await page.fill("#createBookingProvider", "shopify");
+    await page.fill("#createBookingCounterparty", "DHL");
     await page.fill("#createBookingReference", "AUTO-1");
+    await page.fill("#createBookingCategory", "manual-test");
     await page.fill("#createBookingNotes", "created via test");
+    await page.setInputFiles("#createBookingDocumentFile", {
+      name: "invoice.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4 create booking test"),
+    });
     await page.click("#createBookingTxBtn");
 
     await expect.poll(() => created).toBe(true);
+    await expect.poll(() => uploadSeen).toBe(true);
     expect(createPayload).toMatchObject({
-      type: "SALE",
+      type: "SHIPPING",
       direction: "IN",
       provider: "shopify",
+      counterparty_name: "DHL",
+      category: "manual-test",
       reference: "AUTO-1",
       notes: "created via test",
       booking_class: "single",

@@ -407,6 +407,7 @@ class BookkeepingSyncTests(unittest.TestCase):
             for tx_id, tx_date, tx_type, provider, reference, notes, booking_class in (
                 ("tx-sale-1", "2026-02-03T10:00:00Z", "SALE", "shopify", "SALE-1", "alpha note", "single"),
                 ("tx-fee-1", "2026-02-02T10:00:00Z", "FEE", "paypal", "FEE-1", "fee note", "automatic"),
+                ("tx-shipping-1", "2026-02-02T11:00:00Z", "SHIPPING", "dhl", "SHIP-1", "shipping note", "single"),
                 ("tx-sale-2", "2026-02-01T10:00:00Z", "SALE", "shopify", "SALE-2", "beta note", "single"),
             ):
                 connection.execute(
@@ -452,9 +453,18 @@ class BookkeepingSyncTests(unittest.TestCase):
         self.assertEqual(payload["limit"], 1)
         self.assertEqual(payload["offset"], 1)
         self.assertEqual(payload["category_counts"]["sale"], 2)
-        self.assertEqual(payload["category_counts"]["fee"], 1)
+        self.assertEqual(payload["category_counts"]["fee"], 2)
         self.assertEqual(len(payload["items"]), 1)
         self.assertEqual(payload["items"][0]["id"], "tx-sale-2")
+
+        fee_payload = bookkeeping_full.list_bookkeeping_transactions({
+            "category": "fee",
+            "limit": 10,
+            "offset": 0,
+        })
+
+        self.assertEqual(fee_payload["total"], 2)
+        self.assertEqual({item["type"] for item in fee_payload["items"]}, {"FEE", "SHIPPING"})
 
     def test_list_booking_orders_uses_paginated_order_slice(self) -> None:
         paged_orders = [

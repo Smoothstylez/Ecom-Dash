@@ -164,7 +164,7 @@ def validate_bookkeeping_transactions():
     cursor.execute("SELECT id, type, direction, amount_gross, date FROM transactions")
     transactions = cursor.fetchall()
     
-    valid_types = {'SALE', 'REFUND', 'RETURN', 'COGS', 'EXPENSE', 'FEE', 'SUBSCRIPTION', 'ADJUSTMENT'}
+    valid_types = {'SALE', 'REFUND', 'RETURN', 'COGS', 'EXPENSE', 'FEE', 'SHIPPING', 'SUBSCRIPTION', 'ADJUSTMENT'}
     valid_directions = {'IN', 'OUT'}
     
     for trans_id, trans_type, direction, amount, date in transactions:
