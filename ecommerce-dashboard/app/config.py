@@ -14,6 +14,7 @@ SCHEMA_VERSION = 1  # Increment when DB schema changes in a breaking way
 DATA_DIR = PROJECT_ROOT / "data"
 STORAGE_DIR = PROJECT_ROOT / "storage"
 INVOICES_DIR = STORAGE_DIR / "invoices"
+SALES_INVOICES_DIR = STORAGE_DIR / "sales_invoices"
 BOOKKEEPING_DOCUMENTS_DIR = STORAGE_DIR / "documents"
 SOURCES_DIR = DATA_DIR / "sources"
 SHOPIFY_SOURCE_DIR = SOURCES_DIR / "shopify"
@@ -86,6 +87,7 @@ def ensure_runtime_dirs() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     INVOICES_DIR.mkdir(parents=True, exist_ok=True)
+    SALES_INVOICES_DIR.mkdir(parents=True, exist_ok=True)
     BOOKKEEPING_DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
     SOURCES_DIR.mkdir(parents=True, exist_ok=True)
     SHOPIFY_SOURCE_DIR.mkdir(parents=True, exist_ok=True)

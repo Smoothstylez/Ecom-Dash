@@ -723,6 +723,52 @@ class BookkeepingSyncTests(unittest.TestCase):
         finally:
             app_db.COMBINED_DB_PATH = original_combined_db
 
+    def test_replace_aliexpress_order_mappings_persists_multiple_rows(self) -> None:
+        combined_db_path = Path(self.temp_dir.name) / "combined.sqlite3"
+        original_combined_db = app_db.COMBINED_DB_PATH
+        app_db.COMBINED_DB_PATH = combined_db_path
+
+        try:
+            app_db.init_combined_db()
+            saved = app_db.replace_aliexpress_order_mappings(
+                marketplace="shopify",
+                order_id="shopify-order-1",
+                mappings=[
+                    {
+                        "aliexpress_order_id": "C:3073240755170418",
+                        "match_status": "matched",
+                        "match_confidence": 0.97,
+                        "match_method": "address+date+product",
+                        "source": "manual",
+                    },
+                    {
+                        "aliexpress_order_id": "C:3073240755180418",
+                        "match_status": "candidate",
+                        "match_confidence": 0.61,
+                        "match_method": "name+date",
+                        "source": "auto",
+                        "note": "Possible reorder",
+                    },
+                ],
+            )
+
+            self.assertEqual(len(saved), 2)
+            self.assertEqual(saved[0]["aliexpress_account_id"], "C")
+            self.assertEqual(saved[0]["aliexpress_account_order_id"], "3073240755170418")
+
+            with app_db.connect_combined_db() as connection:
+                rows = connection.execute(
+                    "SELECT marketplace, order_id, aliexpress_order_id, match_status, source FROM aliexpress_order_mappings ORDER BY aliexpress_order_id ASC"
+                ).fetchall()
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0]["marketplace"], "shopify")
+            self.assertEqual(rows[0]["order_id"], "shopify-order-1")
+            self.assertEqual(rows[0]["source"], "manual")
+            self.assertEqual(rows[1]["match_status"], "candidate")
+        finally:
+            app_db.COMBINED_DB_PATH = original_combined_db
+
 
 if __name__ == "__main__":
     unittest.main()

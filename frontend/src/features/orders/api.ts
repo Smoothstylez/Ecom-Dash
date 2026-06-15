@@ -1,4 +1,4 @@
-import { withAdminHeaders } from "@/shared/api/admin-auth";
+import { fetchJson } from "@/shared/api/client";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type InvoiceDocument = {
@@ -133,29 +133,14 @@ async function readErrorMessage(response: Response) {
   return `Orders request failed: ${response.status}`;
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, withAdminHeaders({
-    ...init,
-    headers: {
-      Accept: "application/json",
-      ...(init?.headers || {}),
-    },
-  }));
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-
-  return (await response.json()) as T;
+export function fetchOrders(query: OrdersQuery, signal?: AbortSignal): Promise<OrdersResponse> {
+  return fetchJson<OrdersResponse>(buildOrdersUrl(query), { signal });
 }
 
-export function fetchOrders(query: OrdersQuery): Promise<OrdersResponse> {
-  return fetchJson<OrdersResponse>(buildOrdersUrl(query));
-}
-
-export function fetchOrderDetail(marketplace: string, orderId: string): Promise<OrderDetail> {
+export function fetchOrderDetail(marketplace: string, orderId: string, signal?: AbortSignal): Promise<OrderDetail> {
   return fetchJson<OrderDetail>(
     buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}`),
+    { signal },
   );
 }
 

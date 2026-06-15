@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from html import escape
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -28,6 +29,7 @@ from app.routers.customers import router as customers_router
 from app.routers.ebay import router as ebay_router
 from app.routers.exports import router as exports_router
 from app.routers.google_ads import router as google_ads_router
+from app.routers.invoices import router as invoices_router
 from app.routers.orders import router as orders_router
 from app.routers.sync import router as sync_router
 from app.services.live_sync import (
@@ -47,7 +49,7 @@ WORKSPACE_DIR = BASE_DIR.parent
 _FRONTEND_DIST_CONTAINER = BASE_DIR / "frontend_dist"
 _FRONTEND_DIST_WORKSPACE = WORKSPACE_DIR / "frontend" / "dist"
 FRONTEND_DIST_DIR = (
-    _FRONTEND_DIST_CONTAINER if _FRONTEND_DIST_CONTAINER.is_dir() else _FRONTEND_DIST_WORKSPACE
+    _FRONTEND_DIST_WORKSPACE if _FRONTEND_DIST_WORKSPACE.is_dir() else _FRONTEND_DIST_CONTAINER
 )
 LOGGER = logging.getLogger("combined_dashboard")
 
@@ -135,7 +137,36 @@ app.include_router(bookings_router)
 app.include_router(ebay_router)
 app.include_router(exports_router)
 app.include_router(google_ads_router)
+app.include_router(invoices_router)
 app.include_router(sync_router)
+
+
+_timing_logger = logging.getLogger("api_timing")
+_timing_logger.setLevel(logging.INFO)
+if not _timing_logger.handlers:
+    _timing_handler = logging.StreamHandler()
+    _timing_handler.setFormatter(logging.Formatter("%(asctime)s [%(name)s] %(message)s"))
+    _timing_logger.addHandler(_timing_handler)
+    _timing_logger.propagate = False
+
+
+@app.middleware("http")
+async def timing_middleware(request: Request, call_next) -> Response:
+    start_ns = time.perf_counter_ns()
+    response: Response = await call_next(request)
+    duration_us = (time.perf_counter_ns() - start_ns) / 1000
+    content_length = response.headers.get("content-length")
+    response_size = int(content_length) if content_length and content_length.isdigit() else None
+    _timing_logger.info(
+        "method=%s path=%s query=%s status=%s duration_us=%.0f size=%s",
+        request.method,
+        request.url.path,
+        request.url.query or "",
+        response.status_code,
+        duration_us,
+        response_size if response_size is not None else "-",
+    )
+    return response
 
 
 @app.middleware("http")
@@ -212,6 +243,7 @@ def root(request: Request) -> Response:
 @app.get("/ebay", include_in_schema=False)
 @app.get("/google-ads", include_in_schema=False)
 @app.get("/customers", include_in_schema=False)
+@app.get("/invoices", include_in_schema=False)
 def dashboard_alias(request: Request) -> Response:
     return _dashboard_shell_response(request)
 

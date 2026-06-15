@@ -24,7 +24,7 @@ class AppRouteTests(unittest.TestCase):
         cls.client = TestClient(app)
 
     def test_dashboard_routes_return_html(self) -> None:
-        for path in ["/", "/analytics", "/orders", "/customers", "/bookings", "/bookings/full", "/google-ads", "/ebay"]:
+        for path in ["/", "/analytics", "/orders", "/customers", "/invoices", "/bookings", "/bookings/full", "/google-ads", "/ebay"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
 
@@ -37,6 +37,7 @@ class AppRouteTests(unittest.TestCase):
             "/app-preview/analytics": "/analytics",
             "/app-preview/orders": "/orders",
             "/app-preview/customers": "/customers",
+            "/app-preview/invoices": "/invoices",
             "/app-preview/bookings": "/bookings",
             "/app-preview/bookings/full?subtab=transactions": "/bookings/full?subtab=transactions",
             "/app-preview/google-ads": "/google-ads",

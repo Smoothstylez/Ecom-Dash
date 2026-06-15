@@ -51,6 +51,55 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertIn("items", payload)
         self.assertIn("total", payload)
 
+    def test_order_aliexpress_mappings_endpoints(self) -> None:
+        expected_mappings = [
+            {
+                "id": "map-1",
+                "marketplace": "shopify",
+                "order_id": "order-1",
+                "aliexpress_order_id": "C:3073240755170418",
+                "match_status": "matched",
+            }
+        ]
+
+        with patch(
+            "app.routers.orders.fetch_aliexpress_order_mappings_for_marketplace_order",
+            return_value=expected_mappings,
+        ) as fetch_mock:
+            response = self.client.get(
+                "/api/orders/shopify/order-1/aliexpress-mappings",
+                headers=self.admin_headers,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["mappings"], expected_mappings)
+        fetch_mock.assert_called_once_with(marketplace="shopify", order_id="order-1")
+
+        with patch(
+            "app.routers.orders.replace_aliexpress_order_mappings",
+            return_value=expected_mappings,
+        ) as replace_mock:
+            response = self.client.put(
+                "/api/orders/shopify/order-1/aliexpress-mappings",
+                headers=self.admin_headers,
+                json={
+                    "mappings": [
+                        {
+                            "aliexpress_order_id": "C:3073240755170418",
+                            "match_status": "matched",
+                            "match_confidence": 0.98,
+                            "match_method": "address+date+product",
+                            "source": "manual",
+                            "note": "Confirmed split order",
+                        }
+                    ]
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["mappings"], expected_mappings)
+        replace_mock.assert_called_once()
+
     def test_bookings_orders_endpoint_forwards_pagination_query(self) -> None:
         expected_payload = {
             "items": [
@@ -130,6 +179,52 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertIn("items", payload)
+
+    def test_invoice_profile_endpoint(self) -> None:
+        with patch("app.routers.invoices.get_seller_profile", return_value={"legal_name": "Demo Shop", "tax_mode": "small_business"}):
+            response = self.client.get("/api/invoices/profile")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["profile"]["legal_name"], "Demo Shop")
+
+    def test_invoice_draft_endpoint(self) -> None:
+        expected = {
+            "invoice": {"invoice_number_preview": "RE-2026-000001"},
+            "validation": {"blockers": [], "warnings": [], "ready": True},
+        }
+
+        with patch("app.routers.invoices.build_invoice_draft", return_value=expected) as draft_mock:
+            response = self.client.get("/api/invoices/draft", params={"marketplace": "shopify", "order_id": "order-1", "template_key": "clean"})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), expected)
+        draft_mock.assert_called_once_with("shopify", "order-1", "clean")
+
+    def test_invoice_create_endpoint_requires_admin_and_returns_invoice(self) -> None:
+        expected_invoice = {"id": "inv-1", "invoice_number": "RE-2026-000001"}
+
+        with patch("app.routers.invoices.create_invoice", return_value=expected_invoice) as create_mock:
+            response = self.client.post(
+                "/api/invoices",
+                headers=self.admin_headers,
+                json={"marketplace": "shopify", "order_id": "order-1", "template_key": "clean"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"ok": True, "invoice": expected_invoice})
+        create_mock.assert_called_once_with("shopify", "order-1", "clean")
+
+    def test_invoice_pdf_download_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "invoice.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4 test invoice")
+
+            with patch("app.routers.invoices.get_invoice_pdf_response_payload", return_value=(pdf_path, "RE-2026-000001.pdf")):
+                response = self.client.get("/api/invoices/inv-1/pdf?disposition=inline")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/pdf")
+        self.assertIn("inline", response.headers.get("content-disposition", ""))
 
     def test_sync_run_bumps_changestamp_when_data_changes(self) -> None:
         before = changestamp.get()

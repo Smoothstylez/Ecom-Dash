@@ -11,6 +11,7 @@ const routeExpectations: RouteExpectation[] = [
   { path: "/analytics", activeNavId: "tabAnalyticsBtn", activePanelId: "analyticsPanel" },
   { path: "/orders", activeNavId: "tabOrdersBtn", activePanelId: "ordersPanel" },
   { path: "/customers", activeNavId: "tabCustomersBtn", activePanelId: "customersPanel" },
+  { path: "/invoices", activeNavId: "tabInvoicesBtn", activePanelId: "invoicesPanel" },
   { path: "/bookings/full?subtab=transactions", activeNavId: "tabBookingsBtn", activePanelId: "bookingsPanel", bodyClass: "bookings-full" },
   { path: "/google-ads", activeNavId: "tabGoogleAdsBtn", activePanelId: "googleAdsPanel" },
   { path: "/ebay", activeNavId: "tabEbayBtn", activePanelId: "ebayPanel" },
@@ -137,6 +138,8 @@ test.describe("dashboard smoke", () => {
 
       if (expectation.path === "/customers") {
         await expect(page.locator("#customersPanel")).toHaveAttribute("data-react-customers-mounted", "true");
+      } else if (expectation.path === "/invoices") {
+        await expect(page.locator("#invoicesPanel")).toHaveAttribute("data-react-invoices-mounted", "true");
       } else if (expectation.path === "/google-ads") {
         await expect(page.locator("#googleAdsPanel")).toHaveAttribute("data-react-google-ads-mounted", "true");
       } else if (expectation.path === "/ebay") {
@@ -182,6 +185,195 @@ test.describe("dashboard smoke", () => {
     await expect(page.locator("#ordersBody")).toHaveAttribute("data-react-orders-mounted", "true");
 
     expect(pageErrors, "page errors on /orders React host").toEqual([]);
+  });
+
+  test("invoices route loads draft, saves profile and archives created invoice", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    let createdInvoice = false;
+    let profileSaveCount = 0;
+    let draftRequests = 0;
+    let previewRequests = 0;
+    let createRequests = 0;
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          total: 1,
+          items: [
+            {
+              marketplace: "shopify",
+              order_id: "order-1",
+              external_order_id: "TEST-ORDER-1",
+              order_date: "2026-02-03T10:00:00Z",
+              customer: "Alice Example",
+              article: "Alpha Product",
+              total_cents: 12990,
+            },
+          ],
+        }),
+      });
+    });
+
+    await page.route(/\/api\/invoices\/profile$/, async (route) => {
+      if (route.request().method() === "PUT") {
+        profileSaveCount += 1;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          profile: {
+            legal_name: "Demo Shop",
+            street: "Musterstrasse 1",
+            postcode: "10115",
+            city: "Berlin",
+            country: "DE",
+            email: "hello@example.com",
+            tax_number: "12/345/67890",
+            tax_mode: "small_business",
+            invoice_prefix: "RE",
+            default_template: "clean",
+            footer_note: "Danke fuer Ihren Einkauf.",
+            payment_note: "Bereits ueber den Marktplatz bezahlt.",
+            eu_invoicing_enabled: true,
+          },
+        }),
+      });
+    });
+
+    await page.route(/\/api\/invoices\/draft\?.*$/, async (route) => {
+      draftRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          invoice: {
+            invoice_number_preview: "RE-2026-000001",
+            invoice_date: "2026-05-31",
+            delivery_date: "2026-05-31",
+            currency: "EUR",
+            marketplace: "shopify",
+            order_id: "order-1",
+            external_order_id: "TEST-ORDER-1",
+            tax_treatment: "small_business",
+          },
+          template: { key: "clean", label: "Clean" },
+          customer: {
+            name: "Alice Example",
+            email: "alice@example.com",
+            billing_address: {
+              name: "Alice Example",
+              street: "Musterweg 9",
+              postcode: "10115",
+              city: "Berlin",
+              country: "DE",
+            },
+          },
+          items: [
+            {
+              position: 1,
+              title: "Alpha Product",
+              quantity: 1,
+              unit_price_gross_cents: 12990,
+              line_total_gross_cents: 12990,
+            },
+          ],
+          totals: {
+            gross_cents: 12990,
+            shipping_cents: 0,
+            source_tax_cents: 0,
+          },
+          validation: {
+            blockers: createdInvoice ? ["Fuer diese Bestellung existiert bereits eine Rechnung (RE-2026-000001)."] : [],
+            warnings: ["Bestellung bitte final gegenpruefen."],
+            billing_source: "billing",
+            ready: !createdInvoice,
+          },
+          existing_invoice: createdInvoice ? { id: "inv-1", invoice_number: "RE-2026-000001" } : null,
+        }),
+      });
+    });
+
+    await page.route(/\/api\/invoices\/preview\.pdf\?.*$/, async (route) => {
+      previewRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/pdf",
+        body: "%PDF-1.4 preview",
+      });
+    });
+
+    await page.route(/\/api\/invoices(?:\?.*)?$/, async (route) => {
+      if (route.request().method() === "POST") {
+        createRequests += 1;
+        createdInvoice = true;
+        await route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ok: true,
+            invoice: {
+              id: "inv-1",
+              invoice_number: "RE-2026-000001",
+              marketplace: "shopify",
+              source_order_id: "order-1",
+              source_external_order_id: "TEST-ORDER-1",
+              customer_name: "Alice Example",
+              customer_country: "DE",
+              template_key: "clean",
+              total_gross_cents: 12990,
+              invoice_date: "2026-05-31",
+            },
+          }),
+        });
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          total: createdInvoice ? 1 : 0,
+          items: createdInvoice ? [
+            {
+              id: "inv-1",
+              invoice_number: "RE-2026-000001",
+              marketplace: "shopify",
+              source_order_id: "order-1",
+              source_external_order_id: "TEST-ORDER-1",
+              customer_name: "Alice Example",
+              customer_country: "DE",
+              template_key: "clean",
+              total_gross_cents: 12990,
+              invoice_date: "2026-05-31",
+            },
+          ] : [],
+        }),
+      });
+    });
+
+    await page.goto("/invoices", { waitUntil: "networkidle" });
+
+    await expect(page.locator("#invoicesPanel")).toHaveAttribute("data-react-invoices-mounted", "true");
+    await page.locator("tr[data-invoice-order-row='true']").first().click();
+    await expect.poll(() => draftRequests).toBeGreaterThan(0);
+    await expect.poll(() => previewRequests).toBeGreaterThan(0);
+    await expect(page.locator("#invoicePreviewFrame")).toBeVisible();
+
+    await page.locator("#invoiceCreateBtn").click();
+    await expect.poll(() => createRequests).toBe(1);
+    await expect(page.locator("#invoicesPanel")).toContainText("RE-2026-000001");
+
+    await page.locator("button:has-text('Profil speichern')").click();
+    await expect.poll(() => profileSaveCount).toBe(1);
+
+    expect(pageErrors, "page errors on /invoices").toEqual([]);
   });
 
   test("orders route renders current table state and opens details for visible rows", async ({ page }) => {

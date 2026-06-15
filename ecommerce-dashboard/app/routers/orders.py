@@ -12,7 +12,9 @@ from app.config import ALLOWED_MARKETPLACES, MAX_UPLOAD_BYTES
 from app.db import (
     build_invoice_storage_path,
     create_invoice_document,
+    fetch_aliexpress_order_mappings_for_marketplace_order,
     fetch_invoice_document,
+    replace_aliexpress_order_mappings,
     resolve_invoice_path,
     sanitize_filename,
     upsert_purchase_enrichment,
@@ -31,6 +33,19 @@ class PurchaseUpdateRequest(BaseModel):
     purchase_currency: Optional[str] = Field(default="EUR")
     supplier_name: Optional[str] = Field(default=None)
     purchase_notes: Optional[str] = Field(default=None)
+
+
+class AliExpressOrderMappingItemRequest(BaseModel):
+    aliexpress_order_id: str = Field(min_length=1)
+    match_status: Optional[str] = Field(default="matched")
+    match_confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    match_method: Optional[str] = Field(default=None)
+    source: Optional[str] = Field(default="manual")
+    note: Optional[str] = Field(default=None)
+
+
+class AliExpressOrderMappingsUpdateRequest(BaseModel):
+    mappings: list[AliExpressOrderMappingItemRequest] = Field(default_factory=list)
 
 
 def _validate_marketplace(marketplace: str) -> str:
@@ -159,6 +174,47 @@ def api_update_purchase(
     )
     booking_sync = sync_combined_orders_into_bookkeeping(marketplace=market, order_id=order_id)
     return {"ok": True, "enrichment": updated, "bookkeeping_sync": booking_sync}
+
+
+@router.get("/{marketplace}/{order_id}/aliexpress-mappings", dependencies=ADMIN_ONLY)
+def api_get_aliexpress_mappings(
+    marketplace: str,
+    order_id: str,
+) -> dict[str, Any]:
+    market = _validate_marketplace(marketplace)
+    return {
+        "ok": True,
+        "marketplace": market,
+        "order_id": order_id,
+        "mappings": fetch_aliexpress_order_mappings_for_marketplace_order(
+            marketplace=market,
+            order_id=order_id,
+        ),
+    }
+
+
+@router.put("/{marketplace}/{order_id}/aliexpress-mappings", dependencies=ADMIN_ONLY)
+def api_replace_aliexpress_mappings(
+    marketplace: str,
+    order_id: str,
+    payload: AliExpressOrderMappingsUpdateRequest,
+) -> dict[str, Any]:
+    market = _validate_marketplace(marketplace)
+    try:
+        mappings = replace_aliexpress_order_mappings(
+            marketplace=market,
+            order_id=order_id,
+            mappings=[item.model_dump() for item in payload.mappings],
+            default_source="manual",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "marketplace": market,
+        "order_id": order_id,
+        "mappings": mappings,
+    }
 
 
 @router.post("/{marketplace}/{order_id}/invoice", dependencies=ADMIN_ONLY)

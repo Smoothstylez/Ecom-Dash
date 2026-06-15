@@ -20,6 +20,7 @@ from app.services.analytics import build_analytics
 from app.services.bookkeeping_full import _calculate_amount_net_cents, _calculate_vat_amount_cents
 from app.services.exports import _resolve_backup_manifest_path
 from app.services.google_ads import _parse_ads_report_csv
+from app.services.invoices import _build_fallback_pdf
 from app.services.orders import _kaufland_summary_from_row, _shopify_summary_from_row, _to_kaufland_cents
 from app.uploads import UploadTooLargeError, stream_fileobj_to_path
 
@@ -34,6 +35,14 @@ def build_sqlite_row(columns: list[str], values: list[object]) -> sqlite3.Row:
     row = connection.execute("SELECT * FROM sample").fetchone()
     assert row is not None
     return row
+
+
+def _create_stub_combined_db() -> sqlite3.Connection:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE combined_orders (id TEXT)")
+    conn.commit()
+    return conn
 
 
 class GuardedChunkStream:
@@ -65,6 +74,16 @@ class GuardedChunkStream:
 
 
 class RegressionTests(unittest.TestCase):
+    def test_invoice_fallback_pdf_builder_outputs_valid_pdf_header(self) -> None:
+        payload = _build_fallback_pdf([
+            "Rechnung",
+            "Bestellnummer: #1152",
+            "Gesamtbetrag EUR 169,90",
+        ])
+
+        self.assertTrue(payload.startswith(b"%PDF-1.4"))
+        self.assertIn(b"%%EOF", payload)
+
     def test_stream_fileobj_to_path_reads_in_chunks(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             payload = b"abcdefghij"
@@ -394,8 +413,10 @@ class RegressionTests(unittest.TestCase):
 
             from app.services import orders as orders_service
 
+            _stub_combined = _create_stub_combined_db()
             with patch.object(orders_service, "KAUFLAND_DB_PATH", db_path), \
-                 patch("app.services.orders.fetch_enrichment_map", return_value={}):
+                 patch("app.services.orders.fetch_enrichment_map", return_value={}), \
+                 patch("app.services.orders.connect_combined_db", return_value=_stub_combined):
                 list_payload = orders_service.list_orders(
                     from_date=None,
                     to_date=None,
@@ -605,9 +626,11 @@ class RegressionTests(unittest.TestCase):
 
             from app.services import orders as orders_service
 
+            _stub_combined = _create_stub_combined_db()
             with patch.object(orders_service, "SHOPIFY_DB_PATH", db_path), \
                  patch.object(orders_service, "KAUFLAND_DB_PATH", Path(temp_dir) / "missing-kaufland.sqlite3"), \
-                 patch("app.services.orders.fetch_enrichment_map", return_value={}):
+                 patch("app.services.orders.fetch_enrichment_map", return_value={}), \
+                 patch("app.services.orders.connect_combined_db", return_value=_stub_combined):
                 light_payload = orders_service.list_orders(
                     from_date=None,
                     to_date=None,
@@ -703,7 +726,8 @@ class RegressionTests(unittest.TestCase):
 
         with patch.object(orders_service, "_load_shopify_orders", return_value=shopify_rows), \
              patch.object(orders_service, "_load_kaufland_orders", return_value=kaufland_rows), \
-             patch("app.services.orders.fetch_enrichment_map", return_value={}):
+             patch("app.services.orders.fetch_enrichment_map", return_value={}), \
+             patch("app.services.orders.connect_combined_db", return_value=_create_stub_combined_db()):
             paid_payload = orders_service.list_orders(
                 from_date=None,
                 to_date=None,

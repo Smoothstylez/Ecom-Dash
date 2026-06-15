@@ -29,47 +29,49 @@ def get_ebay_orders(
     if conn is None:
         return {"items": [], "total": 0}
 
-    clauses: list[str] = []
-    params: list[Any] = []
+    try:
+        clauses: list[str] = []
+        params: list[Any] = []
 
-    if shop:
-        clauses.append("shop = ?")
-        params.append(shop)
-    if category:
-        clauses.append("category = ?")
-        params.append(category)
-    if not include_returns:
-        clauses.append("is_return = 0")
+        if shop:
+            clauses.append("shop = ?")
+            params.append(shop)
+        if category:
+            clauses.append("category = ?")
+            params.append(category)
+        if not include_returns:
+            clauses.append("is_return = 0")
 
-    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    total_row = conn.execute(
-        f"SELECT COUNT(*) AS count FROM ebay_orders {where}",
-        params,
-    ).fetchone()
-    total = int(total_row["count"]) if total_row is not None else 0
+        total_row = conn.execute(
+            f"SELECT COUNT(*) AS count FROM ebay_orders {where}",
+            params,
+        ).fetchone()
+        total = int(total_row["count"]) if total_row is not None else 0
 
-    query_params = list(params)
-    pagination_sql = ""
-    if limit is not None:
-        pagination_sql = " LIMIT ? OFFSET ?"
-        query_params.extend([max(int(limit), 1), max(int(offset), 0)])
+        query_params = list(params)
+        pagination_sql = ""
+        if limit is not None:
+            pagination_sql = " LIMIT ? OFFSET ?"
+            query_params.extend([max(int(limit), 1), max(int(offset), 0)])
 
-    rows = conn.execute(
-        f"""
-        SELECT id, shop, category, artikel, kunde_name, order_number,
-               datum, preis, gebuehren, nach_gebuehren, ali_preis,
-               provision_rate, gewinn, is_return
-        FROM ebay_orders
-        {where}
-        ORDER BY datum ASC, id ASC
-        {pagination_sql}
-        """,
-        query_params,
-    ).fetchall()
+        rows = conn.execute(
+            f"""
+            SELECT id, shop, category, artikel, kunde_name, order_number,
+                   datum, preis, gebuehren, nach_gebuehren, ali_preis,
+                   provision_rate, gewinn, is_return
+            FROM ebay_orders
+            {where}
+            ORDER BY datum ASC, id ASC
+            {pagination_sql}
+            """,
+            query_params,
+        ).fetchall()
 
-    conn.close()
-    return {"items": [dict(r) for r in rows], "total": total}
+        return {"items": [dict(r) for r in rows], "total": total}
+    finally:
+        conn.close()
 
 
 def get_ebay_summary() -> dict[str, Any]:
@@ -78,8 +80,9 @@ def get_ebay_summary() -> dict[str, Any]:
     if conn is None:
         return {"available": False}
 
-    # Overall totals (exclude returns from revenue/profit KPIs)
-    totals = conn.execute(
+    try:
+        # Overall totals (exclude returns from revenue/profit KPIs)
+        totals = conn.execute(
         """
         SELECT
             COUNT(*)                          AS total_count,
@@ -95,51 +98,51 @@ def get_ebay_summary() -> dict[str, Any]:
         """
     ).fetchone()
 
-    returns_row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM ebay_orders WHERE is_return = 1"
-    ).fetchone()
+        returns_row = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM ebay_orders WHERE is_return = 1"
+        ).fetchone()
 
-    # Per-shop breakdown
-    shop_rows = conn.execute(
-        """
-        SELECT
-            shop,
-            COUNT(*)                          AS count,
-            COALESCE(SUM(preis), 0)           AS revenue,
-            COALESCE(SUM(gebuehren), 0)       AS fees,
-            COALESCE(SUM(ali_preis), 0)       AS purchase,
-            COALESCE(SUM(gewinn), 0)          AS profit,
-            MIN(datum)                        AS first_date,
-            MAX(datum)                        AS last_date
-        FROM ebay_orders
-        WHERE is_return = 0
-        GROUP BY shop
-        ORDER BY shop
-        """
-    ).fetchall()
+        # Per-shop breakdown
+        shop_rows = conn.execute(
+            """
+            SELECT
+                shop,
+                COUNT(*)                          AS count,
+                COALESCE(SUM(preis), 0)           AS revenue,
+                COALESCE(SUM(gebuehren), 0)       AS fees,
+                COALESCE(SUM(ali_preis), 0)       AS purchase,
+                COALESCE(SUM(gewinn), 0)          AS profit,
+                MIN(datum)                        AS first_date,
+                MAX(datum)                        AS last_date
+            FROM ebay_orders
+            WHERE is_return = 0
+            GROUP BY shop
+            ORDER BY shop
+            """
+        ).fetchall()
 
-    # Top articles by revenue
-    top_articles = conn.execute(
-        """
-        SELECT
-            artikel,
-            COUNT(*)                    AS count,
-            COALESCE(SUM(preis), 0)     AS revenue,
-            COALESCE(SUM(gewinn), 0)    AS profit
-        FROM ebay_orders
-        WHERE is_return = 0
-        GROUP BY artikel
-        ORDER BY revenue DESC
-        LIMIT 15
-        """
-    ).fetchall()
+        # Top articles by revenue
+        top_articles = conn.execute(
+            """
+            SELECT
+                artikel,
+                COUNT(*)                    AS count,
+                COALESCE(SUM(preis), 0)     AS revenue,
+                COALESCE(SUM(gewinn), 0)    AS profit
+            FROM ebay_orders
+            WHERE is_return = 0
+            GROUP BY artikel
+            ORDER BY revenue DESC
+            LIMIT 15
+            """
+        ).fetchall()
 
-    # Import metadata
-    meta_row = conn.execute(
-        "SELECT * FROM ebay_import_meta WHERE id = 1"
-    ).fetchone()
-
-    conn.close()
+        # Import metadata
+        meta_row = conn.execute(
+            "SELECT * FROM ebay_import_meta WHERE id = 1"
+        ).fetchone()
+    finally:
+        conn.close()
 
     total_revenue = totals["total_revenue"] if totals else 0
     total_profit = totals["total_profit"] if totals else 0

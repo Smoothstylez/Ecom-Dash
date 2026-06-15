@@ -762,12 +762,10 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
   useEffect(() => {
     const globeView = globeViewRef.current;
     if (!(globeView instanceof HTMLElement) || geoMode !== "globe") {
-      const renderer = globeRef.current?.renderer?.();
-      renderer?.setAnimationLoop?.(null);
-      const controls = globeRef.current?.controls?.();
-      if (controls) {
-        controls.enabled = false;
-      }
+      destroyCustomerGlobe(globeRef.current);
+      globeRef.current = null;
+      globeWorldFeaturesRef.current = null;
+      globeWorldLoadPromiseRef.current = null;
       return;
     }
 

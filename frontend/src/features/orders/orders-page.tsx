@@ -191,8 +191,15 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   const [savingPurchase, setSavingPurchase] = useState<BusyState>({});
   const [uploadingInvoice, setUploadingInvoice] = useState<BusyState>({});
   const [pageIndex, setPageIndex] = useState(0);
+  const [debouncedQ, setDebouncedQ] = useState("");
   const skipNextBlurSaveRef = useRef<PendingBlurSaveState>({});
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
+  const abortRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ(shellFilters.q ?? ""), 300);
+    return () => clearTimeout(timer);
+  }, [shellFilters.q]);
 
   const activeStatusFilters = useMemo(() => Array.from(filters.status), [filters.status]);
   const activePaymentFilters = useMemo(() => Array.from(filters.payment), [filters.payment]);
@@ -208,7 +215,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
     from: shellFilters.from,
     to: shellFilters.to,
     marketplace: shellFilters.marketplace,
-    q: shellFilters.q,
+    q: debouncedQ,
     status: statusQueryValue || undefined,
     payment: activePaymentFilters,
     hideCanceled: filters.hideCanceled && !filters.returnsOnly && !activeStatusFilters.some((value) => value === "cancelled" || value === "canceled" || value === "refunded"),
@@ -218,7 +225,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
     noInvoice: filters.noInvoice,
     limit: ORDERS_PAGE_SIZE,
     offset: pageIndex * ORDERS_PAGE_SIZE,
-  }), [activePaymentFilters, activeStatusFilters, filters.hasInvoice, filters.hasPurchaseCost, filters.hideCanceled, filters.noInvoice, filters.noPurchaseCost, filters.returnsOnly, pageIndex, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to, statusQueryValue]);
+  }), [activePaymentFilters, activeStatusFilters, filters.hasInvoice, filters.hasPurchaseCost, filters.hideCanceled, filters.noInvoice, filters.noPurchaseCost, filters.returnsOnly, pageIndex, shellFilters.from, shellFilters.marketplace, debouncedQ, shellFilters.to, statusQueryValue]);
 
   const currentPage = pageIndex + 1;
   const totalPages = Math.max(1, Math.ceil(total / ORDERS_PAGE_SIZE));
@@ -231,40 +238,40 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
 
   useEffect(() => {
     setPageIndex(0);
-  }, [filters, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to]);
+  }, [filters, shellFilters.from, shellFilters.marketplace, debouncedQ, shellFilters.to]);
 
   useEffect(() => {
     if (!isActive) {
       return;
     }
-    let cancelled = false;
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+    const signal = controller.signal;
+
     setLoading(true);
 
-    fetchOrders(query)
+    fetchOrders(query, signal)
       .then((payload) => {
-        if (cancelled) {
-          return;
-        }
+        if (signal.aborted) return;
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
         applyOrdersPayload(nextItems, Number(payload.total || nextItems.length || 0));
         setError("");
       })
       .catch((nextError: Error) => {
-        if (cancelled) {
-          return;
-        }
+        if (signal.aborted || nextError.name === "AbortError") return;
         setItems([]);
         setTotal(0);
         setError(nextError.message);
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!signal.aborted) {
           setLoading(false);
         }
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
   }, [isActive, query]);
 

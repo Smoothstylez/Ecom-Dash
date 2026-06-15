@@ -569,6 +569,8 @@ export function OrderDetailContent({
   const status = text(summary.fulfillment_status || detailOrder.fulfillment_status || detailOrder.financial_status);
   const invoice = asRecord(summary.invoice);
   const invoiceUrl = buildInvoicePreviewUrl(summary);
+  const purchaseSupplier = text(summary.purchase_supplier);
+  const purchaseNotes = text(summary.purchase_notes);
   const financeRows: Array<[string, unknown]> = [
     ["Total", formatMoneyFromCents(numeric(summary.total_cents))],
     ["Fees", formatMoneyFromCents(numeric(summary.fees_cents))],
@@ -611,6 +613,17 @@ export function OrderDetailContent({
           <h3>Finanzen</h3>
           <div className="detail-kv">
             <DetailRows items={financeRows} />
+          </div>
+        </article>
+        <article className="detail-card">
+          <h3>Beschaffung</h3>
+          <div className="detail-kv">
+            <DetailRows
+              items={[
+                ["Lieferant", purchaseSupplier],
+                ["Notiz", purchaseNotes],
+              ]}
+            />
           </div>
         </article>
         <article className="detail-card">

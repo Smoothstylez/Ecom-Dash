@@ -1,4 +1,5 @@
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
+import { fetchJson } from "@/shared/api/client";
 
 export type CustomerAddress = {
   street?: string;
@@ -123,35 +124,12 @@ function buildCustomersQuery(query: CustomersQuery) {
   return params.toString();
 }
 
-async function readErrorMessage(response: Response) {
-  const payload = await response.json().catch(() => ({}));
-  const detail = payload && typeof payload === "object" ? payload.detail : "";
-  if (typeof detail === "string" && detail.trim()) {
-    return detail;
-  }
-  return `Customers request failed: ${response.status}`;
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const response = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(await readErrorMessage(response));
-  }
-
-  return (await response.json()) as T;
-}
-
-export function fetchCustomersOverview(query: CustomersQuery): Promise<CustomersOverviewResponse> {
+export function fetchCustomersOverview(query: CustomersQuery, signal?: AbortSignal): Promise<CustomersOverviewResponse> {
   const search = buildCustomersQuery(query);
-  return fetchJson<CustomersOverviewResponse>(buildDashboardApiUrl(search ? `/api/customers?${search}` : "/api/customers"));
+  return fetchJson<CustomersOverviewResponse>(buildDashboardApiUrl(search ? `/api/customers?${search}` : "/api/customers"), { signal });
 }
 
-export function fetchCustomerLocations(query: CustomersQuery): Promise<CustomerLocationsResponse> {
+export function fetchCustomerLocations(query: CustomersQuery, signal?: AbortSignal): Promise<CustomerLocationsResponse> {
   const search = buildCustomersQuery(query);
-  return fetchJson<CustomerLocationsResponse>(buildDashboardApiUrl(search ? `/api/customers/locations?${search}` : "/api/customers/locations"));
+  return fetchJson<CustomerLocationsResponse>(buildDashboardApiUrl(search ? `/api/customers/locations?${search}` : "/api/customers/locations"), { signal });
 }

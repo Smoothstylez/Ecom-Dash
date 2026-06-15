@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from app.config import ALLOWED_MARKETPLACES, KAUFLAND_DB_PATH, SHOPIFY_DB_PATH
-from app.db import fetch_enrichment_map
+from app.db import connect_combined_db, fetch_aliexpress_order_mappings, fetch_enrichment_map
 from app.services.importers.shopify_live import lookup_product_images
 
 
@@ -658,6 +658,16 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
     return merged
 
 
+def _build_marketplace_aliexpress_mapping_index() -> dict[tuple[str, str], list[dict[str, Any]]]:
+    payload: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for row in fetch_aliexpress_order_mappings():
+        key = (str(row.get("marketplace") or ""), str(row.get("order_id") or ""))
+        if not all(key):
+            continue
+        payload.setdefault(key, []).append(row)
+    return payload
+
+
 def _apply_market_filter(
     rows: list[dict[str, Any]],
     marketplace_filter: Optional[str],
@@ -713,6 +723,8 @@ def _apply_search_filter(rows: list[dict[str, Any]], query: Optional[str]) -> li
                 str(row.get("article") or ""),
                 str(row.get("payment_method") or ""),
                 str(row.get("fulfillment_status") or ""),
+                str(row.get("purchase_supplier") or ""),
+                str(row.get("purchase_notes") or ""),
             ]
         ).lower()
         if needle in haystack:
@@ -850,12 +862,229 @@ def list_orders(
     offset: int,
     include_raw_fallbacks: bool = True,
 ) -> dict[str, Any]:
+    try:
+        with connect_combined_db() as conn:
+            table_exists = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='combined_orders'"
+            ).fetchone()
+            if table_exists:
+                has_data = conn.execute("SELECT COUNT(*) FROM combined_orders").fetchone()[0]
+                if has_data and has_data > 0:
+                    return _list_orders_from_combined(
+                        from_date=from_date,
+                        to_date=to_date,
+                        marketplace=marketplace,
+                        query=query,
+                        status_filter=status_filter,
+                        payment_filters=payment_filters,
+                        hide_canceled=hide_canceled,
+                        has_purchase_cost=has_purchase_cost,
+                        no_purchase_cost=no_purchase_cost,
+                        has_invoice=has_invoice,
+                        no_invoice=no_invoice,
+                        limit=limit,
+                        offset=offset,
+                        include_raw_fallbacks=include_raw_fallbacks,
+                    )
+    except Exception:
+        pass
+
+    return _list_orders_from_sources(
+        from_date=from_date,
+        to_date=to_date,
+        marketplace=marketplace,
+        query=query,
+        status_filter=status_filter,
+        payment_filters=payment_filters,
+        hide_canceled=hide_canceled,
+        has_purchase_cost=has_purchase_cost,
+        no_purchase_cost=no_purchase_cost,
+        has_invoice=has_invoice,
+        no_invoice=no_invoice,
+        limit=limit,
+        offset=offset,
+        include_raw_fallbacks=include_raw_fallbacks,
+    )
+
+
+def _list_orders_from_combined(
+    *,
+    from_date: Optional[str],
+    to_date: Optional[str],
+    marketplace: Optional[str],
+    query: Optional[str],
+    status_filter: Optional[str] = None,
+    payment_filters: Optional[list[str]] = None,
+    hide_canceled: bool = False,
+    has_purchase_cost: bool = False,
+    no_purchase_cost: bool = False,
+    has_invoice: bool = False,
+    no_invoice: bool = False,
+    limit: int,
+    offset: int,
+    include_raw_fallbacks: bool,
+) -> dict[str, Any]:
+    where_clauses: list[str] = []
+    params: list[Any] = []
+
+    if marketplace:
+        tokens = [p.strip().lower() for p in marketplace.split(",") if p.strip()]
+        allowed = {t for t in tokens if t in ALLOWED_MARKETPLACES}
+        if allowed:
+            placeholders = ",".join("?" for _ in allowed)
+            where_clauses.append(f"marketplace IN ({placeholders})")
+            params.extend(list(allowed))
+
+    if from_date:
+        where_clauses.append("order_date >= ?")
+        params.append(from_date)
+
+    if to_date:
+        to_dt = _parse_iso(to_date)
+        if to_dt is not None:
+            to_dt = to_dt.replace(hour=23, minute=59, second=59)
+            where_clauses.append("order_date <= ?")
+            params.append(to_dt.strftime("%Y-%m-%dT%H:%M:%S"))
+        else:
+            where_clauses.append("order_date <= ?")
+            params.append(to_date)
+
+    if query:
+        needle = query.strip().lower()
+        if needle:
+            where_clauses.append(
+                "(LOWER(external_order_id) LIKE ? OR LOWER(order_id) LIKE ? "
+                "OR LOWER(customer) LIKE ? OR LOWER(article) LIKE ? "
+                "OR LOWER(payment_method) LIKE ? OR LOWER(fulfillment_status) LIKE ? "
+                "OR LOWER(COALESCE(purchase_supplier, '')) LIKE ? "
+                "OR LOWER(COALESCE(purchase_notes, '')) LIKE ?)"
+            )
+            like_val = f"%{needle}%"
+            params.extend([like_val] * 8)
+
+    if status_filter:
+        token = _normalize_status_token(status_filter)
+        if token:
+            if token == "returns":
+                cancel_keywords = [
+                    "%cancel%", "%return%", "%refund%", "%void%", "%rma%", "%revoked%",
+                ]
+                or_clauses = []
+                for kw in cancel_keywords:
+                    or_clauses.append(
+                        "(LOWER(fulfillment_status) LIKE ? OR LOWER(financial_status) LIKE ?)"
+                    )
+                    params.extend([kw, kw])
+                where_clauses.append(f"({' OR '.join(or_clauses)})")
+            else:
+                aliases = _status_filter_aliases(token)
+                or_clauses = []
+                for alias in aliases:
+                    or_clauses.append(
+                        "(LOWER(fulfillment_status) LIKE ? OR LOWER(financial_status) LIKE ?)"
+                    )
+                    params.extend([f"%{alias}%", f"%{alias}%"])
+                where_clauses.append(f"({' OR '.join(or_clauses)})")
+
+    if payment_filters:
+        selected = [str(v or "").strip() for v in payment_filters if str(v or "").strip()]
+        if selected:
+            placeholders = ",".join("?" for _ in selected)
+            where_clauses.append(f"payment_method IN ({placeholders})")
+            params.extend(selected)
+
+    explicit_cancel_status = str(status_filter or "").strip().lower() in {
+        "cancelled", "canceled", "refunded", "returns",
+    }
+
+    if hide_canceled and not explicit_cancel_status:
+        cancel_keywords = [
+            "%cancel%", "%return%", "%refund%", "%void%", "%rma%", "%revoked%",
+        ]
+        for kw in cancel_keywords:
+            where_clauses.append(
+                "(LOWER(fulfillment_status) NOT LIKE ? AND LOWER(financial_status) NOT LIKE ?)"
+            )
+            params.extend([kw, kw])
+
+    if has_purchase_cost:
+        where_clauses.append("purchase_cost_cents > 0")
+    if no_purchase_cost:
+        where_clauses.append("purchase_cost_cents <= 0")
+    if has_invoice:
+        where_clauses.append("has_invoice = 1")
+    if no_invoice:
+        where_clauses.append("has_invoice = 0")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
+
+    with connect_combined_db() as connection:
+        count_row = connection.execute(
+            f"SELECT COUNT(*) FROM combined_orders {where_sql}", params
+        ).fetchone()
+        total = count_row[0] if count_row else 0
+
+        rows = connection.execute(
+            f"SELECT * FROM combined_orders {where_sql} "
+            "ORDER BY order_date DESC, id DESC LIMIT ? OFFSET ?",
+            params + [max(limit, 0), max(offset, 0)],
+        ).fetchall()
+
+    aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        order = dict(row)
+        order_id_key = (str(order.get("marketplace") or ""), str(order.get("order_id") or ""))
+        mappings = [dict(item) for item in aliexpress_mapping_index.get(order_id_key, [])]
+        order["aliexpress_mappings"] = mappings
+        order["aliexpress_mapping_count"] = len(mappings)
+
+        invoice_payload = None
+        if order.get("invoice_document_id"):
+            invoice_payload = {
+                "document_id": order.get("invoice_document_id"),
+            }
+
+        order["invoice"] = invoice_payload
+        order["raw_json"] = order.get("raw_json") if include_raw_fallbacks else {}
+
+        for col in ("has_invoice", "invoice_document_id"):
+            order.pop(col, None)
+
+        items.append(order)
+
+    return {"total": total, "items": items}
+
+
+def _list_orders_from_sources(
+    *,
+    from_date: Optional[str],
+    to_date: Optional[str],
+    marketplace: Optional[str],
+    query: Optional[str],
+    status_filter: Optional[str] = None,
+    payment_filters: Optional[list[str]] = None,
+    hide_canceled: bool = False,
+    has_purchase_cost: bool = False,
+    no_purchase_cost: bool = False,
+    has_invoice: bool = False,
+    no_invoice: bool = False,
+    limit: int,
+    offset: int,
+    include_raw_fallbacks: bool,
+) -> dict[str, Any]:
     source_rows = [
         *_load_shopify_orders(include_raw_fallbacks=include_raw_fallbacks),
         *_load_kaufland_orders(include_raw_fallbacks=include_raw_fallbacks),
     ]
     enrichment_map = fetch_enrichment_map()
+    aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
     merged_rows = [_merge_enrichment(row, enrichment_map) for row in source_rows]
+    for row in merged_rows:
+        key = (str(row.get("marketplace") or ""), str(row.get("order_id") or ""))
+        mappings = [dict(item) for item in aliexpress_mapping_index.get(key, [])]
+        row["aliexpress_mappings"] = mappings
+        row["aliexpress_mapping_count"] = len(mappings)
 
     filtered = _apply_market_filter(merged_rows, marketplace)
     filtered = _apply_date_filter(filtered, from_date, to_date)
@@ -1153,6 +1382,10 @@ def get_order_detail(marketplace: str, order_id: str) -> Optional[dict[str, Any]
     enrichment_map = fetch_enrichment_map()
     summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else {}
     merged_summary = _merge_enrichment(summary, enrichment_map)
+    mapping_key = (market, str(merged_summary.get("order_id") or order_id))
+    aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
+    merged_summary["aliexpress_mappings"] = [dict(item) for item in aliexpress_mapping_index.get(mapping_key, [])]
+    merged_summary["aliexpress_mapping_count"] = len(merged_summary["aliexpress_mappings"])
     detail["summary"] = merged_summary
     return detail
 

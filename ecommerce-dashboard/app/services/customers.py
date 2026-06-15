@@ -792,7 +792,7 @@ def build_customer_locations_map(
         lng: Optional[float] = None
         provider = "unresolved"
 
-        if city and remote_geocode_budget > 0:
+        if city and remote_geocode_budget > 0 and force_refresh:
             geocode_attempts += 1
             geo = _remote_geocode_city(city=city, country_code=country_code)
             remote_geocode_budget -= 1

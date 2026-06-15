@@ -1,5 +1,6 @@
 import type { AnalyticsPayload, AnalyticsQuery } from "@/features/analytics/types";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
+import { fetchJson } from "@/shared/api/client";
 
 function buildAnalyticsUrl(query: AnalyticsQuery) {
   const params = new URLSearchParams();
@@ -24,16 +25,6 @@ function buildAnalyticsUrl(query: AnalyticsQuery) {
   return buildDashboardApiUrl(search ? `/api/analytics/kpis?${search}` : "/api/analytics/kpis");
 }
 
-export async function fetchAnalytics(query: AnalyticsQuery): Promise<AnalyticsPayload> {
-  const response = await fetch(buildAnalyticsUrl(query), {
-    headers: {
-      Accept: "application/json",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Analytics request failed: ${response.status}`);
-  }
-
-  return (await response.json()) as AnalyticsPayload;
+export function fetchAnalytics(query: AnalyticsQuery, signal?: AbortSignal): Promise<AnalyticsPayload> {
+  return fetchJson<AnalyticsPayload>(buildAnalyticsUrl(query), { signal });
 }
