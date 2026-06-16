@@ -51,6 +51,59 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertIn("items", payload)
         self.assertIn("total", payload)
 
+    def test_order_detail_endpoint_includes_shipment_capabilities(self) -> None:
+        detail_payload = {
+            "summary": {
+                "marketplace": "kaufland",
+                "order_id": "ORDER-1",
+                "external_order_id": "ORDER-1",
+            },
+            "units": [
+                {
+                    "id_order_unit": "unit-1",
+                    "product_title": "Alpha",
+                    "status": "need_to_be_sent",
+                }
+            ],
+        }
+
+        with patch("app.routers.orders.get_order_detail", return_value=detail_payload), \
+             patch("app.routers.orders.get_order_bookkeeping_breakdown", return_value={"db_available": False}):
+            response = self.client.get("/api/orders/kaufland/ORDER-1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("shipment_capabilities", payload)
+        self.assertTrue(payload["shipment_capabilities"]["available"])
+
+    def test_order_shipment_endpoint_calls_service(self) -> None:
+        expected = {
+            "ok": True,
+            "shipment": {"marketplace": "shopify", "carrier": "UPS", "tracking_number": "1Z001985YW99744790"},
+            "summary": {"marketplace": "shopify", "order_id": "order-1", "fulfillment_status": "fulfilled"},
+            "detail": {
+                "summary": {"marketplace": "shopify", "order_id": "order-1", "external_order_id": "#1001"},
+                "shipment_capabilities": {"available": False, "reason": "done"},
+            },
+        }
+
+        with patch("app.routers.orders.submit_order_shipment", return_value=expected) as shipment_mock, \
+             patch("app.routers.orders.get_order_bookkeeping_breakdown", return_value={"db_available": False}):
+            response = self.client.patch(
+                "/api/orders/shopify/order-1/shipment",
+                headers=self.admin_headers,
+                json={"carrier": "UPS", "tracking_number": "1Z001985YW99744790"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+        shipment_mock.assert_called_once_with(
+            "shopify",
+            "order-1",
+            carrier="UPS",
+            tracking_number="1Z001985YW99744790",
+        )
+
     def test_order_aliexpress_mappings_endpoints(self) -> None:
         expected_mappings = [
             {
@@ -182,7 +235,7 @@ class ApiSmokeTests(unittest.TestCase):
 
     def test_invoice_profile_endpoint(self) -> None:
         with patch("app.routers.invoices.get_seller_profile", return_value={"legal_name": "Demo Shop", "tax_mode": "small_business"}):
-            response = self.client.get("/api/invoices/profile")
+            response = self.client.get("/api/invoices/profile", headers=self.admin_headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["profile"]["legal_name"], "Demo Shop")
@@ -194,7 +247,7 @@ class ApiSmokeTests(unittest.TestCase):
         }
 
         with patch("app.routers.invoices.build_invoice_draft", return_value=expected) as draft_mock:
-            response = self.client.get("/api/invoices/draft", params={"marketplace": "shopify", "order_id": "order-1", "template_key": "clean"})
+            response = self.client.get("/api/invoices/draft", params={"marketplace": "shopify", "order_id": "order-1", "template_key": "clean"}, headers=self.admin_headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), expected)
@@ -220,7 +273,7 @@ class ApiSmokeTests(unittest.TestCase):
             pdf_path.write_bytes(b"%PDF-1.4 test invoice")
 
             with patch("app.routers.invoices.get_invoice_pdf_response_payload", return_value=(pdf_path, "RE-2026-000001.pdf")):
-                response = self.client.get("/api/invoices/inv-1/pdf?disposition=inline")
+                response = self.client.get("/api/invoices/inv-1/pdf?disposition=inline", headers=self.admin_headers)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "application/pdf")

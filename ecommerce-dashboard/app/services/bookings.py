@@ -688,6 +688,8 @@ def sync_combined_orders_into_bookkeeping(
         "documents_skipped": 0,
     }
 
+    expected_source_keys: set[str] = set()
+
     with _connect_bookkeeping_db() as connection:
         for source_order in filtered_orders:
             market = str(source_order.get("marketplace") or "").strip().lower()
@@ -763,6 +765,7 @@ def sync_combined_orders_into_bookkeeping(
             sale_key = f"combined:{market}:{external_order_id}:sale"
             fee_key = f"combined:{market}:{external_order_id}:fee"
             cogs_key = f"combined:{market}:{external_order_id}:cogs"
+            expected_source_keys.update({sale_key, fee_key, cogs_key})
 
             sale_action = _upsert_synced_transaction(
                 connection,
@@ -826,6 +829,18 @@ def sync_combined_orders_into_bookkeeping(
                 elif action == "deleted":
                     summary["transactions_deleted"] += 1
 
+        connection.commit()
+
+    with _connect_bookkeeping_db() as connection:
+        existing_keys = {
+            str(row["source_key"])
+            for row in connection.execute(
+                "SELECT source_key FROM transactions WHERE source_key LIKE 'combined:%'"
+            ).fetchall()
+        }
+        for stale_key in existing_keys - expected_source_keys:
+            if _delete_synced_transaction(connection, source_key=stale_key):
+                summary["transactions_deleted"] += 1
         connection.commit()
 
     return summary

@@ -2501,6 +2501,19 @@ def create_monthly_invoice(payload: Any) -> dict[str, Any]:
         if document_id is not None:
             _ensure_document_exists(connection, document_id)
 
+        overlap = connection.execute(
+            """
+            SELECT id
+            FROM monthly_invoices
+            WHERE provider = ?
+              AND NOT (period_to < ? OR period_from > ?)
+            LIMIT 1
+            """,
+            (provider, period_from, period_to),
+        ).fetchone()
+        if overlap is not None:
+            raise BookkeepingServiceError(409, "monthly invoice period overlaps an existing invoice for this provider")
+
         sum_row = connection.execute(
             """
             SELECT COALESCE(SUM(t.amount_gross), 0) AS total_cents
@@ -2652,6 +2665,20 @@ def update_monthly_invoice(invoice_id: str, payload: Any) -> dict[str, Any]:
         # Validate period_from < period_to
         if effective_from >= effective_to:
             raise BookkeepingServiceError(400, "period_from must be before period_to")
+
+        overlap = connection.execute(
+            """
+            SELECT id
+            FROM monthly_invoices
+            WHERE provider = ?
+              AND id != ?
+              AND NOT (period_to < ? OR period_from > ?)
+            LIMIT 1
+            """,
+            (effective_provider, inv_id, effective_from, effective_to),
+        ).fetchone()
+        if overlap is not None:
+            raise BookkeepingServiceError(409, "monthly invoice period overlaps an existing invoice for this provider")
         effective_amount = updates.get("invoice_amount_cents", existing["invoice_amount_cents"])
 
         # Re-reconcile

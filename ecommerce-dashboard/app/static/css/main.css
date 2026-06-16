@@ -3800,6 +3800,10 @@ tbody tr:nth-child(even) {
   padding: 10px;
 }
 
+.detail-card-wide {
+  grid-column: 1 / -1;
+}
+
 .detail-card h3 {
   font-family: var(--font-heading);
   font-size: 0.92rem;
@@ -3895,6 +3899,98 @@ tbody tr:nth-child(even) {
   height: 44px;
   object-fit: cover;
   border-radius: 4px;
+}
+
+.shipment-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.shipment-help {
+  margin: 0;
+  color: var(--th-ink-3);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.shipment-units-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.shipment-unit-pill {
+  display: inline-grid;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--th-line);
+  border-radius: 9px;
+  background: var(--th-surface);
+}
+
+.shipment-unit-pill strong {
+  font-size: 0.8rem;
+}
+
+.shipment-unit-pill span {
+  color: var(--th-ink-3);
+  font-size: 0.74rem;
+}
+
+.shipment-form-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.shipment-field {
+  display: grid;
+  gap: 5px;
+}
+
+.shipment-field span {
+  color: var(--th-ink-3);
+  font-size: 0.76rem;
+}
+
+.shipment-field select,
+.shipment-field input {
+  width: 100%;
+  min-height: 36px;
+  border-radius: 8px;
+  border: 1px solid var(--th-line);
+  background: var(--th-surface);
+  color: var(--th-ink);
+  padding: 8px 10px;
+}
+
+.shipment-field-wide {
+  min-width: 0;
+}
+
+.shipment-actions {
+  display: flex;
+  align-items: center;
+}
+
+.shipment-note {
+  padding: 9px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--th-line);
+  background: var(--th-surface);
+  color: var(--th-ink-3);
+  font-size: 0.8rem;
+}
+
+.shipment-note-error {
+  border-color: rgba(196, 68, 68, 0.35);
+  color: #b53b3b;
+}
+
+.shipment-note-success {
+  border-color: rgba(46, 125, 50, 0.35);
+  color: #2e7d32;
 }
 
 .raw-json {
@@ -4318,6 +4414,18 @@ tbody tr:nth-child(even) {
 
   .detail-grid {
     grid-template-columns: 1fr;
+  }
+
+  .shipment-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .shipment-actions {
+    justify-content: stretch;
+  }
+
+  .shipment-actions .btn-inline {
+    width: 100%;
   }
 
   .bookings-form-grid {

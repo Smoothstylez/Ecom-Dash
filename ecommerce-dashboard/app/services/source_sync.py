@@ -18,7 +18,7 @@ from app.config import (
     SHOPIFY_BOOTSTRAP_DB_PATH_FALLBACK,
     SHOPIFY_DB_PATH,
 )
-from app.db import populate_combined_orders
+from app.db import init_combined_db, populate_combined_orders
 
 
 def _utc_now() -> str:
@@ -214,11 +214,23 @@ def sync_all_sources(
     shopify = _sync_db(shopify_source, SHOPIFY_DB_PATH, force=force)
     kaufland = _sync_db(KAUFLAND_BOOTSTRAP_DB_PATH, KAUFLAND_DB_PATH, force=force)
 
-    sync_count = 0
+    combined_orders_result: dict[str, Any] = {
+        "copied": False,
+        "status": "pending",
+        "rows_written": 0,
+    }
     try:
+        init_combined_db()
         sync_count = populate_combined_orders()
-    except Exception:
-        pass
+        combined_orders_result.update({
+            "status": "rebuilt" if sync_count > 0 else "up-to-date",
+            "rows_written": sync_count,
+        })
+    except Exception as exc:
+        combined_orders_result.update({
+            "status": "error",
+            "reason": f"{type(exc).__name__}: {exc}",
+        })
 
     sync_bookkeeping = bool(include_bookkeeping_bootstrap) and _should_sync_bookkeeping_bootstrap(force=force)
     if sync_bookkeeping:
@@ -282,6 +294,7 @@ def sync_all_sources(
         "results": {
             "shopify_db": shopify,
             "kaufland_db": kaufland,
+            "combined_orders": combined_orders_result,
             "bookkeeping_db": bookkeeping,
             "bookkeeping_documents": documents,
         },

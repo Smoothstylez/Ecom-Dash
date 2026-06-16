@@ -195,6 +195,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   const skipNextBlurSaveRef = useRef<PendingBlurSaveState>({});
   const lastRefreshRequestTokenRef = useRef(refreshRequestToken);
   const abortRef = useRef<AbortController | null>(null);
+  const refreshRequestIdRef = useRef(0);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQ(shellFilters.q ?? ""), 300);
@@ -283,22 +284,38 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
       return;
     }
     lastRefreshRequestTokenRef.current = refreshRequestToken;
+    const refreshRequestId = refreshRequestIdRef.current + 1;
+    refreshRequestIdRef.current = refreshRequestId;
+    const controller = new AbortController();
+    const signal = controller.signal;
 
     setLoading(true);
-    void fetchOrders(query)
+    void fetchOrders(query, signal)
       .then((payload) => {
+        if (signal.aborted || refreshRequestId !== refreshRequestIdRef.current) {
+          return;
+        }
         const nextItems = Array.isArray(payload.items) ? payload.items : [];
         applyOrdersPayload(nextItems, Number(payload.total || nextItems.length || 0));
         setError("");
       })
       .catch((nextError: Error) => {
+        if (signal.aborted || nextError.name === "AbortError" || refreshRequestId !== refreshRequestIdRef.current) {
+          return;
+        }
         setItems([]);
         setTotal(0);
         setError(nextError.message);
       })
       .finally(() => {
-        setLoading(false);
+        if (!signal.aborted && refreshRequestId === refreshRequestIdRef.current) {
+          setLoading(false);
+        }
       });
+
+    return () => {
+      controller.abort();
+    };
   }, [isActive, query, refreshRequestToken]);
 
   useEffect(() => {
@@ -319,6 +336,33 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
     document.addEventListener("click", handleDocumentClick);
     return () => {
       document.removeEventListener("click", handleDocumentClick);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const handleShipmentUpdated = (event: Event) => {
+      const payload = event instanceof CustomEvent ? event.detail : null;
+      const summary = payload && typeof payload === "object"
+        ? payload.summary as OrderSummary | undefined
+        : undefined;
+      const marketplace = String(summary?.marketplace || "").trim();
+      const orderId = String(summary?.order_id || "").trim();
+      if (!marketplace || !orderId) {
+        return;
+      }
+      const nextKey = `${marketplace}:${orderId}`;
+      setItems((current) => current.map((order) => (
+        rowKey(order) === nextKey
+          ? { ...order, ...summary }
+          : order
+      )));
+    };
+    window.addEventListener("orders:shipment-updated", handleShipmentUpdated as EventListener);
+    return () => {
+      window.removeEventListener("orders:shipment-updated", handleShipmentUpdated as EventListener);
     };
   }, []);
 

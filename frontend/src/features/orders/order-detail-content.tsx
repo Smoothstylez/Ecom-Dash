@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from "react";
+
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
@@ -12,6 +14,12 @@ function asRecord(value: unknown): Dictionary {
 function asRecordArray(value: unknown): Dictionary[] {
   return Array.isArray(value)
     ? value.filter((entry): entry is Dictionary => Boolean(entry) && typeof entry === "object")
+    : [];
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((entry) => String(entry ?? "").trim()).filter(Boolean)
     : [];
 }
 
@@ -317,6 +325,116 @@ function SimpleTable({
   );
 }
 
+function ShipmentSection({
+  detail,
+  shipmentSubmitting,
+  shipmentError,
+  shipmentSuccess,
+  onSubmitShipment,
+}: {
+  detail: OrderDetail;
+  shipmentSubmitting: boolean;
+  shipmentError: string;
+  shipmentSuccess: string;
+  onSubmitShipment: (carrier: string, trackingNumber: string) => Promise<void> | void;
+}) {
+  const summary = detail.summary || {};
+  const capabilities = asRecord(detail.shipment_capabilities);
+  const available = Boolean(capabilities.available);
+  const marketplace = text(capabilities.marketplace || summary.marketplace, "").toLowerCase();
+  const carrierOptions = asStringArray(capabilities.carrier_options);
+  const pendingUnits = asRecordArray(capabilities.pending_units);
+  const [carrier, setCarrier] = useState("");
+  const [trackingNumber, setTrackingNumber] = useState("");
+
+  useEffect(() => {
+    setCarrier((current) => {
+      if (current && carrierOptions.includes(current)) {
+        return current;
+      }
+      return carrierOptions[0] || "";
+    });
+    setTrackingNumber("");
+  }, [detail, carrierOptions]);
+
+  const trackingRequired = useMemo(() => {
+    if (marketplace !== "kaufland") {
+      return true;
+    }
+    return carrier !== "Other" && carrier !== "Other Hauler";
+  }, [carrier, marketplace]);
+
+  const submitDisabled = shipmentSubmitting
+    || !carrier
+    || (trackingRequired && !trackingNumber.trim());
+
+  return (
+    <section className="detail-grid">
+      <article className="detail-card detail-card-wide">
+        <h3>Versand & Tracking</h3>
+        <div className="shipment-panel">
+          <p className="shipment-help">
+            {marketplace === "kaufland"
+              ? "Kaufland meldet Versand pro Order Unit. Diese Aktion uebertraegt denselben Carrier und dieselbe Trackingnummer fuer alle aktuell offenen Units dieser Bestellung."
+              : "Shopify erstellt fuer alle aktuell offenen Fulfillment Orders dieser Bestellung einen Versand mit dem ausgewaehlten Carrier und der Trackingnummer."}
+          </p>
+          {pendingUnits.length ? (
+            <div className="shipment-units-list">
+              {pendingUnits.map((unit, index) => (
+                <div key={`${text(unit.id_order_unit || unit.id, `pending-${index}`)}:${index}`} className="shipment-unit-pill">
+                  <strong>{text(unit.product_title)}</strong>
+                  <span>
+                    {marketplace === "kaufland"
+                      ? text(unit.id_order_unit)
+                      : text(unit.status)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {available ? (
+            <div className="shipment-form-grid">
+              <label className="shipment-field">
+                <span>Carrier</span>
+                <select data-shipment-carrier-select="true" value={carrier} onChange={(event) => setCarrier(event.target.value)}>
+                  {carrierOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="shipment-field shipment-field-wide">
+                <span>Trackingnummer</span>
+                <input
+                  data-shipment-tracking-input="true"
+                  type="text"
+                  value={trackingNumber}
+                  onChange={(event) => setTrackingNumber(event.target.value)}
+                  placeholder={trackingRequired ? "Trackingnummer eingeben" : "Optional fuer diesen Carrier"}
+                />
+              </label>
+              <div className="shipment-actions">
+                <button
+                  type="button"
+                  data-action="submit-shipment"
+                  className="btn-inline primary"
+                  disabled={submitDisabled}
+                  onClick={() => void onSubmitShipment(carrier, trackingNumber.trim())}
+                >
+                  {shipmentSubmitting ? "Speichert..." : "Versand bestaetigen"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="shipment-note">{text(capabilities.reason, "Diese Bestellung ist nicht versendbar.")}</div>
+          )}
+          {shipmentError ? <div className="shipment-note shipment-note-error">{shipmentError}</div> : null}
+          {shipmentSuccess ? <div className="shipment-note shipment-note-success">{shipmentSuccess}</div> : null}
+        </div>
+      </article>
+    </section>
+  );
+}
+
 function buildInvoicePreviewUrl(summary: OrderSummary) {
   const marketplace = optionalText(summary.marketplace);
   const orderId = optionalText(summary.order_id);
@@ -519,10 +637,18 @@ export function OrderDetailContent({
   detail,
   loading,
   error,
+  shipmentSubmitting,
+  shipmentError,
+  shipmentSuccess,
+  onSubmitShipment,
 }: {
   detail: OrderDetail | null;
   loading: boolean;
   error: string;
+  shipmentSubmitting: boolean;
+  shipmentError: string;
+  shipmentSuccess: string;
+  onSubmitShipment: (carrier: string, trackingNumber: string) => Promise<void> | void;
 }) {
   if (loading) {
     return <div>Lade Details...</div>;
@@ -549,7 +675,7 @@ export function OrderDetailContent({
   const fulfillments = asRecordArray(detail.fulfillments);
   const refunds = asRecordArray(detail.refunds);
   const units = asRecordArray(detail.units);
-  const isShopify = lineItems.length > 0;
+  const isShopify = String(summary.marketplace || "").trim().toLowerCase() === "shopify";
 
   const orderCode = text(
     summary.external_order_id
@@ -667,6 +793,14 @@ export function OrderDetailContent({
           </div>
         </article>
       </section>
+
+      <ShipmentSection
+        detail={detail}
+        shipmentSubmitting={shipmentSubmitting}
+        shipmentError={shipmentError}
+        shipmentSuccess={shipmentSuccess}
+        onSubmitShipment={onSubmitShipment}
+      />
 
       <BookkeepingBreakdown detail={detail} summary={summary} />
 

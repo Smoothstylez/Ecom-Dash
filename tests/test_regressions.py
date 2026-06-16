@@ -17,10 +17,12 @@ if str(PROJECT_DIR) not in sys.path:
     sys.path.insert(0, str(PROJECT_DIR))
 
 from app.services.analytics import build_analytics
+from app.services import bookkeeping_full, exports as exports_service, source_sync
 from app.services.bookkeeping_full import _calculate_amount_net_cents, _calculate_vat_amount_cents
 from app.services.exports import _resolve_backup_manifest_path
 from app.services.google_ads import _parse_ads_report_csv
-from app.services.invoices import _build_fallback_pdf
+from app.services.invoices import _build_draft_internal, _build_fallback_pdf
+from app.services.order_shipping import build_shipment_capabilities
 from app.services.orders import _kaufland_summary_from_row, _shopify_summary_from_row, _to_kaufland_cents
 from app.uploads import UploadTooLargeError, stream_fileobj_to_path
 
@@ -239,6 +241,382 @@ class RegressionTests(unittest.TestCase):
         self.assertEqual(summary["after_fees_cents"], 999)
         self.assertEqual(summary["fees_cents"], 235)
         self.assertEqual(summary["shipping_cents"], 350)
+
+    def test_kaufland_invoice_draft_uses_integer_real_values_as_cents_and_adds_shipping_once(self) -> None:
+        detail_payload = {
+            "summary": {
+                "marketplace": "kaufland",
+                "order_id": "ORDER-1",
+                "external_order_id": "ORDER-1",
+                "order_date": "2026-05-31T10:00:00Z",
+                "customer": "Alice Example",
+                "total_cents": 10000,
+                "shipping_cents": 350,
+                "currency": "EUR",
+                "fulfillment_status": "sent",
+                "financial_status": "",
+            },
+            "customer": {"name": "Alice Example", "email": "alice@example.com"},
+            "billing_address": {
+                "name": "Alice Example",
+                "street": "Musterweg 9",
+                "postcode": "10115",
+                "city": "Berlin",
+                "country": "DE",
+            },
+            "shipping_address": {
+                "name": "Alice Example",
+                "street": "Musterweg 9",
+                "postcode": "10115",
+                "city": "Berlin",
+                "country": "DE",
+            },
+            "units": [
+                {
+                    "id_order_unit": "unit-1",
+                    "product_id_product": "prod-1",
+                    "product_title": "Alpha Product",
+                    "price": 10000.0,
+                    "shipping_rate": 350.0,
+                    "vat": None,
+                    "status": "sent",
+                }
+            ],
+        }
+
+        seller_profile = {
+            "legal_name": "Demo Shop",
+            "street": "Demo Street 1",
+            "address_line2": "",
+            "postcode": "12345",
+            "city": "Berlin",
+            "country": "DE",
+            "email": "demo@example.com",
+            "phone": "",
+            "vat_id": "DE123456789",
+            "tax_number": "",
+            "tax_mode": "small_business",
+            "invoice_prefix": "RE",
+            "default_template": "clean",
+            "footer_note": "",
+            "payment_note": "",
+            "eu_invoicing_enabled": False,
+        }
+
+        combined = sqlite3.connect(":memory:")
+        combined.row_factory = sqlite3.Row
+        combined.execute("CREATE TABLE seller_profiles (id TEXT PRIMARY KEY, legal_name TEXT, street TEXT, address_line2 TEXT, postcode TEXT, city TEXT, country TEXT, email TEXT, phone TEXT, vat_id TEXT, tax_number TEXT, tax_mode TEXT, invoice_prefix TEXT, default_template TEXT, footer_note TEXT, payment_note TEXT, eu_invoicing_enabled INTEGER, created_at TEXT, updated_at TEXT)")
+        combined.execute("CREATE TABLE sales_invoices (id TEXT PRIMARY KEY, marketplace TEXT, source_order_id TEXT, source_external_order_id TEXT, invoice_number TEXT, invoice_date TEXT, delivery_date TEXT, currency TEXT, customer_name TEXT, customer_country TEXT, tax_country TEXT, tax_treatment TEXT, template_key TEXT, total_gross_cents INTEGER, seller_snapshot_json TEXT, customer_snapshot_json TEXT, totals_snapshot_json TEXT, validation_snapshot_json TEXT, notes TEXT, pdf_path TEXT, created_at TEXT, updated_at TEXT)")
+
+        try:
+            with patch("app.services.invoices.get_order_detail", return_value=detail_payload), \
+                 patch("app.services.invoices.get_seller_profile", return_value=seller_profile), \
+                 patch("app.services.invoices.connect_combined_db", return_value=combined):
+                draft = _build_draft_internal("kaufland", "ORDER-1", "clean")
+        finally:
+            combined.close()
+
+        items = draft["items"]
+        self.assertEqual(len(items), 2)
+        self.assertEqual(items[0]["title"], "Alpha Product")
+        self.assertEqual(items[0]["line_total_gross_cents"], 10000)
+        self.assertEqual(items[1]["title"], "Versand")
+        self.assertEqual(items[1]["line_total_gross_cents"], 350)
+        self.assertEqual(draft["totals"]["gross_cents"], 10350)
+        self.assertEqual(draft["totals"]["shipping_cents"], 350)
+
+    def test_kaufland_invoice_draft_aggregates_shipping_across_multiple_units_without_quantity_multiplication(self) -> None:
+        detail_payload = {
+            "summary": {
+                "marketplace": "kaufland",
+                "order_id": "ORDER-2",
+                "external_order_id": "ORDER-2",
+                "order_date": "2026-05-31T10:00:00Z",
+                "customer": "Bob Example",
+                "total_cents": 2500,
+                "shipping_cents": 500,
+                "currency": "EUR",
+                "fulfillment_status": "sent",
+                "financial_status": "",
+            },
+            "customer": {"name": "Bob Example", "email": "bob@example.com"},
+            "billing_address": {
+                "name": "Bob Example",
+                "street": "Musterweg 10",
+                "postcode": "10115",
+                "city": "Berlin",
+                "country": "DE",
+            },
+            "shipping_address": {
+                "name": "Bob Example",
+                "street": "Musterweg 10",
+                "postcode": "10115",
+                "city": "Berlin",
+                "country": "DE",
+            },
+            "units": [
+                {
+                    "id_order_unit": "unit-1",
+                    "product_id_product": "prod-1",
+                    "product_title": "Alpha",
+                    "price": 1000,
+                    "shipping_rate": 200,
+                    "vat": None,
+                    "status": "sent",
+                },
+                {
+                    "id_order_unit": "unit-2",
+                    "product_id_product": "prod-1",
+                    "product_title": "Alpha",
+                    "price": 1500,
+                    "shipping_rate": 300,
+                    "vat": None,
+                    "status": "sent",
+                },
+            ],
+        }
+
+        seller_profile = {
+            "legal_name": "Demo Shop",
+            "street": "Demo Street 1",
+            "address_line2": "",
+            "postcode": "12345",
+            "city": "Berlin",
+            "country": "DE",
+            "email": "demo@example.com",
+            "phone": "",
+            "vat_id": "DE123456789",
+            "tax_number": "",
+            "tax_mode": "small_business",
+            "invoice_prefix": "RE",
+            "default_template": "clean",
+            "footer_note": "",
+            "payment_note": "",
+            "eu_invoicing_enabled": False,
+        }
+
+        combined = sqlite3.connect(":memory:")
+        combined.row_factory = sqlite3.Row
+        combined.execute("CREATE TABLE seller_profiles (id TEXT PRIMARY KEY, legal_name TEXT, street TEXT, address_line2 TEXT, postcode TEXT, city TEXT, country TEXT, email TEXT, phone TEXT, vat_id TEXT, tax_number TEXT, tax_mode TEXT, invoice_prefix TEXT, default_template TEXT, footer_note TEXT, payment_note TEXT, eu_invoicing_enabled INTEGER, created_at TEXT, updated_at TEXT)")
+        combined.execute("CREATE TABLE sales_invoices (id TEXT PRIMARY KEY, marketplace TEXT, source_order_id TEXT, source_external_order_id TEXT, invoice_number TEXT, invoice_date TEXT, delivery_date TEXT, currency TEXT, customer_name TEXT, customer_country TEXT, tax_country TEXT, tax_treatment TEXT, template_key TEXT, total_gross_cents INTEGER, seller_snapshot_json TEXT, customer_snapshot_json TEXT, totals_snapshot_json TEXT, validation_snapshot_json TEXT, notes TEXT, pdf_path TEXT, created_at TEXT, updated_at TEXT)")
+
+        try:
+            with patch("app.services.invoices.get_order_detail", return_value=detail_payload), \
+                 patch("app.services.invoices.get_seller_profile", return_value=seller_profile), \
+                 patch("app.services.invoices.connect_combined_db", return_value=combined):
+                draft = _build_draft_internal("kaufland", "ORDER-2", "clean")
+        finally:
+            combined.close()
+
+        items = draft["items"]
+        self.assertEqual([item["line_total_gross_cents"] for item in items], [1000, 1500, 500])
+        self.assertEqual(draft["totals"]["gross_cents"], 3000)
+        self.assertEqual(draft["totals"]["shipping_cents"], 500)
+
+    def test_init_combined_db_migrates_legacy_combined_orders_columns(self) -> None:
+        from app import db as app_db
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            combined_path = Path(temp_dir) / "combined.sqlite3"
+            original_combined_path = app_db.COMBINED_DB_PATH
+            app_db.COMBINED_DB_PATH = combined_path
+            try:
+                connection = sqlite3.connect(combined_path)
+                connection.execute(
+                    """
+                    CREATE TABLE combined_orders (
+                        id TEXT PRIMARY KEY,
+                        marketplace TEXT NOT NULL,
+                        order_id TEXT NOT NULL,
+                        external_order_id TEXT NOT NULL,
+                        order_date TEXT,
+                        customer TEXT,
+                        article TEXT,
+                        line_items_count INTEGER NOT NULL DEFAULT 1,
+                        total_cents INTEGER NOT NULL DEFAULT 0,
+                        fees_cents INTEGER NOT NULL DEFAULT 0,
+                        after_fees_cents INTEGER NOT NULL DEFAULT 0,
+                        shipping_cents INTEGER NOT NULL DEFAULT 0,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        fulfillment_status TEXT,
+                        payment_method TEXT,
+                        fee_source TEXT,
+                        financial_status TEXT,
+                        raw_status TEXT,
+                        raw_json TEXT
+                    )
+                    """
+                )
+                connection.commit()
+                connection.close()
+
+                app_db.init_combined_db()
+
+                connection = sqlite3.connect(combined_path)
+                try:
+                    columns = {row[1] for row in connection.execute("PRAGMA table_info(combined_orders)").fetchall()}
+                finally:
+                    connection.close()
+            finally:
+                app_db.COMBINED_DB_PATH = original_combined_path
+
+        self.assertTrue({
+            "purchase_cost_cents",
+            "purchase_currency",
+            "purchase_supplier",
+            "purchase_notes",
+            "profit_cents",
+            "has_invoice",
+            "invoice_document_id",
+        }.issubset(columns))
+
+    def test_sync_all_sources_reports_combined_orders_errors(self) -> None:
+        with patch.object(source_sync, "_pick_shopify_bootstrap_source", return_value=Path("/missing-shopify.sqlite3")), \
+             patch.object(source_sync, "KAUFLAND_BOOTSTRAP_DB_PATH", Path("/missing-kaufland.sqlite3")), \
+             patch.object(source_sync, "populate_combined_orders", side_effect=RuntimeError("boom")):
+            summary = source_sync.sync_all_sources(force=False, include_documents=False)
+
+        self.assertEqual(summary["results"]["combined_orders"]["status"], "error")
+        self.assertIn("RuntimeError: boom", summary["results"]["combined_orders"]["reason"])
+
+    def test_create_monthly_invoice_rejects_overlapping_period_for_same_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db_path = Path(temp_dir) / "dashboard.sqlite3"
+            connection = sqlite3.connect(db_path)
+            connection.row_factory = sqlite3.Row
+            try:
+                connection.execute("PRAGMA foreign_keys = ON")
+                connection.execute(
+                    """
+                    CREATE TABLE monthly_invoices (
+                        id TEXT PRIMARY KEY,
+                        provider TEXT NOT NULL,
+                        period_from TEXT NOT NULL,
+                        period_to TEXT NOT NULL,
+                        invoice_amount_cents INTEGER NOT NULL,
+                        currency TEXT NOT NULL DEFAULT 'EUR',
+                        calculated_sum_cents INTEGER,
+                        difference_cents INTEGER,
+                        document_id TEXT,
+                        notes TEXT,
+                        status TEXT NOT NULL DEFAULT 'draft',
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TABLE monthly_invoice_transactions (
+                        invoice_id TEXT NOT NULL,
+                        transaction_id TEXT NOT NULL,
+                        PRIMARY KEY (invoice_id, transaction_id)
+                    )
+                    """
+                )
+                connection.execute(
+                    """
+                    CREATE TABLE transactions (
+                        id TEXT PRIMARY KEY,
+                        booking_class TEXT,
+                        provider TEXT,
+                        type TEXT,
+                        direction TEXT,
+                        date TEXT,
+                        amount_gross INTEGER,
+                        source TEXT
+                    )
+                    """
+                )
+                connection.execute(
+                    "INSERT INTO monthly_invoices (id, provider, period_from, period_to, invoice_amount_cents, currency, calculated_sum_cents, difference_cents, document_id, notes, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        "existing",
+                        "paypal",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-31T23:59:59Z",
+                        1000,
+                        "EUR",
+                        1000,
+                        0,
+                        None,
+                        None,
+                        "matched",
+                        "2026-01-01T00:00:00Z",
+                        "2026-01-01T00:00:00Z",
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            original_path = bookkeeping_full.BOOKKEEPING_DB_PATH
+            bookkeeping_full.BOOKKEEPING_DB_PATH = db_path
+            try:
+                with self.assertRaises(bookkeeping_full.BookkeepingServiceError) as exc:
+                    bookkeeping_full.create_monthly_invoice({
+                        "provider": "paypal",
+                        "period_from": "2026-01-15",
+                        "period_to": "2026-01-20",
+                        "invoice_amount_cents": 1000,
+                        "currency": "EUR",
+                    })
+            finally:
+                bookkeeping_full.BOOKKEEPING_DB_PATH = original_path
+
+        self.assertEqual(exc.exception.status_code, 409)
+
+    def test_full_backup_includes_sales_invoice_storage_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            combined = root / "combined.sqlite3"
+            combined.write_bytes(b"sqlite")
+            invoices_dir = root / "invoices"
+            sales_invoices_dir = root / "sales_invoices"
+            documents_dir = root / "documents"
+            invoices_dir.mkdir()
+            sales_invoices_dir.mkdir()
+            documents_dir.mkdir()
+            (sales_invoices_dir / "invoice.pdf").write_bytes(b"%PDF-1.4 sales")
+
+            originals = (
+                exports_service.COMBINED_DB_PATH,
+                exports_service.SHOPIFY_DB_PATH,
+                exports_service.KAUFLAND_DB_PATH,
+                exports_service.BOOKKEEPING_DB_PATH,
+                exports_service.EBAY_DB_PATH,
+                exports_service.INVOICES_DIR,
+                exports_service.SALES_INVOICES_DIR,
+                exports_service.BOOKKEEPING_DOCUMENTS_DIR,
+            )
+            exports_service.COMBINED_DB_PATH = combined
+            exports_service.SHOPIFY_DB_PATH = root / "shopify.sqlite3"
+            exports_service.KAUFLAND_DB_PATH = root / "kaufland.sqlite3"
+            exports_service.BOOKKEEPING_DB_PATH = root / "bookkeeping.sqlite3"
+            exports_service.EBAY_DB_PATH = root / "ebay.sqlite3"
+            exports_service.INVOICES_DIR = invoices_dir
+            exports_service.SALES_INVOICES_DIR = sales_invoices_dir
+            exports_service.BOOKKEEPING_DOCUMENTS_DIR = documents_dir
+            try:
+                archive = exports_service.create_full_backup_archive()
+                try:
+                    with ZipFile(archive.file_path, "r") as zf:
+                        names = set(zf.namelist())
+                finally:
+                    exports_service.cleanup_temp_export(archive.file_path)
+            finally:
+                (
+                    exports_service.COMBINED_DB_PATH,
+                    exports_service.SHOPIFY_DB_PATH,
+                    exports_service.KAUFLAND_DB_PATH,
+                    exports_service.BOOKKEEPING_DB_PATH,
+                    exports_service.EBAY_DB_PATH,
+                    exports_service.INVOICES_DIR,
+                    exports_service.SALES_INVOICES_DIR,
+                    exports_service.BOOKKEEPING_DOCUMENTS_DIR,
+                ) = originals
+
+        self.assertIn("storage/sales_invoices/invoice.pdf", names)
 
     def test_manual_vat_values_survive_amount_gross_only_change_without_vat_rate(self) -> None:
         existing = {
@@ -538,6 +916,37 @@ class RegressionTests(unittest.TestCase):
         assert detail_payload is not None
         self.assertEqual(detail_payload["summary"]["total_cents"], 7500)
         self.assertEqual(detail_payload["summary"]["after_fees_cents"], 7238)
+
+    def test_kaufland_shipment_capabilities_only_allow_need_to_be_sent_units(self) -> None:
+        capabilities = build_shipment_capabilities(
+            {
+                "summary": {"marketplace": "kaufland", "order_id": "ORDER-1"},
+                "units": [
+                    {"id_order_unit": "unit-1", "product_title": "Alpha", "status": "need_to_be_sent"},
+                    {"id_order_unit": "unit-2", "product_title": "Beta", "status": "sent"},
+                ],
+            }
+        )
+
+        self.assertTrue(capabilities["available"])
+        self.assertEqual(capabilities["pending_units_count"], 1)
+        self.assertEqual(capabilities["pending_units"][0]["id_order_unit"], "unit-1")
+
+    def test_shopify_shipment_capabilities_hide_already_fulfilled_orders(self) -> None:
+        capabilities = build_shipment_capabilities(
+            {
+                "summary": {
+                    "marketplace": "shopify",
+                    "order_id": "shop-1",
+                    "fulfillment_status": "fulfilled",
+                    "financial_status": "paid",
+                },
+                "line_items": [{"id": "line-1", "title": "Alpha", "fulfillment_status": "fulfilled"}],
+            }
+        )
+
+        self.assertFalse(capabilities["available"])
+        self.assertIn("versendet", str(capabilities["reason"]).lower())
 
     def test_shopify_list_orders_light_mode_does_not_require_raw_json(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

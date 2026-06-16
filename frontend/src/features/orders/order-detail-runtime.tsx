@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 
 import { useDashboardRuntime } from "@/app/dashboard-runtime";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
-import { fetchOrderDetail, type OrderDetail } from "./api";
+import { fetchOrderDetail, submitOrderShipment, type OrderDetail, type OrderSummary } from "./api";
 import { OrderDetailContent } from "./order-detail-content";
 
 type RuntimeState = {
@@ -63,15 +63,28 @@ async function resolveOrderId(marketplace: string, externalOrderId: string) {
 export function OrderDetailRuntime() {
   const { bookingsDetailsApi, detailsModalApi, previewModalApi, registerOrderDetailsApi } = useDashboardRuntime();
   const [state, setState] = useState<RuntimeState>(() => defaultState());
+  const [shipmentSubmitting, setShipmentSubmitting] = useState(false);
+  const [shipmentError, setShipmentError] = useState("");
+  const [shipmentSuccess, setShipmentSuccess] = useState("");
   const stateRef = useRef(state);
   const requestIdRef = useRef(0);
+  const bookingsDetailsApiRef = useRef(bookingsDetailsApi);
+  const detailsModalApiRef = useRef(detailsModalApi);
 
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
 
+  useEffect(() => {
+    bookingsDetailsApiRef.current = bookingsDetailsApi;
+  }, [bookingsDetailsApi]);
+
+  useEffect(() => {
+    detailsModalApiRef.current = detailsModalApi;
+  }, [detailsModalApi]);
+
   const showLegacyModal = useCallback((title: string) => {
-    const detailsModal = detailsModalApi;
+    const detailsModal = detailsModalApiRef.current;
     if (detailsModal) {
       detailsModal.open(title);
       return;
@@ -85,10 +98,10 @@ export function OrderDetailRuntime() {
       modal.classList.add("active");
       modal.setAttribute("aria-hidden", "false");
     }
-  }, [detailsModalApi]);
+  }, []);
 
   const hideLegacyModal = useCallback(() => {
-    const detailsModal = detailsModalApi;
+    const detailsModal = detailsModalApiRef.current;
     if (detailsModal) {
       detailsModal.close();
       return;
@@ -98,7 +111,7 @@ export function OrderDetailRuntime() {
       modal.classList.remove("active");
       modal.setAttribute("aria-hidden", "true");
     }
-  }, [detailsModalApi]);
+  }, []);
 
   const loadByOrderId = useCallback(async (marketplace: string, orderId: string, returnToTransactionId = "") => {
     const normalizedMarketplace = String(marketplace || "").trim().toLowerCase();
@@ -112,6 +125,9 @@ export function OrderDetailRuntime() {
     const title = `Details ${normalizedMarketplace.toUpperCase()} ${normalizedOrderId}`;
 
     showLegacyModal(title);
+    setShipmentSubmitting(false);
+    setShipmentError("");
+    setShipmentSuccess("");
     setState({
       isOpen: true,
       loading: true,
@@ -163,10 +179,42 @@ export function OrderDetailRuntime() {
     const returnToTransactionId = stateRef.current.returnToTransactionId;
     hideLegacyModal();
     setState(defaultState());
-    if (returnToTransactionId && bookingsDetailsApi) {
-      bookingsDetailsApi.openTransactionById(returnToTransactionId);
+    setShipmentSubmitting(false);
+    setShipmentError("");
+    setShipmentSuccess("");
+    if (returnToTransactionId && bookingsDetailsApiRef.current) {
+      bookingsDetailsApiRef.current.openTransactionById(returnToTransactionId);
     }
-  }, [bookingsDetailsApi, hideLegacyModal]);
+  }, [hideLegacyModal]);
+
+  const handleSubmitShipment = useCallback(async (carrier: string, trackingNumber: string) => {
+    const current = stateRef.current;
+    if (!current.marketplace || !current.orderId) {
+      return;
+    }
+
+    setShipmentSubmitting(true);
+    setShipmentError("");
+    setShipmentSuccess("");
+    try {
+      const payload = await submitOrderShipment(current.marketplace, current.orderId, carrier, trackingNumber);
+      const nextDetail = payload.detail ?? current.detail;
+      setState((previous) => ({
+        ...previous,
+        detail: nextDetail,
+        error: "",
+      }));
+      setShipmentSuccess("Versanddaten wurden gespeichert.");
+      const nextSummary = payload.summary as OrderSummary | undefined;
+      if (typeof window !== "undefined" && nextSummary) {
+        window.dispatchEvent(new CustomEvent("orders:shipment-updated", { detail: { summary: nextSummary } }));
+      }
+    } catch (error) {
+      setShipmentError(error instanceof Error ? error.message : "Versanddaten konnten nicht gespeichert werden.");
+    } finally {
+      setShipmentSubmitting(false);
+    }
+  }, []);
 
   const open = useCallback(async (marketplace: string, orderId: string, returnToTransactionId = "") => {
     await loadByOrderId(marketplace, orderId, returnToTransactionId);
@@ -291,7 +339,15 @@ export function OrderDetailRuntime() {
         bookingsDetailsApi.openTransactionById(txRow.dataset.txId);
       }}
     >
-      <OrderDetailContent detail={state.detail} loading={state.loading} error={state.error} />
+      <OrderDetailContent
+        detail={state.detail}
+        loading={state.loading}
+        error={state.error}
+        shipmentSubmitting={shipmentSubmitting}
+        shipmentError={shipmentError}
+        shipmentSuccess={shipmentSuccess}
+        onSubmitShipment={handleSubmitShipment}
+      />
     </div>,
     contentElement,
   );

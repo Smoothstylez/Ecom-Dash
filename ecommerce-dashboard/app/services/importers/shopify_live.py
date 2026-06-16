@@ -1320,7 +1320,16 @@ class ShopifyLiveClient:
             "User-Agent": "dashboard-combined/1.0",
         }
 
-    def _request(self, method: str, url: str, params: Optional[dict[str, Any]] = None) -> Any:
+    def _request(
+        self,
+        method: str,
+        url: str,
+        params: Optional[dict[str, Any]] = None,
+        *,
+        body_obj: Any = None,
+        timeout: int = 25,
+        headers: Optional[dict[str, str]] = None,
+    ) -> Any:
         requests = self._requests_module()
         max_attempts = 3
 
@@ -1330,9 +1339,10 @@ class ShopifyLiveClient:
                     response = requests.request(
                         method=method.upper(),
                         url=url,
-                        headers=self._headers(),
+                        headers={**self._headers(), **(headers or {})},
                         params=params,
-                        timeout=25,
+                        json=body_obj,
+                        timeout=timeout,
                         verify=self.verify_ssl,
                     )
                 except requests.exceptions.Timeout as exc:
@@ -1386,7 +1396,9 @@ class ShopifyLiveClient:
                     method,
                     url,
                     params=params,
-                    timeout=25,
+                    body_obj=body_obj,
+                    timeout=timeout,
+                    headers={**self._headers(), **(headers or {})},
                 )
             except ShopifyLiveError as exc:
                 if exc.status_code == 401 and attempt == 1:
@@ -1446,6 +1458,39 @@ class ShopifyLiveClient:
         if not isinstance(rows, list):
             return []
         return [item for item in rows if isinstance(item, dict)]
+
+    def get_order_fulfillments(self, order_id: str) -> list[dict[str, Any]]:
+        payload, _ = self._request("GET", f"{self.base_url}/orders/{order_id}/fulfillments.json", params=None)
+        rows = payload.get("fulfillments") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            return []
+        return [item for item in rows if isinstance(item, dict)]
+
+    def get_order(self, order_id: str) -> dict[str, Any]:
+        payload, _ = self._request("GET", f"{self.base_url}/orders/{order_id}.json", params=None)
+        order = payload.get("order") if isinstance(payload, dict) else None
+        if not isinstance(order, dict):
+            raise ShopifyLiveError("Shopify order payload did not include order.", status_code=502)
+        return order
+
+    def get_order_fulfillment_orders(self, order_id: str) -> list[dict[str, Any]]:
+        payload, _ = self._request("GET", f"{self.base_url}/orders/{order_id}/fulfillment_orders.json", params=None)
+        rows = payload.get("fulfillment_orders") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            return []
+        return [item for item in rows if isinstance(item, dict)]
+
+    def create_fulfillment(self, fulfillment_payload: dict[str, Any]) -> dict[str, Any]:
+        payload, _ = self._request(
+            "POST",
+            f"{self.base_url}/fulfillments.json",
+            params=None,
+            body_obj=fulfillment_payload,
+        )
+        fulfillment = payload.get("fulfillment") if isinstance(payload, dict) else None
+        if not isinstance(fulfillment, dict):
+            raise ShopifyLiveError("Shopify fulfillment response did not include fulfillment.", status_code=502)
+        return fulfillment
 
     def get_product_image(self, product_id: str) -> Optional[str]:
         """Fetch the primary image URL for a product. Returns None if not found."""

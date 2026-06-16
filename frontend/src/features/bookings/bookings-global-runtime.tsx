@@ -402,18 +402,28 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
   const detailsRequestIdRef = useRef(0);
   const detailsStateRef = useRef(detailsState);
   const transactionReturnToInvoiceRef = useRef<Record<string, string>>({});
+  const detailsModalApiRef = useRef(detailsModalApi);
+  const orderDetailsApiRef = useRef(orderDetailsApi);
 
   useEffect(() => {
     detailsStateRef.current = detailsState;
   }, [detailsState]);
+
+  useEffect(() => {
+    detailsModalApiRef.current = detailsModalApi;
+  }, [detailsModalApi]);
+
+  useEffect(() => {
+    orderDetailsApiRef.current = orderDetailsApi;
+  }, [orderDetailsApi]);
 
   const emitBookingsRefresh = useCallback((detail?: BookingsRefreshDetail) => {
     requestBookingsRefresh(detail);
   }, [requestBookingsRefresh]);
 
   const openDetailsModal = useCallback((title: string) => {
-    if (detailsModalApi) {
-      detailsModalApi.open(title);
+    if (detailsModalApiRef.current) {
+      detailsModalApiRef.current.open(title);
       return;
     }
     const modal = document.getElementById("detailsModal");
@@ -425,11 +435,11 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       modal.classList.add("active");
       modal.setAttribute("aria-hidden", "false");
     }
-  }, [detailsModalApi]);
+  }, []);
 
   const closeDetailsModalShell = useCallback(() => {
-    if (detailsModalApi) {
-      detailsModalApi.close();
+    if (detailsModalApiRef.current) {
+      detailsModalApiRef.current.close();
       return;
     }
     const modal = document.getElementById("detailsModal");
@@ -437,7 +447,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       modal.classList.remove("active");
       modal.setAttribute("aria-hidden", "true");
     }
-  }, [detailsModalApi]);
+  }, []);
 
   const openTransactionDetailById = useCallback(async (transactionId?: string, options?: { returnToInvoiceId?: string }) => {
     const txId = String(transactionId || "").trim();
@@ -499,7 +509,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
         transaction,
         invoice: null,
       });
-      detailsModalApi?.setTitle(resolvedTitle);
+      detailsModalApiRef.current?.setTitle(resolvedTitle);
     } catch (error) {
       if (detailsRequestIdRef.current !== requestId) {
         return;
@@ -519,7 +529,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       });
       setStatusMessage(`Transaktionsdetails konnten nicht geladen werden: ${error instanceof Error ? error.message : "Unbekannter Fehler"}`, "error");
     }
-  }, [detailsModalApi, openDetailsModal]);
+  }, [openDetailsModal]);
 
   const openMonthlyInvoiceById = useCallback(async (invoiceId?: string) => {
     const id = String(invoiceId || "").trim();
@@ -569,7 +579,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
         transaction: null,
         invoice,
       });
-      detailsModalApi?.setTitle(resolvedTitle);
+      detailsModalApiRef.current?.setTitle(resolvedTitle);
     } catch (error) {
       if (detailsRequestIdRef.current !== requestId) {
         return;
@@ -589,7 +599,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       });
       setStatusMessage(`Sammelrechnung konnte nicht geladen werden: ${error instanceof Error ? error.message : "Unbekannter Fehler"}`, "error");
     }
-  }, [detailsModalApi, openDetailsModal]);
+  }, [openDetailsModal]);
 
   const closeBookingsDetails = useCallback(() => {
     detailsRequestIdRef.current += 1;
@@ -600,10 +610,10 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       void openMonthlyInvoiceById(current.returnToInvoiceId);
       return;
     }
-    if (current.mode === "booking-transaction" && orderDetailsApi?.hasPendingReturn()) {
-      orderDetailsApi.reopenPendingReturn();
+    if (current.mode === "booking-transaction" && orderDetailsApiRef.current?.hasPendingReturn()) {
+      orderDetailsApiRef.current.reopenPendingReturn();
     }
-  }, [closeDetailsModalShell, openMonthlyInvoiceById, orderDetailsApi]);
+  }, [closeDetailsModalShell, openMonthlyInvoiceById]);
 
   const requestRefresh = useCallback(() => {
     emitBookingsRefresh();
@@ -694,7 +704,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
           transactionId: resolvedId,
           transaction: updated,
         }));
-        detailsModalApi?.setTitle(nextTitle);
+        detailsModalApiRef.current?.setTitle(nextTitle);
       }
       return;
     }
@@ -780,10 +790,10 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
           invoiceId: String(updated.id || invoiceId).trim() || invoiceId,
           invoice: updated,
         }));
-        detailsModalApi?.setTitle(nextTitle);
+        detailsModalApiRef.current?.setTitle(nextTitle);
       }
     }
-  }, [detailsModalApi, requestRefresh]);
+  }, [requestRefresh]);
 
   const deleteActiveDetails = useCallback(async () => {
     const current = detailsStateRef.current;

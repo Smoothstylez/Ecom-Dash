@@ -947,9 +947,17 @@ class KauflandLiveClient:
             "User-Agent": "dashboard-combined/1.0",
         }
 
-    def _request_with_urllib(self, url: str, uri: str) -> Any:
-        headers = self._sign_headers("GET", url, "")
-        request = urlrequest.Request(url, headers=headers, method="GET")
+    def _request_with_urllib(self, method: str, url: str, body_text: str = "") -> Any:
+        normalized_method = method.upper().strip() or "GET"
+        headers = self._sign_headers(normalized_method, url, body_text)
+        if body_text:
+            headers["Content-Type"] = "application/json"
+        request = urlrequest.Request(
+            url,
+            headers=headers,
+            data=body_text.encode("utf-8") if body_text else None,
+            method=normalized_method,
+        )
         context = self._ssl_context()
 
         try:
@@ -1003,15 +1011,27 @@ class KauflandLiveClient:
 
         return payload
 
-    def get_json(self, url: str, uri: str) -> Any:
+    def request_json(self, method: str, url: str, body: Any = None) -> Any:
         requests = self._requests_module()
         if not requests:
-            return self._request_with_urllib(url, uri)
+            body_text = _json_dumps(body) if body is not None else ""
+            return self._request_with_urllib(method, url, body_text)
 
-        headers = self._sign_headers("GET", url, "")
+        normalized_method = method.upper().strip() or "GET"
+        body_text = _json_dumps(body) if body is not None else ""
+        headers = self._sign_headers(normalized_method, url, body_text)
+        if body is not None:
+            headers["Content-Type"] = "application/json"
 
         try:
-            response = requests.get(url, headers=headers, timeout=25, verify=self.verify_ssl)
+            response = requests.request(
+                method=normalized_method,
+                url=url,
+                headers=headers,
+                data=body_text if body is not None else None,
+                timeout=25,
+                verify=self.verify_ssl,
+            )
         except requests.exceptions.Timeout as exc:
             raise KauflandLiveError("Request to Kaufland API timed out", status_code=504) from exc
         except requests.exceptions.RequestException as exc:
@@ -1045,6 +1065,9 @@ class KauflandLiveClient:
             )
 
         return payload
+
+    def get_json(self, url: str, uri: str) -> Any:
+        return self.request_json("GET", url)
 
 
 def sync_kaufland_live(

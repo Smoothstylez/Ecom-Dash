@@ -677,6 +677,288 @@ test.describe("dashboard smoke", () => {
     expect(pageErrors, "page errors on /customers React host").toEqual([]);
   });
 
+  test("order detail submits Kaufland shipment with predefined carrier", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    let shipmentPatchCount = 0;
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              marketplace: "kaufland",
+              order_id: "order-k-1",
+              external_order_id: "KAUF-ORDER-1",
+              order_date: "2026-02-03T10:00:00Z",
+              customer: "Alice Example",
+              article: "Alpha Product",
+              line_items_count: 1,
+              total_cents: 12990,
+              fees_cents: 990,
+              fee_source: "api",
+              after_fees_cents: 12000,
+              purchase_cost_cents: 4500,
+              profit_cents: 7500,
+              currency: "EUR",
+              invoice: null,
+              fulfillment_status: "need_to_be_sent",
+              payment_method: "Kaufland Settlement",
+            },
+          ],
+          total: 1,
+        }),
+      });
+    });
+
+    await page.route("**/api/orders/kaufland/order-k-1", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          summary: {
+            marketplace: "kaufland",
+            order_id: "order-k-1",
+            external_order_id: "KAUF-ORDER-1",
+            order_date: "2026-02-03T10:00:00Z",
+            customer: "Alice Example",
+            payment_method: "Kaufland Settlement",
+            fulfillment_status: "need_to_be_sent",
+            total_cents: 12990,
+            fees_cents: 990,
+            fee_source: "api",
+            after_fees_cents: 12000,
+            purchase_cost_cents: 4500,
+            profit_cents: 7500,
+            currency: "EUR",
+            invoice: null,
+          },
+          order: {},
+          customer: { name: "Alice Example", email: "alice@example.com" },
+          shipping_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+          billing_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+          units: [
+            { id_order_unit: "unit-1", product_title: "Alpha Product", status: "need_to_be_sent", price: "129.90", revenue_gross: "120.00", vat: 19 },
+          ],
+          bookkeeping_breakdown: { db_available: false },
+          shipment_capabilities: {
+            available: true,
+            marketplace: "kaufland",
+            carrier_options: ["DHL", "UPS"],
+            pending_units_count: 1,
+            pending_units: [{ id_order_unit: "unit-1", product_title: "Alpha Product", status: "need_to_be_sent" }],
+            requires_tracking_number: true,
+          },
+        }),
+      });
+    });
+
+    await page.route("**/api/orders/kaufland/order-k-1/shipment", async (route) => {
+      shipmentPatchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          shipment: { marketplace: "kaufland", carrier: "UPS", tracking_number: "1Z001985YW99744790" },
+          summary: {
+            marketplace: "kaufland",
+            order_id: "order-k-1",
+            external_order_id: "KAUF-ORDER-1",
+            fulfillment_status: "sent",
+          },
+          detail: {
+            summary: {
+              marketplace: "kaufland",
+              order_id: "order-k-1",
+              external_order_id: "KAUF-ORDER-1",
+              fulfillment_status: "sent",
+            },
+            order: {},
+            customer: { name: "Alice Example", email: "alice@example.com" },
+            shipping_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+            billing_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+            units: [
+              { id_order_unit: "unit-1", product_title: "Alpha Product", status: "sent", price: "129.90", revenue_gross: "120.00", vat: 19 },
+            ],
+            bookkeeping_breakdown: { db_available: false },
+            shipment_capabilities: {
+              available: false,
+              marketplace: "kaufland",
+              carrier_options: ["DHL", "UPS"],
+              pending_units_count: 0,
+              pending_units: [],
+              requires_tracking_number: true,
+              reason: "Diese Kaufland-Bestellung ist bereits als versendet markiert.",
+            },
+          },
+        }),
+      });
+    });
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+    await page.locator("#ordersBody tr[data-react-orders-row='true'] td").first().click();
+    await expect(page.locator("#ordersDetailsContent")).toContainText("Versand & Tracking");
+
+    await page.locator("#ordersDetailsContent [data-shipment-carrier-select='true']").selectOption("UPS");
+    await page.locator("#ordersDetailsContent [data-shipment-tracking-input='true']").fill("1Z001985YW99744790");
+    await page.locator("#ordersDetailsContent [data-action='submit-shipment']").click();
+
+    await expect.poll(() => shipmentPatchCount).toBe(1);
+    await expect(page.locator("#ordersDetailsContent")).toContainText("Versanddaten wurden gespeichert.");
+    await expect(page.locator("#ordersDetailsContent")).toContainText("bereits als versendet markiert");
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("order detail submits Shopify shipment with predefined carrier", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (error) => {
+      pageErrors.push(error.message);
+    });
+
+    let shipmentPatchCount = 0;
+
+    await page.route(/\/api\/orders(?:\?.*)?$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              marketplace: "shopify",
+              order_id: "order-s-1",
+              external_order_id: "SHOP-ORDER-1",
+              order_date: "2026-02-03T10:00:00Z",
+              customer: "Alice Example",
+              article: "Alpha Product",
+              line_items_count: 1,
+              total_cents: 12990,
+              fees_cents: 990,
+              fee_source: "api",
+              after_fees_cents: 12000,
+              purchase_cost_cents: 4500,
+              profit_cents: 7500,
+              currency: "EUR",
+              invoice: null,
+              fulfillment_status: "",
+              payment_method: "Shopify Payments",
+            },
+          ],
+          total: 1,
+        }),
+      });
+    });
+
+    await page.route("**/api/orders/shopify/order-s-1", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          summary: {
+            marketplace: "shopify",
+            order_id: "order-s-1",
+            external_order_id: "SHOP-ORDER-1",
+            order_date: "2026-02-03T10:00:00Z",
+            customer: "Alice Example",
+            payment_method: "Shopify Payments",
+            fulfillment_status: "",
+            total_cents: 12990,
+            fees_cents: 990,
+            fee_source: "api",
+            after_fees_cents: 12000,
+            purchase_cost_cents: 4500,
+            profit_cents: 7500,
+            currency: "EUR",
+            invoice: null,
+          },
+          order: { customer_email: "alice@example.com", currency: "EUR" },
+          customer: { name: "Alice Example", email: "alice@example.com" },
+          shipping_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+          billing_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+          line_items: [
+            { id: "line-1", title: "Alpha Product", quantity: 1, price: "129.90", fulfillment_status: "", sku: "SKU-1" },
+          ],
+          fulfillments: [],
+          refunds: [],
+          transactions: [],
+          bookkeeping_breakdown: { db_available: false },
+          shipment_capabilities: {
+            available: true,
+            marketplace: "shopify",
+            carrier_options: ["DHL", "UPS"],
+            pending_units_count: 1,
+            pending_units: [{ id: "line-1", product_title: "Alpha Product", status: "open" }],
+            requires_tracking_number: true,
+          },
+        }),
+      });
+    });
+
+    await page.route("**/api/orders/shopify/order-s-1/shipment", async (route) => {
+      shipmentPatchCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          ok: true,
+          shipment: { marketplace: "shopify", carrier: "DHL", tracking_number: "00340434161234567890" },
+          summary: {
+            marketplace: "shopify",
+            order_id: "order-s-1",
+            external_order_id: "SHOP-ORDER-1",
+            fulfillment_status: "fulfilled",
+          },
+          detail: {
+            summary: {
+              marketplace: "shopify",
+              order_id: "order-s-1",
+              external_order_id: "SHOP-ORDER-1",
+              fulfillment_status: "fulfilled",
+            },
+            order: { customer_email: "alice@example.com", currency: "EUR" },
+            customer: { name: "Alice Example", email: "alice@example.com" },
+            shipping_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+            billing_address: { name: "Alice Example", city: "Berlin", country: "DE" },
+            line_items: [
+              { id: "line-1", title: "Alpha Product", quantity: 1, price: "129.90", fulfillment_status: "fulfilled", sku: "SKU-1" },
+            ],
+            fulfillments: [
+              { id: "ful-1", status: "success", tracking_number: "00340434161234567890", tracking_company: "DHL", created_at: "2026-02-03T11:00:00Z" },
+            ],
+            refunds: [],
+            transactions: [],
+            bookkeeping_breakdown: { db_available: false },
+            shipment_capabilities: {
+              available: false,
+              marketplace: "shopify",
+              carrier_options: ["DHL", "UPS"],
+              pending_units_count: 0,
+              pending_units: [],
+              requires_tracking_number: true,
+              reason: "Diese Shopify-Bestellung ist bereits als versendet markiert.",
+            },
+          },
+        }),
+      });
+    });
+
+    await page.goto("/orders", { waitUntil: "networkidle" });
+    await page.locator("#ordersBody tr[data-react-orders-row='true'] td").first().click();
+    await page.locator("#ordersDetailsContent [data-shipment-carrier-select='true']").selectOption("DHL");
+    await page.locator("#ordersDetailsContent [data-shipment-tracking-input='true']").fill("00340434161234567890");
+    await page.locator("#ordersDetailsContent [data-action='submit-shipment']").click();
+
+    await expect.poll(() => shipmentPatchCount).toBe(1);
+    await expect(page.locator("#ordersDetailsContent")).toContainText("Versanddaten wurden gespeichert.");
+    await expect(page.locator("#ordersDetailsContent")).toContainText("bereits als versendet markiert");
+    expect(pageErrors).toEqual([]);
+  });
+
   test("customers route renders geo stage and current list state", async ({ page }) => {
     const pageErrors: string[] = [];
     page.on("pageerror", (error) => {

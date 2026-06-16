@@ -14,12 +14,14 @@ from app.db import (
     create_invoice_document,
     fetch_aliexpress_order_mappings_for_marketplace_order,
     fetch_invoice_document,
+    refresh_combined_order_row,
     replace_aliexpress_order_mappings,
     resolve_invoice_path,
     sanitize_filename,
     upsert_purchase_enrichment,
 )
 from app.services.bookings import get_order_bookkeeping_breakdown, sync_combined_orders_into_bookkeeping
+from app.services.order_shipping import OrderShipmentError, attach_shipment_capabilities, submit_order_shipment
 from app.services.orders import get_order_detail, list_orders
 from app.uploads import EmptyUploadError, UploadTooLargeError, stream_fileobj_to_path
 
@@ -46,6 +48,11 @@ class AliExpressOrderMappingItemRequest(BaseModel):
 
 class AliExpressOrderMappingsUpdateRequest(BaseModel):
     mappings: list[AliExpressOrderMappingItemRequest] = Field(default_factory=list)
+
+
+class OrderShipmentRequest(BaseModel):
+    carrier: str = Field(min_length=1)
+    tracking_number: Optional[str] = Field(default=None)
 
 
 def _validate_marketplace(marketplace: str) -> str:
@@ -152,7 +159,39 @@ def api_get_order_detail(marketplace: str, order_id: str) -> dict[str, Any]:
         marketplace=market,
         external_order_id=external_order_id,
     )
-    return detail
+    return attach_shipment_capabilities(detail) or detail
+
+
+@router.patch("/{marketplace}/{order_id}/shipment", dependencies=ADMIN_ONLY)
+def api_submit_order_shipment(
+    marketplace: str,
+    order_id: str,
+    payload: OrderShipmentRequest,
+) -> dict[str, Any]:
+    market = _validate_marketplace(marketplace)
+    try:
+        response_payload = submit_order_shipment(
+            market,
+            order_id,
+            carrier=payload.carrier,
+            tracking_number=payload.tracking_number,
+        )
+    except OrderShipmentError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    detail = response_payload.get("detail") if isinstance(response_payload.get("detail"), dict) else None
+    if detail is not None:
+        summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else {}
+        external_order_id = str(
+            summary.get("external_order_id")
+            or summary.get("order_id")
+            or order_id
+        ).strip()
+        detail["bookkeeping_breakdown"] = get_order_bookkeeping_breakdown(
+            marketplace=market,
+            external_order_id=external_order_id,
+        )
+        response_payload["detail"] = attach_shipment_capabilities(detail) or detail
+    return response_payload
 
 
 @router.patch("/{marketplace}/{order_id}/purchase", dependencies=ADMIN_ONLY)
@@ -172,6 +211,7 @@ def api_update_purchase(
         supplier_name=payload.supplier_name,
         purchase_notes=payload.purchase_notes,
     )
+    refresh_combined_order_row(marketplace=market, order_id=order_id)
     booking_sync = sync_combined_orders_into_bookkeeping(marketplace=market, order_id=order_id)
     return {"ok": True, "enrichment": updated, "bookkeeping_sync": booking_sync}
 
@@ -264,6 +304,7 @@ async def api_upload_invoice(
         purchase_notes=notes if notes is not None else existing_notes,
     )
 
+    refresh_combined_order_row(marketplace=market, order_id=order_id)
     booking_sync = sync_combined_orders_into_bookkeeping(marketplace=market, order_id=order_id)
     return {"ok": True, "enrichment": enrichment, "bookkeeping_sync": booking_sync}
 

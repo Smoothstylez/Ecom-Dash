@@ -47,6 +47,14 @@ export type OrderDetail = {
   billing_address?: Record<string, unknown>;
   customer?: Record<string, unknown>;
   bookkeeping_breakdown?: Record<string, unknown>;
+  shipment_capabilities?: Record<string, unknown>;
+};
+
+export type SubmitOrderShipmentResponse = {
+  ok: boolean;
+  shipment?: Record<string, unknown>;
+  detail?: OrderDetail;
+  summary?: OrderSummary;
 };
 
 export type OrdersResponse = {
@@ -163,6 +171,19 @@ export function uploadOrderInvoice(marketplace: string, orderId: string, formDat
     {
       method: "POST",
       body: formData,
+    },
+  );
+}
+
+export function submitOrderShipment(marketplace: string, orderId: string, carrier: string, trackingNumber: string) {
+  return fetchJson<SubmitOrderShipmentResponse>(
+    buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/shipment`),
+    {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ carrier, tracking_number: trackingNumber }),
     },
   );
 }

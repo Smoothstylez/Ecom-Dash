@@ -290,6 +290,35 @@ class BookkeepingSyncTests(unittest.TestCase):
         self.assertEqual(second_summary["documents_updated"], 0)
         self.assertEqual(second_summary["documents_skipped"], 0)
 
+    def test_sync_removes_stale_combined_transactions_for_missing_orders(self) -> None:
+        order = {
+            "marketplace": "shopify",
+            "order_id": "4",
+            "external_order_id": "#1004",
+            "order_date": "2026-01-12T10:00:00Z",
+            "currency": "EUR",
+            "total_cents": 10000,
+            "fees_cents": 500,
+            "after_fees_cents": 9500,
+            "purchase_cost_cents": 4000,
+            "customer": "Alice",
+            "fulfillment_status": "fulfilled",
+            "financial_status": "paid",
+            "raw_status": "fulfilled",
+            "payment_method": "Shopify",
+        }
+
+        with patch("app.db.fetch_enrichment_map", return_value={}):
+            with patch("app.services.orders.list_all_orders_without_pagination", return_value=[order]):
+                first_summary = bookings.sync_combined_orders_into_bookkeeping()
+            with patch("app.services.orders.list_all_orders_without_pagination", return_value=[]):
+                second_summary = bookings.sync_combined_orders_into_bookkeeping()
+
+        self.assertEqual(first_summary["transactions_inserted"], 3)
+        self.assertGreaterEqual(second_summary["transactions_deleted"], 3)
+        remaining = self._fetchall("SELECT source_key FROM transactions WHERE source_key LIKE 'combined:%'")
+        self.assertEqual(remaining, [])
+
     def test_schema_migration_allows_zero_revenue_orders(self) -> None:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row

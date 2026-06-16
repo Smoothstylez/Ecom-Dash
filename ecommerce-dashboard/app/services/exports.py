@@ -24,6 +24,7 @@ from app.config import (
     INVOICES_DIR,
     KAUFLAND_DB_PATH,
     PROJECT_ROOT,
+    SALES_INVOICES_DIR,
     SCHEMA_VERSION,
     SHOPIFY_DB_PATH,
     STORAGE_DIR,
@@ -230,6 +231,7 @@ def create_full_backup_archive() -> ExportArchive:
                 zip_file.write(db_path, f"databases/{name}.sqlite3")
 
         invoices_count = _add_directory_to_zip(zip_file, INVOICES_DIR, "storage/invoices")
+        sales_invoices_count = _add_directory_to_zip(zip_file, SALES_INVOICES_DIR, "storage/sales_invoices")
         bookkeeping_docs_count = _add_directory_to_zip(zip_file, BOOKKEEPING_DOCUMENTS_DIR, "storage/documents")
 
         manifest = {
@@ -240,6 +242,7 @@ def create_full_backup_archive() -> ExportArchive:
             "databases": db_manifest,
             "documents": {
                 "invoice_files": invoices_count,
+                "sales_invoice_files": sales_invoices_count,
                 "bookkeeping_files": bookkeeping_docs_count,
             },
         }
@@ -253,6 +256,7 @@ def create_full_backup_archive() -> ExportArchive:
                 "Contains:\n"
                 "- databases/: combined + source databases\n"
                 "- storage/invoices/: order invoice files\n"
+                "- storage/sales_invoices/: generated sales invoice PDFs\n"
                 "- storage/documents/: bookkeeping document files\n"
                 "- manifest.json: snapshot metadata\n"
             ).encode("utf-8"),
@@ -265,6 +269,7 @@ def create_full_backup_archive() -> ExportArchive:
             "generated_at": _iso_utc(timestamp),
             "database_count": len([entry for entry in db_manifest if entry.get("exists")]),
             "invoice_files": invoices_count,
+            "sales_invoice_files": sales_invoices_count,
             "bookkeeping_files": bookkeeping_docs_count,
         },
     )
@@ -680,6 +685,7 @@ _DB_RESTORE_MAP: dict[str, Path] = {
 # Map archive storage prefixes to their runtime directories.
 _STORAGE_RESTORE_MAP: dict[str, Path] = {
     "storage/invoices": INVOICES_DIR,
+    "storage/sales_invoices": SALES_INVOICES_DIR,
     "storage/documents": BOOKKEEPING_DOCUMENTS_DIR,
 }
 
@@ -828,6 +834,7 @@ def _create_pre_restore_safety_backup() -> Path:
                 zf.write(db_path, f"databases/{name}.sqlite3")
 
         _add_directory_to_zip(zf, INVOICES_DIR, "storage/invoices")
+        _add_directory_to_zip(zf, SALES_INVOICES_DIR, "storage/sales_invoices")
         _add_directory_to_zip(zf, BOOKKEEPING_DOCUMENTS_DIR, "storage/documents")
 
         safety_manifest = {

@@ -236,9 +236,41 @@ def init_combined_db() -> None:
                 ON sales_invoice_items(invoice_id, position);
             """
         )
+        _ensure_combined_orders_columns(connection)
         connection.commit()
 
     _migrate_invoice_paths_to_relative()
+
+
+def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row[1] if not isinstance(row, sqlite3.Row) else row["name"]) for row in rows}
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_sql: str) -> None:
+    if column_name in _table_columns(connection, table_name):
+        return
+    connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_sql}")
+
+
+def _ensure_combined_orders_columns(connection: sqlite3.Connection) -> None:
+    if "combined_orders" not in {
+        str(row[0] if not isinstance(row, sqlite3.Row) else row["name"])
+        for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+    }:
+        return
+    _ensure_column(connection, "combined_orders", "purchase_cost_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "purchase_currency", "TEXT NOT NULL DEFAULT 'EUR'")
+    _ensure_column(connection, "combined_orders", "purchase_supplier", "TEXT")
+    _ensure_column(connection, "combined_orders", "purchase_notes", "TEXT")
+    _ensure_column(connection, "combined_orders", "profit_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "has_invoice", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "invoice_document_id", "TEXT")
+
+
+def refresh_combined_order_row(*, marketplace: str, order_id: str) -> bool:
+    rows_written = populate_combined_orders(marketplace=marketplace, order_id=order_id)
+    return rows_written > 0
 
 
 def _migrate_invoice_paths_to_relative() -> None:
@@ -284,6 +316,40 @@ def _to_cents(value: Any) -> int:
         return 0
 
 
+def _to_kaufland_cents(value: Any) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, int):
+        return max(int(value), 0)
+    if isinstance(value, float):
+        if not (abs(value) < 1e308 and value == value):
+            return 0
+        rounded = round(value)
+        if abs(value - rounded) < 1e-9:
+            return max(int(rounded), 0)
+        return max(int(round(value * 100)), 0)
+
+    text = str(value).strip()
+    if not text:
+        return 0
+    normalized = text.replace(",", ".")
+    if "." in normalized:
+        try:
+            parsed = float(normalized)
+        except ValueError:
+            return 0
+        rounded = round(parsed)
+        if abs(parsed - rounded) < 1e-9:
+            return max(int(rounded), 0)
+        return max(int(round(parsed * 100)), 0)
+    try:
+        return max(int(normalized), 0)
+    except ValueError:
+        return 0
+
+
 def _to_iso_utc(value: Any) -> str:
     text = str(value or "").strip().strip("Z")
     if not text:
@@ -294,9 +360,11 @@ def _to_iso_utc(value: Any) -> str:
     return text
 
 
-def populate_combined_orders() -> int:
+def populate_combined_orders(*, marketplace: str | None = None, order_id: str | None = None) -> int:
     enrichment_map = fetch_enrichment_map()
     orders: list[dict[str, Any]] = []
+    market_filter = str(marketplace or "").strip().lower() or None
+    order_filter = str(order_id or "").strip() or None
 
     if SHOPIFY_DB_PATH.exists():
         with sqlite3.connect(str(SHOPIFY_DB_PATH)) as src:
@@ -393,6 +461,10 @@ def populate_combined_orders() -> int:
                 ),
                 "raw_json": str(row["raw_json"] or ""),
             }
+            if market_filter and order["marketplace"] != market_filter:
+                continue
+            if order_filter and order["order_id"] != order_filter:
+                continue
             orders.append(order)
 
     if KAUFLAND_DB_PATH.exists():
@@ -463,12 +535,12 @@ def populate_combined_orders() -> int:
             ).fetchall()
 
         for row in rows:
-            total_cents = _to_cents(row["units_price_sum"]) or 0
-            after_fees_cents = _to_cents(row["revenue_gross_sum"]) or total_cents
+            total_cents = _to_kaufland_cents(row["units_price_sum"])
+            after_fees_cents = _to_kaufland_cents(row["revenue_gross_sum"]) or total_cents
             fees_cents = total_cents - after_fees_cents
             if fees_cents < 0:
                 fees_cents = 0
-            shipping_cents = _to_cents(row["shipping_sum"]) or 0
+            shipping_cents = _to_kaufland_cents(row["shipping_sum"])
 
             customer = _first_non_empty(row["customer_name"], "Unbekannt")
             article = _first_non_empty(row["first_article"], "-")
@@ -499,7 +571,19 @@ def populate_combined_orders() -> int:
                 "raw_status": _first_non_empty(row["unit_status"], "unknown"),
                 "raw_json": str(row["raw_json"] or ""),
             }
+            if market_filter and order["marketplace"] != market_filter:
+                continue
+            if order_filter and order["order_id"] != order_filter:
+                continue
             orders.append(order)
+
+    if market_filter and order_filter:
+        with connect_combined_db() as connection:
+            connection.execute(
+                "DELETE FROM combined_orders WHERE marketplace = ? AND order_id = ?",
+                (market_filter, order_filter),
+            )
+            connection.commit()
 
     if not orders:
         return 0
