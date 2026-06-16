@@ -45,11 +45,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "app" / "static"
 WORKSPACE_DIR = BASE_DIR.parent
 
-# Frontend dist: check in-container path first, then workspace-relative (dev)
+# Prefer the packaged add-on frontend so local FastAPI runs match HA container behavior.
 _FRONTEND_DIST_CONTAINER = BASE_DIR / "frontend_dist"
 _FRONTEND_DIST_WORKSPACE = WORKSPACE_DIR / "frontend" / "dist"
 FRONTEND_DIST_DIR = (
-    _FRONTEND_DIST_WORKSPACE if _FRONTEND_DIST_WORKSPACE.is_dir() else _FRONTEND_DIST_CONTAINER
+    _FRONTEND_DIST_CONTAINER if _FRONTEND_DIST_CONTAINER.is_dir() else _FRONTEND_DIST_WORKSPACE
 )
 LOGGER = logging.getLogger("combined_dashboard")
 
