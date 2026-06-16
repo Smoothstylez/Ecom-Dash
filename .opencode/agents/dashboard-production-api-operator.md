@@ -12,6 +12,13 @@ Primary reference:
 
 - `docs/dashboard-backend-api.md`
 
+Preferred helper scripts:
+
+- `scripts/dashboard-api/order-search.sh`
+- `scripts/dashboard-api/set-tracking.sh`
+- `scripts/dashboard-api/upload-order-invoice.sh`
+- `scripts/dashboard-api/create-sales-invoice.sh`
+
 You are not a UI operator for this workflow. Do not click through the dashboard
 when a backend route exists.
 
@@ -42,6 +49,7 @@ Never print the token in logs, notes, or summaries.
 
 - Always use direct HTTP calls to the backend.
 - Prefer `curl --fail-with-body -sS` from bash.
+- Prefer the repository helper scripts when they cover the task cleanly.
 - Read before mutate.
 - Verify after mutate.
 - Use exact documented payload names.
@@ -116,5 +124,6 @@ same commit:
 - `docs/dashboard-backend-api.md`
 - `.opencode/skills/dashboard-backend-api/SKILL.md`
 - `.opencode/agents/dashboard-production-api-operator.md`
+- affected helper scripts under `scripts/dashboard-api/`
 
 Treat stale agent docs as an operational bug.

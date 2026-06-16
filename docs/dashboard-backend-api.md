@@ -99,6 +99,17 @@ Operational rules:
 - For file uploads, always use `multipart/form-data`.
 - For JSON endpoints, always use `application/json`.
 
+Helper scripts available in this repository:
+
+- `scripts/dashboard-api/order-search.sh`
+- `scripts/dashboard-api/set-tracking.sh`
+- `scripts/dashboard-api/upload-order-invoice.sh`
+- `scripts/dashboard-api/create-sales-invoice.sh`
+
+Shared shell helper:
+
+- `scripts/dashboard-api/_lib.sh`
+
 ## Allowed Automation Scope
 
 This reference supports full non-destructive automation for:
@@ -1028,6 +1039,42 @@ Blocked for this automation scope:
 
 ## Recommended Agent Workflows
 
+## Helper Scripts
+
+These shell helpers are intended for direct agent use against production.
+
+### Search Orders
+
+```bash
+scripts/dashboard-api/order-search.sh --marketplace kaufland --status need_to_be_sent --limit 100
+```
+
+### Set Tracking
+
+```bash
+scripts/dashboard-api/set-tracking.sh kaufland ORDER-123 DHL 00340434161094000000
+```
+
+### Upload Purchase Invoice
+
+```bash
+scripts/dashboard-api/upload-order-invoice.sh kaufland ORDER-123 /absolute/path/to/invoice.pdf 54.90 EUR "AliExpress Supplier" "June batch"
+```
+
+### Draft or Create Sales Invoice
+
+Draft only:
+
+```bash
+scripts/dashboard-api/create-sales-invoice.sh kaufland ORDER-123 clean --preview-only
+```
+
+Create:
+
+```bash
+scripts/dashboard-api/create-sales-invoice.sh kaufland ORDER-123 clean
+```
+
 ### Set Tracking Number Correctly
 
 1. `GET /api/orders/{marketplace}/{order_id}`
@@ -1088,6 +1135,7 @@ When adding or changing a dashboard capability, update all of these together:
 - this file: `docs/dashboard-backend-api.md`
 - skill summary: `.opencode/skills/dashboard-backend-api/SKILL.md`
 - agent operating rules: `.opencode/agents/dashboard-production-api-operator.md`
+- shell helpers under `scripts/dashboard-api/` if the capability is scriptable
 
 Minimum review checklist:
 

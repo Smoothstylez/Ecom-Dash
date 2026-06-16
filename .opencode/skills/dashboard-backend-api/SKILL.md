@@ -12,6 +12,13 @@ Primary reference:
 
 - `docs/dashboard-backend-api.md`
 
+Repository helper scripts:
+
+- `scripts/dashboard-api/order-search.sh`
+- `scripts/dashboard-api/set-tracking.sh`
+- `scripts/dashboard-api/upload-order-invoice.sh`
+- `scripts/dashboard-api/create-sales-invoice.sh`
+
 Core rules:
 
 - Prefer direct HTTP calls to `GET`, `PATCH`, `POST`, and upload endpoints.
@@ -27,5 +34,6 @@ Core rules:
 Maintenance rule:
 
 - If backend routes, payloads, response fields, or allowed automation scope
-  change, update this skill, the agent file, and `docs/dashboard-backend-api.md`
-  in the same commit.
+  change, update this skill, the agent file, `docs/dashboard-backend-api.md`,
+  and any affected helper scripts in `scripts/dashboard-api/` in the same
+  commit.
