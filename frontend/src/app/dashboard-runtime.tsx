@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type PropsWithChildren } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type PropsWithChildren } from "react";
 
 export type DetailsModalApi = {
   open: (title?: string) => void;
@@ -77,35 +77,48 @@ export function DashboardRuntimeProvider({ children }: PropsWithChildren) {
   const [bookingsUiState, setBookingsUiStateState] = useState<BookingsUiState>(EMPTY_BOOKINGS_UI_STATE);
   const [bookingsRefreshRequestToken, setBookingsRefreshRequestToken] = useState(0);
   const [bookingsRefreshDetail, setBookingsRefreshDetail] = useState<BookingsRefreshDetail>({});
+  const bookingsUiStateRef = useRef(bookingsUiState);
+
+  bookingsUiStateRef.current = bookingsUiState;
 
   const registerDetailsModalApi = useCallback((api: DetailsModalApi | null) => {
-    setDetailsModalApi(api);
+    setDetailsModalApi((current) => (current === api ? current : api));
   }, []);
 
   const registerPreviewModalApi = useCallback((api: PreviewModalApi | null) => {
-    setPreviewModalApi(api);
+    setPreviewModalApi((current) => (current === api ? current : api));
   }, []);
 
   const registerOrderDetailsApi = useCallback((api: OrderDetailsApi | null) => {
-    setOrderDetailsApi(api);
+    setOrderDetailsApi((current) => (current === api ? current : api));
   }, []);
 
   const registerBookingsDetailsApi = useCallback((api: BookingsDetailsApi | null) => {
-    setBookingsDetailsApi(api);
+    setBookingsDetailsApi((current) => (current === api ? current : api));
   }, []);
 
   const setBookingsUiState = useCallback((next: BookingsUiState) => {
-    setBookingsUiStateState(next);
+    setBookingsUiStateState((current) => {
+      if (
+        current.bookingClass === next.bookingClass
+        && current.category === next.category
+        && current.bookingType === next.bookingType
+      ) {
+        return current;
+      }
+      return next;
+    });
   }, []);
 
   const requestBookingsRefresh = useCallback((detail?: BookingsRefreshDetail) => {
+    const currentUiState = bookingsUiStateRef.current;
     setBookingsRefreshDetail({
-      bookingClass: typeof detail?.bookingClass === "string" ? detail.bookingClass : bookingsUiState.bookingClass,
-      category: typeof detail?.category === "string" ? detail.category : bookingsUiState.category,
-      bookingType: typeof detail?.bookingType === "string" ? detail.bookingType : bookingsUiState.bookingType,
+      bookingClass: typeof detail?.bookingClass === "string" ? detail.bookingClass : currentUiState.bookingClass,
+      category: typeof detail?.category === "string" ? detail.category : currentUiState.category,
+      bookingType: typeof detail?.bookingType === "string" ? detail.bookingType : currentUiState.bookingType,
     });
     setBookingsRefreshRequestToken((current) => current + 1);
-  }, [bookingsUiState]);
+  }, []);
 
   const value = useMemo<DashboardRuntimeContextValue>(() => {
     return {
