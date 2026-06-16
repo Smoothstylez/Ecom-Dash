@@ -69,7 +69,7 @@ export type PollingSettings = {
 
 export { loadAdminToken, persistAdminToken };
 
-export const DASHBOARD_VERSION = "0.4.4";
+export const DASHBOARD_VERSION = "0.4.5";
 export const POLLING_STORAGE_KEY = "dash-combined.polling";
 
 const API_BASE = buildDashboardApiUrl("/api");
