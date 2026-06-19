@@ -319,6 +319,50 @@ class BookkeepingSyncTests(unittest.TestCase):
         remaining = self._fetchall("SELECT source_key FROM transactions WHERE source_key LIKE 'combined:%'")
         self.assertEqual(remaining, [])
 
+    def test_sync_uses_full_order_set_when_partial_snapshot_would_exist(self) -> None:
+        orders = [
+            {
+                "marketplace": "shopify",
+                "order_id": "10",
+                "external_order_id": "#1010",
+                "order_date": "2026-01-12T10:00:00Z",
+                "currency": "EUR",
+                "total_cents": 10000,
+                "fees_cents": 500,
+                "after_fees_cents": 9500,
+                "purchase_cost_cents": 4000,
+                "customer": "Alice",
+                "fulfillment_status": "fulfilled",
+                "financial_status": "paid",
+                "raw_status": "fulfilled",
+                "payment_method": "Shopify",
+            },
+            {
+                "marketplace": "shopify",
+                "order_id": "11",
+                "external_order_id": "#1011",
+                "order_date": "2026-01-12T11:00:00Z",
+                "currency": "EUR",
+                "total_cents": 12000,
+                "fees_cents": 600,
+                "after_fees_cents": 11400,
+                "purchase_cost_cents": 5000,
+                "customer": "Bob",
+                "fulfillment_status": "fulfilled",
+                "financial_status": "paid",
+                "raw_status": "fulfilled",
+                "payment_method": "PayPal",
+            },
+        ]
+
+        with patch("app.db.fetch_enrichment_map", return_value={}):
+            with patch("app.services.orders.list_all_orders_without_pagination", return_value=orders):
+                summary = bookings.sync_combined_orders_into_bookkeeping()
+
+        self.assertEqual(summary["selected_orders"], 2)
+        self.assertEqual(summary["orders_inserted"], 2)
+        self.assertEqual(summary["transactions_inserted"], 6)
+
     def test_schema_migration_allows_zero_revenue_orders(self) -> None:
         connection = sqlite3.connect(self.db_path)
         connection.row_factory = sqlite3.Row

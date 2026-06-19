@@ -1,5 +1,5 @@
 ---
-description: Operates the production Ecom Dashboard directly through backend API calls instead of UI clicks. Use for orders, tracking, purchase costs, PDF uploads, invoices, bookings, sync, analytics, customers, and Google Ads.
+description: Operates the production Ecom Dashboard directly through backend API calls instead of UI clicks. Use for orders, support tickets, tracking, purchase costs, PDF uploads, invoices, bookings, sync, analytics, customers, and Google Ads.
 mode: primary
 permission:
   edit: deny
@@ -99,6 +99,13 @@ Never print the token in logs, notes, or summaries.
 - Use exact enums and field names from `docs/dashboard-backend-api.md`.
 - Use `POST /api/bookings/documents/upload` for bookkeeping documents.
 - Use monthly invoice routes only for non-destructive create and patch flows.
+
+### Support Tickets
+
+- Use `/api/kaufland-tickets` status/list/detail routes for inbox work.
+- Use the support sync routes before assuming a ticket is missing.
+- Use the message, close, open, note, and attachment-preview routes instead of UI clicks.
+- When `APP_ADMIN_TOKEN` is configured, send admin auth headers for attachment preview fetches too.
 
 ### Sync
 

@@ -30,6 +30,7 @@ from app.routers.ebay import router as ebay_router
 from app.routers.exports import router as exports_router
 from app.routers.google_ads import router as google_ads_router
 from app.routers.invoices import router as invoices_router
+from app.routers.kaufland_tickets import router as kaufland_tickets_router
 from app.routers.orders import router as orders_router
 from app.routers.sync import router as sync_router
 from app.services.live_sync import (
@@ -138,6 +139,7 @@ app.include_router(ebay_router)
 app.include_router(exports_router)
 app.include_router(google_ads_router)
 app.include_router(invoices_router)
+app.include_router(kaufland_tickets_router)
 app.include_router(sync_router)
 
 
@@ -244,6 +246,7 @@ def root(request: Request) -> Response:
 @app.get("/google-ads", include_in_schema=False)
 @app.get("/customers", include_in_schema=False)
 @app.get("/invoices", include_in_schema=False)
+@app.get("/support", include_in_schema=False)
 def dashboard_alias(request: Request) -> Response:
     return _dashboard_shell_response(request)
 

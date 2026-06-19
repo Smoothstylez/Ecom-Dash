@@ -28,8 +28,11 @@ Primary source files:
 - `ecommerce-dashboard/app/routers/customers.py`
 - `ecommerce-dashboard/app/routers/google_ads.py`
 - `ecommerce-dashboard/app/routers/exports.py`
+- `ecommerce-dashboard/app/routers/kaufland_tickets.py`
 - `ecommerce-dashboard/app/services/order_shipping.py`
 - `ecommerce-dashboard/app/services/invoices.py`
+- `ecommerce-dashboard/app/services/kaufland_tickets.py`
+- `ecommerce-dashboard/app/services/importers/kaufland_tickets.py`
 - `ecommerce-dashboard/app/services/bookkeeping_full.py`
 
 ## Runtime Target
@@ -132,6 +135,7 @@ This reference supports full non-destructive automation for:
 - analytics, customers, eBay, and Google Ads reads
 - Google Ads upload
 - backup export download
+- support ticket status, list/detail reads, sync, replies, close/open actions, attachment preview, and local note management
 
 Blocked for this automation scope:
 
@@ -1000,6 +1004,33 @@ eBay orders query params:
 - `includeReturns`
 - `limit`
 - `offset`
+
+## Support Tickets API
+
+Status and reads:
+
+- `GET /api/kaufland-tickets/status`
+- `GET /api/kaufland-tickets?filter=todo|waiting|closed|all&q=...&limit=...&offset=...`
+- `GET /api/kaufland-tickets/{id_ticket}`
+- `GET /api/kaufland-tickets/{id_ticket}/notes`
+
+Mutations and preview:
+
+- `POST /api/kaufland-tickets/sync/backfill` auth: admin
+- `POST /api/kaufland-tickets/sync/poll` auth: admin
+- `POST /api/kaufland-tickets/{id_ticket}/messages` auth: admin multipart fields: `text`, `interim_notice`, repeated `files`
+- `PATCH /api/kaufland-tickets/{id_ticket}/close` auth: admin
+- `POST /api/kaufland-tickets` auth: admin
+- `GET /api/kaufland-tickets/{id_ticket}/attachments/{filename}/preview` auth: admin
+- `POST /api/kaufland-tickets/{id_ticket}/notes` auth: admin
+- `PATCH /api/kaufland-tickets/{id_ticket}/notes/{note_id}` auth: admin
+- `DELETE /api/kaufland-tickets/{id_ticket}/notes/{note_id}` auth: admin
+
+Operational notes:
+
+- Ticket detail currently includes `ticket`, `ticket_raw`, `order_unit_ids`, `messages`, `attachments`, `notes`, and optional `order_context`.
+- Attachment preview should be fetched with admin auth headers; browser navigation alone is insufficient when `APP_ADMIN_TOKEN` is configured.
+- `order_context` is derived from the linked Kaufland order and is intended for operator workflows.
 
 ## Google Ads API
 

@@ -604,6 +604,18 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                 <span>Orders</span>
               </button>
               <button
+                id="tabSupportBtn"
+                className={classNames("sidebar-nav-btn", route === "support" && "active")}
+                type="button"
+                role="tab"
+                onClick={() => {
+                  navigate("/support");
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 2-2zm2 4v2h12V8H6zm0 4v2h8v-2H6z" /></svg>
+                <span>Support</span>
+              </button>
+              <button
                 id="tabCustomersBtn"
                 className={classNames("sidebar-nav-btn", route === "customers" && "active")}
                 type="button"

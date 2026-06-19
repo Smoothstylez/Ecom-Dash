@@ -2060,7 +2060,8 @@ button:hover {
 }
 
 #ordersPanel.tab-panel.active,
-#bookingsPanel.tab-panel.active {
+#bookingsPanel.tab-panel.active,
+#supportPanel.tab-panel.active {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -2079,6 +2080,44 @@ button:hover {
 #bookingsTransactionsPanel.active,
 #bookingsOrdersPanel.active {
   min-height: 0;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--th-btn-soft-border);
+  background: var(--th-btn-soft-bg);
+  color: var(--th-btn-soft-text);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.chip.active {
+  background: linear-gradient(145deg, var(--th-btn-primary-from), var(--th-btn-primary-to));
+  border-color: var(--th-btn-primary-border);
+  color: var(--th-btn-text);
+}
+
+.order-card {
+  border: 1px solid var(--th-line-soft);
+  border-radius: 12px;
+  background: var(--th-surface-2);
+}
+
+.order-card.active {
+  box-shadow: 0 0 0 1px var(--th-accent) inset;
+}
+
+.text-danger {
+  color: var(--th-danger, #c63b3b);
+}
+
+.text-warn {
+  color: var(--th-warn, #d88b25);
 }
 
 #ordersPanel .table-wrap,

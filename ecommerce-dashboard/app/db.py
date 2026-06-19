@@ -15,6 +15,11 @@ from app.config import (
     SHOPIFY_DB_PATH,
     ensure_runtime_dirs,
 )
+from app.services.order_summaries import (
+    first_non_empty,
+    kaufland_summary_from_row,
+    shopify_summary_from_row,
+)
 
 
 def now_iso() -> str:
@@ -298,14 +303,6 @@ def _migrate_invoice_paths_to_relative() -> None:
             connection.commit()
 
 
-def _first_non_empty(*values: Any) -> str:
-    for value in values:
-        text = str(value or "").strip()
-        if text and text not in ("None", "null", "NULL"):
-            return text
-    return ""
-
-
 def _to_cents(value: Any) -> int:
     if value is None:
         return 0
@@ -412,55 +409,8 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
             ).fetchall()
 
         for row in rows:
-            total_cents = _to_cents(row["total_price"])
-            fee_cents = _to_cents(row["fee_total"])
-            refund_cents = _to_cents(row["refund_amount_sum"])
-            shipping_cents = 0
-            after_fees_cents = max(
-                _to_cents(row["net_total"]) + shipping_cents - refund_cents,
-                0,
-            )
-
-            customer = _first_non_empty(
-                f"{row['customer_first_name']} {row['customer_last_name']}".strip(),
-                row["customer_email"],
-                row["email"],
-                "Unbekannt",
-            )
-
-            article = _first_non_empty(row["first_article"], "-")
-
-            try:
-                line_items_count = int(row["line_items_count"])
-            except (ValueError, TypeError):
-                line_items_count = 1
-
-            order_date = _to_iso_utc(row["created_at"])
-
-            order = {
-                "marketplace": "shopify",
-                "order_id": str(row["id"]),
-                "external_order_id": _first_non_empty(row["name"], row["id"]),
-                "order_date": order_date,
-                "customer": customer,
-                "article": article,
-                "line_items_count": line_items_count,
-                "total_cents": total_cents,
-                "fees_cents": max(fee_cents, 0),
-                "after_fees_cents": after_fees_cents,
-                "shipping_cents": shipping_cents,
-                "currency": _first_non_empty(row["currency"], "EUR").upper(),
-                "fulfillment_status": _first_non_empty(
-                    row["fulfillment_status"], row["financial_status"], "unknown"
-                ),
-                "payment_method": _first_non_empty(row["payment_method"], "Shopify"),
-                "fee_source": "api" if fee_cents > 0 else "estimated",
-                "financial_status": _first_non_empty(row["financial_status"], ""),
-                "raw_status": _first_non_empty(
-                    row["fulfillment_status"], row["financial_status"], "unknown"
-                ),
-                "raw_json": str(row["raw_json"] or ""),
-            }
+            order = shopify_summary_from_row(row)
+            order["raw_json"] = str(row["raw_json"] or "")
             if market_filter and order["marketplace"] != market_filter:
                 continue
             if order_filter and order["order_id"] != order_filter:
@@ -535,42 +485,8 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
             ).fetchall()
 
         for row in rows:
-            total_cents = _to_kaufland_cents(row["units_price_sum"])
-            after_fees_cents = _to_kaufland_cents(row["revenue_gross_sum"]) or total_cents
-            fees_cents = total_cents - after_fees_cents
-            if fees_cents < 0:
-                fees_cents = 0
-            shipping_cents = _to_kaufland_cents(row["shipping_sum"])
-
-            customer = _first_non_empty(row["customer_name"], "Unbekannt")
-            article = _first_non_empty(row["first_article"], "-")
-            order_date = _to_iso_utc(row["ts_created_iso"])
-
-            try:
-                line_items_count = int(row["line_items_count"])
-            except (ValueError, TypeError):
-                line_items_count = 1
-
-            order = {
-                "marketplace": "kaufland",
-                "order_id": str(row["id_order"]),
-                "external_order_id": str(row["id_order"]),
-                "order_date": order_date,
-                "customer": customer,
-                "article": article,
-                "line_items_count": line_items_count,
-                "total_cents": total_cents,
-                "fees_cents": fees_cents,
-                "after_fees_cents": max(after_fees_cents, 0),
-                "shipping_cents": max(shipping_cents, 0),
-                "currency": "EUR",
-                "fulfillment_status": _first_non_empty(row["unit_status"], "unknown"),
-                "payment_method": "Kaufland Settlement",
-                "fee_source": "api",
-                "financial_status": "",
-                "raw_status": _first_non_empty(row["unit_status"], "unknown"),
-                "raw_json": str(row["raw_json"] or ""),
-            }
+            order = kaufland_summary_from_row(row)
+            order["raw_json"] = str(row["raw_json"] or "")
             if market_filter and order["marketplace"] != market_filter:
                 continue
             if order_filter and order["order_id"] != order_filter:

@@ -51,6 +51,72 @@ class ApiSmokeTests(unittest.TestCase):
         self.assertIn("items", payload)
         self.assertIn("total", payload)
 
+    def test_orders_endpoint_returns_purchase_cost_eur(self) -> None:
+        expected_payload = {
+            "total": 1,
+            "items": [
+                {
+                    "marketplace": "shopify",
+                    "order_id": "order-1",
+                    "external_order_id": "#1001",
+                    "purchase_cost_cents": 5490,
+                    "purchase_cost_eur": 54.9,
+                    "after_fees_cents": 12000,
+                    "profit_cents": 6510,
+                }
+            ],
+        }
+
+        with patch("app.routers.orders.list_orders", return_value=expected_payload):
+            response = self.client.get("/api/orders?limit=5")
+
+        self.assertEqual(response.status_code, 200)
+        item = response.json()["items"][0]
+        self.assertEqual(item["purchase_cost_cents"], 5490)
+        self.assertEqual(item["purchase_cost_eur"], 54.9)
+
+    def test_order_list_and_detail_share_finance_fields(self) -> None:
+        list_payload = {
+            "total": 1,
+            "items": [
+                {
+                    "marketplace": "shopify",
+                    "order_id": "order-1",
+                    "external_order_id": "#1001",
+                    "fees_cents": 350,
+                    "after_fees_cents": 9650,
+                    "purchase_cost_cents": 4000,
+                    "purchase_cost_eur": 40.0,
+                    "profit_cents": 5650,
+                }
+            ],
+        }
+        detail_payload = {
+            "summary": {
+                "marketplace": "shopify",
+                "order_id": "order-1",
+                "external_order_id": "#1001",
+                "fees_cents": 350,
+                "after_fees_cents": 9650,
+                "purchase_cost_cents": 4000,
+                "purchase_cost_eur": 40.0,
+                "profit_cents": 5650,
+            }
+        }
+
+        with patch("app.routers.orders.list_orders", return_value=list_payload), \
+             patch("app.routers.orders.get_order_detail", return_value=detail_payload), \
+             patch("app.routers.orders.get_order_bookkeeping_breakdown", return_value={"db_available": False}):
+            list_response = self.client.get("/api/orders?limit=5")
+            detail_response = self.client.get("/api/orders/shopify/order-1")
+
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(detail_response.status_code, 200)
+        list_item = list_response.json()["items"][0]
+        detail_summary = detail_response.json()["summary"]
+        for field in ("fees_cents", "after_fees_cents", "purchase_cost_cents", "purchase_cost_eur", "profit_cents"):
+            self.assertEqual(detail_summary[field], list_item[field])
+
     def test_order_detail_endpoint_includes_shipment_capabilities(self) -> None:
         detail_payload = {
             "summary": {

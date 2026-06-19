@@ -14,6 +14,7 @@ import { ThemeProvider } from "@/shared/theme/theme-provider";
 
 const AnalyticsShell = lazy(() => import("@/features/analytics/analytics-shell").then(m => ({ default: m.AnalyticsShell })));
 const OrdersShell = lazy(() => import("@/features/orders/orders-shell").then(m => ({ default: m.OrdersShell })));
+const SupportShell = lazy(() => import("@/features/support/support-shell").then(m => ({ default: m.SupportShell })));
 const CustomersShell = lazy(() => import("@/features/customers/customers-shell").then(m => ({ default: m.CustomersShell })));
 const InvoicesShell = lazy(() => import("@/features/invoices/invoices-shell").then(m => ({ default: m.InvoicesShell })));
 const BookingsShell = lazy(() => import("@/features/bookings/bookings-shell").then(m => ({ default: m.BookingsShell })));
@@ -30,6 +31,9 @@ function renderRouteShell(route: DashboardRoute) {
   }
   if (route === "orders") {
     return <OrdersShell isActive={true} />;
+  }
+  if (route === "support") {
+    return <SupportShell isActive={true} />;
   }
   if (route === "customers") {
     return <CustomersShell isActive={true} />;

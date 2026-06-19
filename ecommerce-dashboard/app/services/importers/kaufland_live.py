@@ -9,7 +9,7 @@ import ssl
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib import error as urlerror
@@ -35,6 +35,10 @@ ADDRESS_KEYS = (
     "phone",
     "country",
 )
+
+RECENT_INCOMPLETE_RECHECK_DELAY_MINUTES = 18
+RECENT_INCOMPLETE_RECHECK_MAX_AGE_MINUTES = 90
+RECENT_INCOMPLETE_RECHECK_LIMIT = 25
 
 
 class KauflandLiveError(RuntimeError):
@@ -76,6 +80,19 @@ def _clean_text(value: Any) -> Optional[str]:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _parse_iso(value: Any) -> Optional[datetime]:
+    text = _clean_text(value)
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _to_int(value: Any) -> Optional[int]:
@@ -849,6 +866,98 @@ def _build_return_detail_url(base_url: str, return_id: str) -> tuple[str, str]:
     )
 
 
+def _unit_address_is_complete(unit: sqlite3.Row, prefix: str) -> bool:
+    has_identity = bool(
+        _clean_text(unit[f"{prefix}_company_name"])
+        or _clean_text(unit[f"{prefix}_first_name"])
+        or _clean_text(unit[f"{prefix}_last_name"])
+    )
+    if not has_identity:
+        return False
+    for field in ("street", "postcode", "city", "country"):
+        if not _clean_text(unit[f"{prefix}_{field}"]):
+            return False
+    return True
+
+
+def _order_unit_needs_recent_recheck(unit: sqlite3.Row) -> bool:
+    status = (_clean_text(unit["status"]) or "").lower()
+    if not status or status == "unknown":
+        return True
+    if not _clean_text(unit["product_title"]):
+        return True
+    if not _unit_address_is_complete(unit, "shipping"):
+        return True
+    if not _unit_address_is_complete(unit, "billing"):
+        return True
+    return False
+
+
+def _list_recent_incomplete_order_ids(
+    connection: sqlite3.Connection,
+    *,
+    now_iso: str,
+    delay_minutes: int,
+    max_age_minutes: int,
+    limit: int,
+) -> list[str]:
+    if delay_minutes <= 0 or max_age_minutes < delay_minutes or limit <= 0:
+        return []
+
+    now_dt = _parse_iso(now_iso)
+    if now_dt is None:
+        return []
+
+    newest_created_iso = now_dt.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    oldest_created_iso = (now_dt - timedelta(minutes=max_age_minutes)).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+    latest_synced_iso = (now_dt - timedelta(minutes=delay_minutes)).replace(microsecond=0).isoformat().replace(
+        "+00:00", "Z"
+    )
+
+    order_rows = connection.execute(
+        """
+        SELECT id_order
+        FROM orders
+        WHERE COALESCE(ts_created_iso, '') >= ?
+          AND COALESCE(ts_created_iso, '') <= ?
+          AND COALESCE(synced_at_iso, '') <= ?
+        ORDER BY COALESCE(ts_created_iso, '') DESC, id_order DESC
+        LIMIT ?
+        """,
+        (oldest_created_iso, newest_created_iso, latest_synced_iso, max(limit * 3, limit)),
+    ).fetchall()
+
+    candidates: list[str] = []
+    for row in order_rows:
+        order_id = _clean_text(row["id_order"])
+        if not order_id:
+            continue
+
+        unit_rows = connection.execute(
+            "SELECT * FROM order_units WHERE id_order = ? ORDER BY COALESCE(ts_created_iso, '') ASC, id_order_unit ASC",
+            (order_id,),
+        ).fetchall()
+        if not unit_rows or any(_order_unit_needs_recent_recheck(unit_row) for unit_row in unit_rows):
+            candidates.append(order_id)
+        if len(candidates) >= limit:
+            break
+
+    return candidates
+
+
+def _touch_order_sync_markers(connection: sqlite3.Connection, order_id: str, synced_at_iso: str) -> None:
+    connection.execute(
+        "UPDATE orders SET synced_at_iso = ? WHERE id_order = ?",
+        (synced_at_iso, order_id),
+    )
+    connection.execute(
+        "UPDATE order_units SET synced_at_iso = ? WHERE id_order = ?",
+        (synced_at_iso, order_id),
+    )
+
+
 def _extract_array_loose(payload: Any) -> Optional[list[Any]]:
     if isinstance(payload, list):
         return payload
@@ -902,6 +1011,128 @@ def _get_return_identifier(return_data: dict[str, Any]) -> str:
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
+
+
+def _sync_order_record(
+    client: "KauflandLiveClient",
+    connection: sqlite3.Connection,
+    *,
+    base_url: str,
+    include_order_unit_details: bool,
+    summary: dict[str, Any],
+    add_error,
+    apply_change,
+    changed_order_ids: set[str],
+    seed_order: Optional[dict[str, Any]] = None,
+    explicit_order_id: Optional[str] = None,
+    allow_seed_upsert: bool = True,
+) -> dict[str, Any]:
+    seed = dict(seed_order or {})
+    order_id = _clean_text(explicit_order_id) or _get_order_identifier(seed)
+    if not order_id:
+        add_error("order_detail", "Could not resolve id_order from order payload")
+        return {"completed": False, "had_mutation": False, "mark_partial": True}
+
+    if not seed.get("id_order"):
+        seed["id_order"] = order_id
+
+    merged_order = dict(seed)
+    detail_data = None
+    mark_partial = False
+
+    detail_url, detail_uri = _build_order_detail_url(base_url, order_id)
+    try:
+        detail_payload = client.get_json(detail_url, detail_uri)
+    except KauflandLiveError as exc:
+        add_error("order_detail", str(exc), order_id=order_id, status_code=exc.status_code)
+        summary["order_details_failed"] += 1
+        mark_partial = True
+        if not allow_seed_upsert or len(seed) <= 1:
+            return {"completed": False, "had_mutation": False, "mark_partial": True}
+    else:
+        detail_obj = _extract_data_object(detail_payload)
+        if isinstance(detail_obj, dict):
+            detail_data = detail_obj
+            merged_order.update(detail_obj)
+            summary["order_details_loaded"] += 1
+        else:
+            add_error("order_detail", "Detail response has no object in 'data'", order_id=order_id)
+            summary["order_details_failed"] += 1
+            mark_partial = True
+            if not allow_seed_upsert or len(seed) <= 1:
+                return {"completed": False, "had_mutation": False, "mark_partial": True}
+
+    if not _get_order_identifier(merged_order):
+        merged_order["id_order"] = order_id
+
+    if merged_order.get("order_units_count") is None and isinstance(merged_order.get("order_units"), list):
+        merged_order["order_units_count"] = len(merged_order.get("order_units"))
+
+    order_result = upsert_order(connection, merged_order)
+    order_change = apply_change("orders", order_result, saved_key="orders_saved")
+    order_had_mutation = order_change in {"inserted", "updated"}
+    if order_change not in {"inserted", "updated", "unchanged"}:
+        add_error("order_upsert", "Order could not be saved", order_id=order_id)
+        mark_partial = True
+
+    order_units: list[dict[str, Any]] = []
+    if isinstance(detail_data, dict) and isinstance(detail_data.get("order_units"), list):
+        order_units = [row for row in detail_data.get("order_units") if isinstance(row, dict)]
+    elif isinstance(merged_order.get("order_units"), list):
+        order_units = [row for row in merged_order.get("order_units") if isinstance(row, dict)]
+
+    summary["order_units_seen"] += len(order_units)
+
+    for order_unit in order_units:
+        unit_payload = dict(order_unit)
+        raw_unit_id = order_unit.get("id_order_unit")
+        has_unit_id = raw_unit_id is not None and str(raw_unit_id).strip() != ""
+
+        if include_order_unit_details and has_unit_id:
+            unit_url, unit_uri = _build_order_unit_detail_url(base_url, str(raw_unit_id))
+            try:
+                unit_payload_raw = client.get_json(unit_url, unit_uri)
+            except KauflandLiveError as exc:
+                add_error(
+                    "order_unit_detail",
+                    str(exc),
+                    order_id=order_id,
+                    id_order_unit=raw_unit_id,
+                    status_code=exc.status_code,
+                )
+                summary["order_unit_details_failed"] += 1
+                mark_partial = True
+            else:
+                unit_detail_obj = _extract_data_object(unit_payload_raw)
+                if isinstance(unit_detail_obj, dict):
+                    unit_payload.update(unit_detail_obj)
+                    summary["order_unit_details_loaded"] += 1
+                else:
+                    add_error(
+                        "order_unit_detail",
+                        "Unit detail response has no object in 'data'",
+                        order_id=order_id,
+                        id_order_unit=raw_unit_id,
+                    )
+                    summary["order_unit_details_failed"] += 1
+                    mark_partial = True
+
+        unit_result = upsert_order_unit(connection, unit_payload, parent_order_id=order_id)
+        unit_change = apply_change("order_units", unit_result, saved_key="order_units_saved")
+        if unit_change in {"inserted", "updated"}:
+            order_had_mutation = True
+        if unit_change not in {"inserted", "updated", "unchanged"}:
+            add_error("order_unit_upsert", "Order unit could not be saved", order_id=order_id, id_order_unit=raw_unit_id)
+            mark_partial = True
+
+    if order_had_mutation:
+        changed_order_ids.add(order_id)
+
+    return {
+        "completed": True,
+        "had_mutation": order_had_mutation,
+        "mark_partial": mark_partial,
+    }
 
 
 class KauflandLiveClient:
@@ -1120,6 +1351,12 @@ def sync_kaufland_live(
         "order_units_unchanged": 0,
         "order_unit_details_loaded": 0,
         "order_unit_details_failed": 0,
+        "recent_incomplete_rechecks_considered": 0,
+        "recent_incomplete_rechecks_attempted": 0,
+        "recent_incomplete_rechecks_completed": 0,
+        "recent_incomplete_rechecks_updated": 0,
+        "recent_incomplete_rechecks_unchanged": 0,
+        "recent_incomplete_rechecks_failed": 0,
         "returns_pages": 0,
         "returns_seen": 0,
         "returns_saved": 0,
@@ -1160,6 +1397,7 @@ def sync_kaufland_live(
 
     try:
         client = KauflandLiveClient(config)
+        changed_order_ids: set[str] = set()
 
         with _connect() as connection:
             orders_offset = 0
@@ -1181,95 +1419,66 @@ def sync_kaufland_live(
                     if not isinstance(order, dict):
                         continue
 
-                    order_id = _get_order_identifier(order)
-                    if not order_id:
-                        add_error("order_detail", "Could not resolve id_order from order payload")
+                    order_sync = _sync_order_record(
+                        client,
+                        connection,
+                        base_url=config.base_url,
+                        include_order_unit_details=include_order_unit_details,
+                        summary=summary,
+                        add_error=add_error,
+                        apply_change=apply_change,
+                        changed_order_ids=changed_order_ids,
+                        seed_order=order,
+                        allow_seed_upsert=True,
+                    )
+                    if order_sync.get("mark_partial"):
                         sync_status = "partial"
-                        continue
-
-                    merged_order = dict(order)
-                    detail_data = None
-
-                    detail_url, detail_uri = _build_order_detail_url(config.base_url, order_id)
-                    try:
-                        detail_payload = client.get_json(detail_url, detail_uri)
-                    except KauflandLiveError as exc:
-                        add_error("order_detail", str(exc), order_id=order_id, status_code=exc.status_code)
-                        summary["order_details_failed"] += 1
-                        sync_status = "partial"
-                    else:
-                        detail_obj = _extract_data_object(detail_payload)
-                        if isinstance(detail_obj, dict):
-                            detail_data = detail_obj
-                            merged_order.update(detail_obj)
-                            summary["order_details_loaded"] += 1
-                        else:
-                            add_error("order_detail", "Detail response has no object in 'data'", order_id=order_id)
-                            summary["order_details_failed"] += 1
-                            sync_status = "partial"
-
-                    if merged_order.get("order_units_count") is None and isinstance(merged_order.get("order_units"), list):
-                        merged_order["order_units_count"] = len(merged_order.get("order_units"))
-
-                    order_result = upsert_order(connection, merged_order)
-                    order_change = apply_change("orders", order_result, saved_key="orders_saved")
-                    if order_change not in {"inserted", "updated", "unchanged"}:
-                        add_error("order_upsert", "Order could not be saved", order_id=order_id)
-                        sync_status = "partial"
-
-                    order_units: list[dict[str, Any]] = []
-                    if isinstance(detail_data, dict) and isinstance(detail_data.get("order_units"), list):
-                        order_units = [row for row in detail_data.get("order_units") if isinstance(row, dict)]
-                    elif isinstance(merged_order.get("order_units"), list):
-                        order_units = [row for row in merged_order.get("order_units") if isinstance(row, dict)]
-
-                    summary["order_units_seen"] += len(order_units)
-
-                    for order_unit in order_units:
-                        unit_payload = dict(order_unit)
-                        raw_unit_id = order_unit.get("id_order_unit")
-                        has_unit_id = raw_unit_id is not None and str(raw_unit_id).strip() != ""
-
-                        if include_order_unit_details and has_unit_id:
-                            unit_url, unit_uri = _build_order_unit_detail_url(config.base_url, str(raw_unit_id))
-                            try:
-                                unit_payload_raw = client.get_json(unit_url, unit_uri)
-                            except KauflandLiveError as exc:
-                                add_error(
-                                    "order_unit_detail",
-                                    str(exc),
-                                    order_id=order_id,
-                                    id_order_unit=raw_unit_id,
-                                    status_code=exc.status_code,
-                                )
-                                summary["order_unit_details_failed"] += 1
-                                sync_status = "partial"
-                            else:
-                                unit_detail_obj = _extract_data_object(unit_payload_raw)
-                                if isinstance(unit_detail_obj, dict):
-                                    unit_payload.update(unit_detail_obj)
-                                    summary["order_unit_details_loaded"] += 1
-                                else:
-                                    add_error(
-                                        "order_unit_detail",
-                                        "Unit detail response has no object in 'data'",
-                                        order_id=order_id,
-                                        id_order_unit=raw_unit_id,
-                                    )
-                                    summary["order_unit_details_failed"] += 1
-                                    sync_status = "partial"
-
-                        unit_result = upsert_order_unit(connection, unit_payload, parent_order_id=order_id)
-                        unit_change = apply_change("order_units", unit_result, saved_key="order_units_saved")
-                        if unit_change not in {"inserted", "updated", "unchanged"}:
-                            add_error("order_unit_upsert", "Order unit could not be saved", order_id=order_id, id_order_unit=raw_unit_id)
-                            sync_status = "partial"
 
                 connection.commit()
 
                 if len(orders) < normalized_page_limit:
                     break
                 orders_offset += normalized_page_limit
+
+            if ts_created_from_iso:
+                now_iso = _utc_now_iso()
+                candidate_order_ids = _list_recent_incomplete_order_ids(
+                    connection,
+                    now_iso=now_iso,
+                    delay_minutes=RECENT_INCOMPLETE_RECHECK_DELAY_MINUTES,
+                    max_age_minutes=RECENT_INCOMPLETE_RECHECK_MAX_AGE_MINUTES,
+                    limit=RECENT_INCOMPLETE_RECHECK_LIMIT,
+                )
+                summary["recent_incomplete_rechecks_considered"] = len(candidate_order_ids)
+
+                for order_id in candidate_order_ids:
+                    summary["recent_incomplete_rechecks_attempted"] += 1
+                    order_sync = _sync_order_record(
+                        client,
+                        connection,
+                        base_url=config.base_url,
+                        include_order_unit_details=include_order_unit_details,
+                        summary=summary,
+                        add_error=add_error,
+                        apply_change=apply_change,
+                        changed_order_ids=changed_order_ids,
+                        explicit_order_id=order_id,
+                        allow_seed_upsert=False,
+                    )
+                    if order_sync.get("completed"):
+                        _touch_order_sync_markers(connection, order_id, now_iso)
+                        summary["recent_incomplete_rechecks_completed"] += 1
+                        if order_sync.get("had_mutation"):
+                            summary["recent_incomplete_rechecks_updated"] += 1
+                        else:
+                            summary["recent_incomplete_rechecks_unchanged"] += 1
+                    else:
+                        summary["recent_incomplete_rechecks_failed"] += 1
+                    if order_sync.get("mark_partial"):
+                        sync_status = "partial"
+
+                if candidate_order_ids:
+                    connection.commit()
 
             if include_returns:
                 returns_offset = 0
@@ -1371,6 +1580,7 @@ def sync_kaufland_live(
             "summary": summary,
             "errors": errors,
             "config": config_summary,
+            "_changed_order_ids": sorted(changed_order_ids),
         }
     except KauflandLiveError as exc:
         summary["finished_at_iso"] = _utc_now_iso()

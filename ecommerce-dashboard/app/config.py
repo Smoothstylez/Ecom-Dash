@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 
 # ── Versioning (written into backup manifests for future compatibility) ──
-APP_VERSION = "0.4.6"
+APP_VERSION = "0.4.7"
 SCHEMA_VERSION = 1  # Increment when DB schema changes in a breaking way
 
 DATA_DIR = PROJECT_ROOT / "data"
@@ -45,6 +45,7 @@ SHOPIFY_DB_PATH = _resolve_env_path("SHOPIFY_DB_PATH", SHOPIFY_SOURCE_DIR / "sho
 KAUFLAND_DB_PATH = _resolve_env_path("KAUFLAND_DB_PATH", KAUFLAND_SOURCE_DIR / "kaufland_data.sqlite3")
 BOOKKEEPING_DB_PATH = _resolve_env_path("BOOKKEEPING_DB_PATH", BOOKKEEPING_SOURCE_DIR / "dashboard.sqlite3")
 EBAY_DB_PATH = _resolve_env_path("EBAY_DB_PATH", EBAY_SOURCE_DIR / "ebay_data.sqlite3")
+SUPPORT_DB_PATH = _resolve_env_path("SUPPORT_DB_PATH", KAUFLAND_SOURCE_DIR / "kaufland_tickets.sqlite3")
 
 # Bootstrap source DBs used for local copy-sync into the runtime source DBs.
 SHOPIFY_BOOTSTRAP_DB_PATH = _resolve_env_path(

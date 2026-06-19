@@ -10,6 +10,7 @@ type RouteExpectation = {
 const routeExpectations: RouteExpectation[] = [
   { path: "/analytics", activeNavId: "tabAnalyticsBtn", activePanelId: "analyticsPanel" },
   { path: "/orders", activeNavId: "tabOrdersBtn", activePanelId: "ordersPanel" },
+  { path: "/support", activeNavId: "tabSupportBtn", activePanelId: "supportPanel" },
   { path: "/customers", activeNavId: "tabCustomersBtn", activePanelId: "customersPanel" },
   { path: "/invoices", activeNavId: "tabInvoicesBtn", activePanelId: "invoicesPanel" },
   { path: "/bookings/full?subtab=transactions", activeNavId: "tabBookingsBtn", activePanelId: "bookingsPanel", bodyClass: "bookings-full" },
@@ -138,6 +139,8 @@ test.describe("dashboard smoke", () => {
 
       if (expectation.path === "/customers") {
         await expect(page.locator("#customersPanel")).toHaveAttribute("data-react-customers-mounted", "true");
+      } else if (expectation.path === "/support") {
+        await expect(page.locator("#supportPanel")).toHaveAttribute("data-react-support-mounted", "true");
       } else if (expectation.path === "/invoices") {
         await expect(page.locator("#invoicesPanel")).toHaveAttribute("data-react-invoices-mounted", "true");
       } else if (expectation.path === "/google-ads") {

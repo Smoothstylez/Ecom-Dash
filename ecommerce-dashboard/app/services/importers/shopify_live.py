@@ -1578,6 +1578,7 @@ def sync_shopify_live(
         "duration_seconds": None,
     }
     errors: list[dict[str, Any]] = []
+    changed_order_ids: set[str] = set()
 
     def add_error(scope: str, message: str, **meta: Any) -> None:
         summary["error_count"] += 1
@@ -1633,6 +1634,7 @@ def sync_shopify_live(
                     try:
                         order_result = upsert_order(connection, order)
                         apply_change("orders", str(order_result.get("change") or ""))
+                        order_changed = str(order_result.get("change") or "") in {"inserted", "updated"}
 
                         if include_line_items:
                             line_items = order.get("line_items") if isinstance(order.get("line_items"), list) else []
@@ -1643,10 +1645,13 @@ def sync_shopify_live(
                                     continue
                                 result = upsert_line_item(connection, order_id, line_item, idx)
                                 apply_change("line_items", str(result.get("change") or ""))
+                                if str(result.get("change") or "") in {"inserted", "updated"}:
+                                    order_changed = True
                                 record_id = _clean_text(result.get("id"))
                                 if record_id:
                                     keep_ids.append(record_id)
-                            delete_stale_order_rows(connection, "order_line_items", order_id, keep_ids)
+                            if delete_stale_order_rows(connection, "order_line_items", order_id, keep_ids) > 0:
+                                order_changed = True
 
                         if include_fulfillments:
                             fulfillments = order.get("fulfillments") if isinstance(order.get("fulfillments"), list) else []
@@ -1657,10 +1662,13 @@ def sync_shopify_live(
                                     continue
                                 result = upsert_fulfillment(connection, order_id, fulfillment, idx)
                                 apply_change("fulfillments", str(result.get("change") or ""))
+                                if str(result.get("change") or "") in {"inserted", "updated"}:
+                                    order_changed = True
                                 record_id = _clean_text(result.get("id"))
                                 if record_id:
                                     keep_ids.append(record_id)
-                            delete_stale_order_rows(connection, "order_fulfillments", order_id, keep_ids)
+                            if delete_stale_order_rows(connection, "order_fulfillments", order_id, keep_ids) > 0:
+                                order_changed = True
 
                         if include_refunds:
                             refunds = order.get("refunds") if isinstance(order.get("refunds"), list) else []
@@ -1671,10 +1679,13 @@ def sync_shopify_live(
                                     continue
                                 result = upsert_refund(connection, order_id, refund, idx)
                                 apply_change("refunds", str(result.get("change") or ""))
+                                if str(result.get("change") or "") in {"inserted", "updated"}:
+                                    order_changed = True
                                 record_id = _clean_text(result.get("id"))
                                 if record_id:
                                     keep_ids.append(record_id)
-                            delete_stale_order_rows(connection, "order_refunds", order_id, keep_ids)
+                            if delete_stale_order_rows(connection, "order_refunds", order_id, keep_ids) > 0:
+                                order_changed = True
 
                         if include_transactions:
                             transactions: list[dict[str, Any]] = []
@@ -1700,16 +1711,21 @@ def sync_shopify_live(
                             for idx, transaction in enumerate(transactions):
                                 result = upsert_transaction(connection, order_id, transaction, idx)
                                 apply_change("transactions", str(result.get("change") or ""))
+                                if str(result.get("change") or "") in {"inserted", "updated"}:
+                                    order_changed = True
                                 record_id = _clean_text(result.get("id"))
                                 if record_id:
                                     keep_ids.append(record_id)
 
-                            delete_stale_order_rows(connection, "order_transactions", order_id, keep_ids)
+                            if delete_stale_order_rows(connection, "order_transactions", order_id, keep_ids) > 0:
+                                order_changed = True
                             refresh_order_payment_method_from_transactions(
                                 connection,
                                 order_id,
                                 fallback_method=_extract_order_payment_method(order),
                             )
+                        if order_changed:
+                            changed_order_ids.add(order_id)
                     except Exception as exc:
                         add_error("order_process", str(exc), order_id=order_id)
                         sync_status = "partial"
@@ -1768,6 +1784,7 @@ def sync_shopify_live(
             "summary": summary,
             "errors": errors,
             "config": config_summary,
+            "_changed_order_ids": sorted(changed_order_ids),
         }
     except ShopifyLiveError as exc:
         summary["finished_at"] = _utc_now_iso()

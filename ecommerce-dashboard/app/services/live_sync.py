@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from app import changestamp
+from app.db import init_combined_db, populate_combined_orders
 from app.services.importers import (
     build_kaufland_live_status,
     build_shopify_live_status,
@@ -123,6 +124,20 @@ def _derive_overall_status(results: dict[str, Any]) -> str:
     return "success"
 
 
+def _merge_status(base_status: str, extra_status: str) -> str:
+    normalized_base = str(base_status or "").strip().lower() or "success"
+    normalized_extra = str(extra_status or "").strip().lower() or "success"
+    if "error" in {normalized_base, normalized_extra}:
+        if normalized_base in {"success", "partial", "skipped"} or normalized_extra in {"success", "partial", "skipped"}:
+            return "partial"
+        return "error"
+    if "partial" in {normalized_base, normalized_extra}:
+        return "partial"
+    if normalized_base == "skipped" and normalized_extra == "skipped":
+        return "skipped"
+    return "success"
+
+
 def _compact_live_result(payload: dict[str, Any]) -> dict[str, Any]:
     results_raw = payload.get("results")
     results = results_raw if isinstance(results_raw, dict) else {}
@@ -190,6 +205,45 @@ def _bookkeeping_summary_has_mutation(summary: Any) -> bool:
     return False
 
 
+def _refresh_combined_from_live_results(results: dict[str, Any]) -> dict[str, Any]:
+    changed_pairs: set[tuple[str, str]] = set()
+    for provider, payload in results.items():
+        if not isinstance(payload, dict):
+            continue
+        changed_order_ids = payload.get("_changed_order_ids")
+        if not isinstance(changed_order_ids, list):
+            continue
+        marketplace = str(provider or "").strip().lower()
+        if not marketplace:
+            continue
+        for order_id in changed_order_ids:
+            normalized_order_id = str(order_id or "").strip()
+            if normalized_order_id:
+                changed_pairs.add((marketplace, normalized_order_id))
+
+    summary: dict[str, Any] = {
+        "status": "skipped",
+        "orders_considered": len(changed_pairs),
+        "orders_refreshed": 0,
+    }
+    if not changed_pairs:
+        summary["reason"] = "no changed live orders"
+        return summary
+
+    try:
+        init_combined_db()
+        for marketplace, order_id in sorted(changed_pairs):
+            summary["orders_refreshed"] += populate_combined_orders(marketplace=marketplace, order_id=order_id)
+    except Exception as exc:  # pragma: no cover - robustness
+        LOGGER.exception("combined order refresh after live sync failed: %s", exc)
+        summary["status"] = "error"
+        summary["reason"] = str(exc)
+        return summary
+
+    summary["status"] = "refreshed" if int(summary["orders_refreshed"] or 0) > 0 else "up-to-date"
+    return summary
+
+
 def _run_live_sync_inner(
     *,
     run_shopify: bool,
@@ -237,14 +291,24 @@ def _run_live_sync_inner(
     else:
         results["kaufland"] = {"status": "skipped", "provider": "kaufland"}
 
+    combined_orders = _refresh_combined_from_live_results(results)
+    for payload in results.values():
+        if isinstance(payload, dict):
+            payload.pop("_changed_order_ids", None)
+
+    overall_status = _derive_overall_status(results)
+    if str(combined_orders.get("status") or "").lower() == "error":
+        overall_status = _merge_status(overall_status, "error")
+
     return {
         "timestamp": _utc_now(),
         "requested": {
             "shopify": bool(run_shopify),
             "kaufland": bool(run_kaufland),
         },
-        "status": _derive_overall_status(results),
+        "status": overall_status,
         "results": results,
+        "combined_orders": combined_orders,
         "live_status": build_live_sync_status(),
     }
 

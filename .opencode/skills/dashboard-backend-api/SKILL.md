@@ -1,6 +1,6 @@
 ---
 name: dashboard-backend-api
-description: Use when operating the Ecom Dashboard via direct backend API calls instead of the visible UI, especially for orders, filters, tracking numbers, purchase costs, PDF uploads, invoices, bookings, sync, analytics, customers, or Google Ads.
+description: Use when operating the Ecom Dashboard via direct backend API calls instead of the visible UI, especially for orders, support tickets, filters, tracking numbers, purchase costs, PDF uploads, invoices, bookings, sync, analytics, customers, or Google Ads.
 ---
 
 # Dashboard Backend API
@@ -18,6 +18,8 @@ Repository helper scripts:
 - `scripts/dashboard-api/set-tracking.sh`
 - `scripts/dashboard-api/upload-order-invoice.sh`
 - `scripts/dashboard-api/create-sales-invoice.sh`
+
+Support ticket routes are documented in `docs/dashboard-backend-api.md` and should be preferred over UI clicks when working the Kaufland support inbox.
 
 Core rules:
 
