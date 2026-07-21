@@ -418,6 +418,7 @@ def _default_seller_profile() -> dict[str, Any]:
         "vat_id": "DE458504535",
         "tax_number": "",
         "tax_mode": "small_business",
+        "vat_effective_from": "",
         "invoice_prefix": "RE",
         "default_template": DEFAULT_TEMPLATE_KEY,
         "footer_note": "Bei Fragen erreichst du uns unter support@blockeria.de.",
@@ -443,6 +444,7 @@ def _normalize_profile_payload(payload: dict[str, Any] | None) -> dict[str, Any]
         "vat_id": _upper_token(source.get("vat_id")),
         "tax_number": _text(source.get("tax_number")),
         "tax_mode": _normalize_tax_mode(source.get("tax_mode")),
+        "vat_effective_from": _text(source.get("vat_effective_from")),
         "invoice_prefix": sanitize_filename(_upper_token(source.get("invoice_prefix"), "RE"))[:12] or "RE",
         "default_template": _normalize_template_key(source.get("default_template")),
         "footer_note": _text(source.get("footer_note")),
@@ -473,10 +475,10 @@ def _ensure_default_profile(connection: sqlite3.Connection) -> None:
         """
         INSERT OR IGNORE INTO seller_profiles (
             id, legal_name, street, address_line2, postcode, city, country,
-            email, phone, vat_id, tax_number, tax_mode, invoice_prefix,
+            email, phone, vat_id, tax_number, tax_mode, vat_effective_from, invoice_prefix,
             default_template, footer_note, payment_note, eu_invoicing_enabled,
             created_at, updated_at
-        ) VALUES (?, '', '', '', '', '', 'DE', '', '', '', '', 'small_business', 'RE', 'clean', '', '', 0, ?, ?)
+        ) VALUES (?, '', '', '', '', '', 'DE', '', '', '', '', 'small_business', '', 'RE', 'clean', '', '', 0, ?, ?)
         """,
         (DEFAULT_PROFILE_ID, timestamp, timestamp),
     )
@@ -510,7 +512,7 @@ def save_seller_profile(payload: dict[str, Any] | None) -> dict[str, Any]:
             UPDATE seller_profiles
             SET legal_name = ?, street = ?, address_line2 = ?, postcode = ?, city = ?,
                 country = ?, email = ?, phone = ?, vat_id = ?, tax_number = ?,
-                tax_mode = ?, invoice_prefix = ?, default_template = ?, footer_note = ?,
+                tax_mode = ?, vat_effective_from = ?, invoice_prefix = ?, default_template = ?, footer_note = ?,
                 payment_note = ?, eu_invoicing_enabled = ?, updated_at = ?
             WHERE id = ?
             """,
@@ -526,6 +528,7 @@ def save_seller_profile(payload: dict[str, Any] | None) -> dict[str, Any]:
                 normalized["vat_id"],
                 normalized["tax_number"],
                 normalized["tax_mode"],
+                normalized["vat_effective_from"],
                 normalized["invoice_prefix"],
                 normalized["default_template"],
                 normalized["footer_note"],

@@ -14,6 +14,7 @@ export type InvoiceSellerProfile = {
   vat_id?: string;
   tax_number?: string;
   tax_mode?: string;
+  vat_effective_from?: string;
   invoice_prefix?: string;
   default_template?: string;
   footer_note?: string;
@@ -81,6 +82,74 @@ export type InvoiceDraft = {
     invoice_number?: string;
     created_at?: string;
   } | null;
+};
+
+export type VatThresholdCandidate = {
+  marketplace?: string;
+  order_id?: string;
+  external_order_id?: string;
+  order_date?: string;
+  sales_gross_cents?: number;
+  cumulative_gross_cents?: number;
+  threshold_cents?: number;
+};
+
+export type VatReportOrderRow = {
+  marketplace?: string;
+  order_id?: string;
+  external_order_id?: string;
+  order_date?: string;
+  customer?: string;
+  sales_gross_cents?: number;
+  sales_net_cents?: number;
+  sales_vat_cents?: number;
+  purchase_cost_cents?: number;
+  purchase_vat_cents?: number;
+  deductible_purchase_vat_cents?: number;
+};
+
+export type VatReportMonthlyFeeInvoice = {
+  id?: string;
+  provider?: string;
+  period_from?: string;
+  period_to?: string;
+  invoice_amount_cents?: number;
+  vat_amount_cents?: number;
+  status?: string;
+  notes?: string;
+};
+
+export type VatReportManualTransaction = {
+  id?: string;
+  date?: string;
+  type?: string;
+  provider?: string;
+  counterparty_name?: string;
+  amount_gross?: number;
+  vat_amount?: number;
+  reference?: string;
+  notes?: string;
+};
+
+export type VatReport = {
+  month?: string;
+  settings?: {
+    tax_mode?: string;
+    vat_effective_from?: string | null;
+  };
+  threshold_candidate?: VatThresholdCandidate | null;
+  totals?: {
+    output_vat_total_cents?: number;
+    deductible_purchase_vat_total_cents?: number;
+    monthly_fee_vat_total_cents?: number;
+    manual_input_vat_total_cents?: number;
+    deductible_input_vat_total_cents?: number;
+    vat_payable_total_cents?: number;
+  };
+  orders?: VatReportOrderRow[];
+  monthly_fee_invoices?: VatReportMonthlyFeeInvoice[];
+  manual_input_vat_transactions?: VatReportManualTransaction[];
+  warnings?: string[];
 };
 
 export type SalesInvoiceItem = {
@@ -172,6 +241,11 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function fetchInvoiceProfile() {
   return fetchJson<{ profile?: InvoiceSellerProfile }>(buildDashboardApiUrl("/api/invoices/profile"));
+}
+
+export function fetchVatReport(month: string) {
+  const params = new URLSearchParams({ month });
+  return fetchJson<VatReport>(buildDashboardApiUrl(`/api/invoices/tax-report?${params.toString()}`));
 }
 
 export function updateInvoiceProfile(profile: InvoiceSellerProfile) {

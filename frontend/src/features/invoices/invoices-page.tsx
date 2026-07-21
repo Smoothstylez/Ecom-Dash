@@ -10,11 +10,13 @@ import {
   createInvoice,
   fetchInvoiceDraft,
   fetchInvoiceProfile,
+  fetchVatReport,
   fetchInvoices,
   updateInvoiceProfile,
   type InvoiceDraft,
   type InvoiceSellerProfile,
   type SalesInvoice,
+  type VatReport,
 } from "./api";
 
 type StatusMessage = {
@@ -54,12 +56,47 @@ const EMPTY_PROFILE: InvoiceSellerProfile = {
   vat_id: "",
   tax_number: "",
   tax_mode: "small_business",
+  vat_effective_from: "",
   invoice_prefix: "RE",
   default_template: "clean",
   footer_note: "",
   payment_note: "",
   eu_invoicing_enabled: false,
 };
+
+function previousMonthToken() {
+  const now = new Date();
+  const previousMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  return `${previousMonth.getFullYear()}-${String(previousMonth.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function isoToLocalDateTimeInput(value: string | undefined) {
+  if (!value) {
+    return "";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, "0");
+  const day = String(parsed.getDate()).padStart(2, "0");
+  const hours = String(parsed.getHours()).padStart(2, "0");
+  const minutes = String(parsed.getMinutes()).padStart(2, "0");
+  return `${year}-${month}-${day}T${hours}:${minutes}`;
+}
+
+function localDateTimeInputToIso(value: string) {
+  const text = String(value || "").trim();
+  if (!text) {
+    return "";
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return text;
+  }
+  return parsed.toISOString();
+}
 
 function orderRowKey(order: OrderSummary) {
   return `${String(order.marketplace || "").trim()}:${String(order.order_id || "").trim()}`;
@@ -103,6 +140,10 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
   const [draftLoading, setDraftLoading] = useState(false);
   const [draftError, setDraftError] = useState("");
   const [draft, setDraft] = useState<InvoiceDraft | null>(null);
+  const [vatReportMonth, setVatReportMonth] = useState(previousMonthToken());
+  const [vatReport, setVatReport] = useState<VatReport | null>(null);
+  const [vatReportLoading, setVatReportLoading] = useState(false);
+  const [vatReportError, setVatReportError] = useState("");
   const [selectedOrderKey, setSelectedOrderKey] = useState("");
   const [selectedTemplate, setSelectedTemplate] = useState("clean");
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
@@ -216,6 +257,35 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
       cancelled = true;
     };
   }, [isActive, shellFilters.from, shellFilters.marketplace, shellFilters.q, shellFilters.to, refreshRequestToken]);
+
+  useEffect(() => {
+    if (!isActive || !vatReportMonth) {
+      return;
+    }
+    let cancelled = false;
+    setVatReportLoading(true);
+    setVatReportError("");
+    void fetchVatReport(vatReportMonth)
+      .then((payload) => {
+        if (!cancelled) {
+          setVatReport(payload);
+        }
+      })
+      .catch((error: Error) => {
+        if (!cancelled) {
+          setVatReport(null);
+          setVatReportError(error.message);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setVatReportLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isActive, refreshRequestToken, vatReportMonth]);
 
   useEffect(() => {
     if (!selectedOrderKey) {
@@ -348,11 +418,11 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
 
       <section className="card" style={{ marginTop: statusMessage ? 12 : 0, padding: 16 }}>
         <div className="table-head" style={{ marginBottom: 12 }}>
-          <div>
-            <h2 className="table-title">Kundenrechnungen</h2>
-            <div className="table-meta">V1 ist auf DE Kleinunternehmer optimiert. EU-Faelle werden bereits erkannt und mit Hinweisen markiert.</div>
-          </div>
-        </div>
+              <div>
+                <h2 className="table-title">Kundenrechnungen</h2>
+                <div className="table-meta">Rechnungsprofil, manueller USt-Start und Monatsreport fuer die USt-Zahllast.</div>
+              </div>
+            </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16, alignItems: "start" }}>
           <article className="card table-card" style={{ margin: 0 }}>
@@ -465,6 +535,15 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
                   </select>
                 </label>
                 <label>
+                  <div className="table-meta">USt aktiv ab</div>
+                  <input
+                    className="settings-inline-input"
+                    type="datetime-local"
+                    value={isoToLocalDateTimeInput(String(profile.vat_effective_from || ""))}
+                    onChange={(event) => updateProfileField("vat_effective_from", localDateTimeInputToIso(event.target.value))}
+                  />
+                </label>
+                <label>
                   <div className="table-meta">Nummern-Praefix</div>
                   <input className="settings-inline-input" value={String(profile.invoice_prefix || "RE")} onChange={(event) => updateProfileField("invoice_prefix", event.target.value.toUpperCase())} />
                 </label>
@@ -498,6 +577,120 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
                   {profileSaving ? "Speichern..." : "Profil speichern"}
                 </button>
               </div>
+            </section>
+
+            <section className="card" style={{ padding: 16 }}>
+              <div className="table-head" style={{ marginBottom: 12 }}>
+                <div>
+                  <h3 className="table-title">Umsatzsteuer Report</h3>
+                  <div className="table-meta">Basis: Order-Eingangszeitpunkt innerhalb des Monats</div>
+                </div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  <span className="table-meta">Monat</span>
+                  <input className="settings-inline-input" type="month" value={vatReportMonth} onChange={(event) => setVatReportMonth(event.target.value)} />
+                </div>
+              </div>
+
+              {vatReportError ? <div className="status status-error">{vatReportError}</div> : null}
+              {vatReportLoading ? <div className="table-meta">USt-Report wird geladen...</div> : null}
+
+              {vatReport ? (
+                <div style={{ display: "grid", gap: 16 }}>
+                  {vatReport.threshold_candidate ? (
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Schwellen-Hinweis</div>
+                      <div style={{ fontWeight: 600 }}>{String(vatReport.threshold_candidate.external_order_id || vatReport.threshold_candidate.order_id || "-")}</div>
+                      <div className="cell-sub">{String(vatReport.threshold_candidate.marketplace || "-")} | {formatDateTime(vatReport.threshold_candidate.order_date)}</div>
+                      <div className="cell-sub">Kumuliert: {formatMoneyFromCents(Number(vatReport.threshold_candidate.cumulative_gross_cents || 0))}</div>
+                    </article>
+                  ) : null}
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Ausgangs-USt</div>
+                      <div style={{ fontWeight: 700, fontSize: "1.05rem" }}>{formatMoneyFromCents(Number(vatReport.totals?.output_vat_total_cents || 0))}</div>
+                    </article>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Vorsteuer Bestellungen</div>
+                      <div style={{ fontWeight: 700, fontSize: "1.05rem" }}>{formatMoneyFromCents(Number(vatReport.totals?.deductible_purchase_vat_total_cents || 0))}</div>
+                    </article>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Vorsteuer Gebuehren</div>
+                      <div style={{ fontWeight: 700, fontSize: "1.05rem" }}>{formatMoneyFromCents(Number(vatReport.totals?.monthly_fee_vat_total_cents || 0))}</div>
+                    </article>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Vorsteuer Sonstiges</div>
+                      <div style={{ fontWeight: 700, fontSize: "1.05rem" }}>{formatMoneyFromCents(Number(vatReport.totals?.manual_input_vat_total_cents || 0))}</div>
+                    </article>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta">Ans Finanzamt</div>
+                      <div style={{ fontWeight: 700, fontSize: "1.1rem" }}>{formatMoneyFromCents(Number(vatReport.totals?.vat_payable_total_cents || 0))}</div>
+                    </article>
+                  </div>
+
+                  {Array.isArray(vatReport.warnings) && vatReport.warnings.length ? vatReport.warnings.map((message) => (
+                    <div key={message} className="status status-info">{message}</div>
+                  )) : null}
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta" style={{ marginBottom: 8 }}>USt-pflichtige Orders</div>
+                      <div className="table-wrap" style={{ maxHeight: 360, overflow: "auto" }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Order</th>
+                              <th>Brutto</th>
+                              <th>USt</th>
+                              <th>VSt Einkauf</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Array.isArray(vatReport.orders) && vatReport.orders.length ? vatReport.orders.map((order) => (
+                              <tr key={`${String(order.marketplace || "")}:${String(order.order_id || "")}`}>
+                                <td>
+                                  <div><strong>{String(order.external_order_id || order.order_id || "-")}</strong></div>
+                                  <div className="cell-sub">{String(order.marketplace || "-")} | {formatDateTime(order.order_date)}</div>
+                                </td>
+                                <td>{formatMoneyFromCents(Number(order.sales_gross_cents || 0))}</td>
+                                <td>{formatMoneyFromCents(Number(order.sales_vat_cents || 0))}</td>
+                                <td>{formatMoneyFromCents(Number(order.deductible_purchase_vat_cents || 0))}</td>
+                              </tr>
+                            )) : <tr><td colSpan={4}>Keine USt-pflichtigen Orders im Monat.</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+
+                    <article className="card" style={{ margin: 0, padding: 12 }}>
+                      <div className="table-meta" style={{ marginBottom: 8 }}>Vorsteuer aus Sammelrechnungen</div>
+                      <div className="table-wrap" style={{ maxHeight: 360, overflow: "auto" }}>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>Provider</th>
+                              <th>Brutto</th>
+                              <th>VSt</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Array.isArray(vatReport.monthly_fee_invoices) && vatReport.monthly_fee_invoices.length ? vatReport.monthly_fee_invoices.map((invoice) => (
+                              <tr key={String(invoice.id || `${String(invoice.provider || "")}:${String(invoice.period_from || "")}`)}>
+                                <td>
+                                  <div><strong>{String(invoice.provider || "-")}</strong></div>
+                                  <div className="cell-sub">{String(invoice.period_from || "-").slice(0, 10)} bis {String(invoice.period_to || "-").slice(0, 10)}</div>
+                                </td>
+                                <td>{formatMoneyFromCents(Number(invoice.invoice_amount_cents || 0))}</td>
+                                <td>{formatMoneyFromCents(Number(invoice.vat_amount_cents || 0))}</td>
+                              </tr>
+                            )) : <tr><td colSpan={3}>Keine Sammelrechnungen mit Vorsteuer.</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </article>
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <section className="card" style={{ padding: 16 }}>

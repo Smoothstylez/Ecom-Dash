@@ -68,6 +68,17 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
                 <input id="createBookingAmount" type="text" inputMode="decimal" placeholder="0,00" />
               </div>
               <div className="control">
+                <label htmlFor="createBookingVatAmount">Vorsteuer (EUR)</label>
+                <input id="createBookingVatAmount" type="text" inputMode="decimal" placeholder="0,00" />
+              </div>
+              <div className="control">
+                <label htmlFor="createBookingVatDeductible">Vorsteuer abziehbar</label>
+                <select id="createBookingVatDeductible" defaultValue="false">
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </div>
+              <div className="control">
                 <label htmlFor="createBookingProvider">Provider</label>
                 <input id="createBookingProvider" type="text" placeholder="shopify" />
               </div>
@@ -151,6 +162,10 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
                 <div className="control">
                   <label htmlFor="createSammelAmount">Rechnungsbetrag (EUR)</label>
                   <input id="createSammelAmount" type="text" inputMode="decimal" placeholder="0,00" />
+                </div>
+                <div className="control">
+                  <label htmlFor="createSammelVatAmount">Vorsteuer (EUR)</label>
+                  <input id="createSammelVatAmount" type="text" inputMode="decimal" placeholder="0,00" />
                 </div>
                 <div className="control">
                   <label htmlFor="createSammelNotes">Notiz</label>

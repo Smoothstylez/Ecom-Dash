@@ -156,6 +156,7 @@ type MonthlyInvoiceDraftState = {
   provider: string;
   monthToken: string;
   amount: string;
+  vatAmount: string;
   notes: string;
   fileName: string;
 };
@@ -181,6 +182,7 @@ function defaultMonthlyInvoiceDraftState(): MonthlyInvoiceDraftState {
     provider: "paypal",
     monthToken: previousMonthToken(),
     amount: "",
+    vatAmount: "",
     notes: "",
     fileName: "Optional",
   };
@@ -717,6 +719,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     bookingDocumentTxInput: panelElement.querySelector("#bookingDocumentTxInput"),
     createMonthlyInvoiceProvider: panelElement.querySelector("#createSammelProvider"),
     createMonthlyInvoiceAmount: panelElement.querySelector("#createSammelAmount"),
+    createMonthlyInvoiceVatAmount: panelElement.querySelector("#createSammelVatAmount"),
     createMonthlyInvoiceNotes: panelElement.querySelector("#createSammelNotes"),
     createMonthlyInvoiceFile: panelElement.querySelector("#createSammelFile"),
     createMonthlyInvoiceFileName: panelElement.querySelector("#createSammelFileName"),
@@ -963,6 +966,9 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     if (ui.createMonthlyInvoiceAmount instanceof HTMLInputElement) {
       ui.createMonthlyInvoiceAmount.value = monthlyInvoiceDraft.amount;
     }
+    if (ui.createMonthlyInvoiceVatAmount instanceof HTMLInputElement) {
+      ui.createMonthlyInvoiceVatAmount.value = monthlyInvoiceDraft.vatAmount;
+    }
     if (ui.createMonthlyInvoiceNotes instanceof HTMLInputElement) {
       ui.createMonthlyInvoiceNotes.value = monthlyInvoiceDraft.notes;
     }
@@ -983,13 +989,14 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     if (ui.sammelPreview instanceof HTMLElement) {
       ui.sammelPreview.style.display = monthlyInvoicePreview.visible ? "" : "none";
     }
-  }, [isSammelMonthMenuOpen, monthlyInvoiceDraft.amount, monthlyInvoiceDraft.fileName, monthlyInvoiceDraft.monthToken, monthlyInvoiceDraft.notes, monthlyInvoiceDraft.provider, monthlyInvoicePreview.visible, sammelPickerYear, ui.createMonthlyInvoiceAmount, ui.createMonthlyInvoiceFileName, ui.createMonthlyInvoiceNotes, ui.createMonthlyInvoiceProvider, ui.sammelMonthButton, ui.sammelMonthMenu, ui.sammelPreview, ui.sammelYearLabel]);
+  }, [isSammelMonthMenuOpen, monthlyInvoiceDraft.amount, monthlyInvoiceDraft.fileName, monthlyInvoiceDraft.monthToken, monthlyInvoiceDraft.notes, monthlyInvoiceDraft.provider, monthlyInvoiceDraft.vatAmount, monthlyInvoicePreview.visible, sammelPickerYear, ui.createMonthlyInvoiceAmount, ui.createMonthlyInvoiceFileName, ui.createMonthlyInvoiceNotes, ui.createMonthlyInvoiceProvider, ui.createMonthlyInvoiceVatAmount, ui.sammelMonthButton, ui.sammelMonthMenu, ui.sammelPreview, ui.sammelYearLabel]);
 
   useEffect(() => {
     const newButton = ui.newButton;
     const bookingClassControl = ui.bookingClassControl;
     const monthlyInvoiceProvider = ui.createMonthlyInvoiceProvider;
     const monthlyInvoiceAmount = ui.createMonthlyInvoiceAmount;
+    const monthlyInvoiceVatAmount = ui.createMonthlyInvoiceVatAmount;
     const monthlyInvoiceNotes = ui.createMonthlyInvoiceNotes;
     const monthlyInvoiceFile = ui.createMonthlyInvoiceFile;
     const monthlyInvoiceCreateButton = ui.createMonthlyInvoiceButton;
@@ -1047,6 +1054,13 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       }));
     };
 
+    const handleMonthlyInvoiceVatAmountInput = () => {
+      setMonthlyInvoiceDraft((current) => ({
+        ...current,
+        vatAmount: monthlyInvoiceVatAmount instanceof HTMLInputElement ? String(monthlyInvoiceVatAmount.value || "") : current.vatAmount,
+      }));
+    };
+
     const handleMonthlyInvoiceNotesInput = () => {
       setMonthlyInvoiceDraft((current) => ({
         ...current,
@@ -1096,6 +1110,8 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       const periodTo = sammelMonthPeriodTo(monthlyInvoiceDraft.monthToken);
       const rawAmount = String(monthlyInvoiceDraft.amount || "");
       const amountCents = parseEuroToCents(rawAmount);
+      const rawVatAmount = String(monthlyInvoiceDraft.vatAmount || "");
+      const vatAmountCents = rawVatAmount.trim() ? parseEuroToCents(rawVatAmount) : 0;
       const notes = String(monthlyInvoiceDraft.notes || "").trim() || null;
 
       if (!provider) {
@@ -1110,12 +1126,21 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         setStatusMessage(`Rechnungsbetrag muss groesser 0 sein (Eingabe: "${rawAmount}").`, "error");
         return;
       }
+      if (rawVatAmount.trim() && !vatAmountCents) {
+        setStatusMessage(`Vorsteuer ist ungueltig (Eingabe: "${rawVatAmount}").`, "error");
+        return;
+      }
+      if (Number(vatAmountCents || 0) > Number(amountCents || 0)) {
+        setStatusMessage("Vorsteuer darf nicht groesser als der Rechnungsbetrag sein.", "error");
+        return;
+      }
 
       void createMonthlyInvoiceMutation({
         provider,
         period_from: periodFrom,
         period_to: periodTo,
         invoice_amount_cents: amountCents,
+        vat_amount_cents: vatAmountCents,
         currency: "EUR",
         notes,
       })
@@ -1147,6 +1172,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           setMonthlyInvoiceDraft((current) => ({
             ...current,
             amount: "",
+            vatAmount: "",
             notes: "",
             fileName: "Optional",
           }));
@@ -1180,6 +1206,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     bookingClassControl?.addEventListener("click", handleBookingClassClick);
     monthlyInvoiceProvider?.addEventListener("change", handleMonthlyInvoiceProviderChange);
     monthlyInvoiceAmount?.addEventListener("input", handleMonthlyInvoiceAmountInput);
+    monthlyInvoiceVatAmount?.addEventListener("input", handleMonthlyInvoiceVatAmountInput);
     monthlyInvoiceNotes?.addEventListener("input", handleMonthlyInvoiceNotesInput);
     monthlyInvoiceFile?.addEventListener("change", handleMonthlyInvoiceFileChange);
     monthlyInvoiceCreateButton?.addEventListener("click", handleCreateMonthlyInvoice);
@@ -1194,6 +1221,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       bookingClassControl?.removeEventListener("click", handleBookingClassClick);
       monthlyInvoiceProvider?.removeEventListener("change", handleMonthlyInvoiceProviderChange);
       monthlyInvoiceAmount?.removeEventListener("input", handleMonthlyInvoiceAmountInput);
+      monthlyInvoiceVatAmount?.removeEventListener("input", handleMonthlyInvoiceVatAmountInput);
       monthlyInvoiceNotes?.removeEventListener("input", handleMonthlyInvoiceNotesInput);
       monthlyInvoiceFile?.removeEventListener("change", handleMonthlyInvoiceFileChange);
       monthlyInvoiceCreateButton?.removeEventListener("click", handleCreateMonthlyInvoice);
@@ -1203,7 +1231,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       sammelMonthGrid?.removeEventListener("click", handleSammelMonthGridClick);
       document.removeEventListener("click", handleOutsideClick);
     };
-  }, [bookingClass, bookingsSubtab, monthlyInvoiceDraft, ui.bookingClassControl, ui.createMonthlyInvoiceAmount, ui.createMonthlyInvoiceButton, ui.createMonthlyInvoiceFile, ui.createMonthlyInvoiceProvider, ui.createMonthlyInvoiceNotes, ui.newButton, ui.sammelMonthButton, ui.sammelMonthGrid, ui.sammelYearNextBtn, ui.sammelYearPrevBtn]);
+  }, [bookingClass, bookingsSubtab, monthlyInvoiceDraft, ui.bookingClassControl, ui.createMonthlyInvoiceAmount, ui.createMonthlyInvoiceButton, ui.createMonthlyInvoiceFile, ui.createMonthlyInvoiceNotes, ui.createMonthlyInvoiceProvider, ui.createMonthlyInvoiceVatAmount, ui.newButton, ui.sammelMonthButton, ui.sammelMonthGrid, ui.sammelYearNextBtn, ui.sammelYearPrevBtn]);
 
   useEffect(() => {
     if (!isActive) {
@@ -1328,6 +1356,8 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       const typeInput = panelElement.querySelector("#createBookingType");
       const directionInput = panelElement.querySelector("#createBookingDirection");
       const amountInput = panelElement.querySelector("#createBookingAmount");
+      const vatAmountInput = panelElement.querySelector("#createBookingVatAmount");
+      const vatDeductibleInput = panelElement.querySelector("#createBookingVatDeductible");
       const providerInput = panelElement.querySelector("#createBookingProvider");
       const counterpartyInput = panelElement.querySelector("#createBookingCounterparty");
       const statusInput = panelElement.querySelector("#createBookingStatus");
@@ -1341,6 +1371,10 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
 
       const dateIso = dateInput instanceof HTMLInputElement ? toIsoFromLocalInput(dateInput.value) : "";
       const amountCents = amountInput instanceof HTMLInputElement ? parseEuroToCents(amountInput.value) : null;
+      const vatAmountCents = vatAmountInput instanceof HTMLInputElement && String(vatAmountInput.value || "").trim()
+        ? parseEuroToCents(vatAmountInput.value)
+        : 0;
+      const isVatDeductible = vatDeductibleInput instanceof HTMLSelectElement ? vatDeductibleInput.value === "true" : false;
       const provider = providerInput instanceof HTMLInputElement ? String(providerInput.value || "").trim() : "";
 
       if (!dateIso) {
@@ -1349,6 +1383,14 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       }
       if (!amountCents) {
         setStatusMessage("Betrag muss groesser 0 sein.", "error");
+        return;
+      }
+      if (String(vatAmountInput instanceof HTMLInputElement ? vatAmountInput.value : "").trim() && !vatAmountCents) {
+        setStatusMessage("Vorsteuer ist ungueltig.", "error");
+        return;
+      }
+      if (Number(vatAmountCents || 0) > Number(amountCents || 0)) {
+        setStatusMessage("Vorsteuer darf nicht groesser als der Betrag sein.", "error");
         return;
       }
       if (!provider) {
@@ -1361,6 +1403,8 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         type: typeInput instanceof HTMLSelectElement ? typeInput.value : "SALE",
         direction: directionInput instanceof HTMLSelectElement ? directionInput.value : "IN",
         amount_gross: amountCents,
+        vat_amount: vatAmountCents || null,
+        is_vat_deductible: isVatDeductible,
         currency: "EUR",
         provider,
         counterparty_name: counterpartyInput instanceof HTMLInputElement ? String(counterpartyInput.value || "").trim() || null : null,
@@ -1387,6 +1431,8 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           }
           if (dateInput instanceof HTMLInputElement) dateInput.value = todayDateInputValue();
           if (amountInput instanceof HTMLInputElement) amountInput.value = "";
+          if (vatAmountInput instanceof HTMLInputElement) vatAmountInput.value = "";
+          if (vatDeductibleInput instanceof HTMLSelectElement) vatDeductibleInput.value = "false";
           if (providerInput instanceof HTMLInputElement) providerInput.value = "";
           if (counterpartyInput instanceof HTMLInputElement) counterpartyInput.value = "";
           if (referenceInput instanceof HTMLInputElement) referenceInput.value = "";
@@ -2143,6 +2189,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
               <th>Provider</th>
               <th>Zeitraum</th>
               <th>Rechnungsbetrag</th>
+              <th>Vorsteuer</th>
               <th>Berechnete Summe</th>
               <th>Differenz</th>
               <th>Status</th>
@@ -2162,6 +2209,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
                   <td>{String(invoice.provider || "-")}</td>
                   <td>{`${formatDateTime(invoice.period_from)} - ${formatDateTime(invoice.period_to)}`}</td>
                   <td>{formatMoneyFromCents(Number(invoice.invoice_amount_cents || 0))}</td>
+                  <td>{formatMoneyFromCents(Number(invoice.vat_amount_cents || 0))}</td>
                   <td>{formatMoneyFromCents(Number(invoice.calculated_sum_cents || 0))}</td>
                   <td className={diff !== 0 ? "value-neg" : "value-pos"}>{formatMoneyFromCents(diff)}</td>
                   <td>{String(invoice.status || "draft")}</td>
@@ -2170,7 +2218,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
                   <td><button className="btn-inline danger" data-action="delete-invoice" type="button">Loeschen</button></td>
                 </tr>
               );
-            }) : <tr><td colSpan={9}>Keine Sammelrechnungen vorhanden.</td></tr>}
+            }) : <tr><td colSpan={10}>Keine Sammelrechnungen vorhanden.</td></tr>}
           </tbody>
         </table>
       </div>

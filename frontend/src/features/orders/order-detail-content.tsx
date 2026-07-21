@@ -699,10 +699,16 @@ export function OrderDetailContent({
   const purchaseNotes = text(summary.purchase_notes);
   const financeRows: Array<[string, unknown]> = [
     ["Total", formatMoneyFromCents(numeric(summary.total_cents))],
+    ["Sales Brutto", formatMoneyFromCents(numeric(summary.sales_gross_cents))],
+    ["Sales Netto", formatMoneyFromCents(numeric(summary.sales_net_cents))],
+    ["Sales USt", formatMoneyFromCents(numeric(summary.sales_vat_cents))],
     ["Fees", formatMoneyFromCents(numeric(summary.fees_cents))],
     ["Gebuehren-Quelle", feeSourceText(summary.fee_source)],
     ["After Fees", formatMoneyFromCents(numeric(summary.after_fees_cents))],
     ["Einkauf", formatMoneyFromCents(numeric(summary.purchase_cost_cents))],
+    ["Einkaufs-Vorsteuer", formatMoneyFromCents(numeric(summary.purchase_vat_cents))],
+    ["Vorsteuer abziehbar", summary.purchase_is_vat_deductible ? "ja" : "nein"],
+    ["USt aktiv", summary.vat_applicable ? "ja" : "nein"],
     ["Gewinn", formatMoneyFromCents(numeric(summary.profit_cents))],
   ];
 

@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from app.auth import require_admin_access
+from app.db import populate_combined_orders
 from app.services.invoices import (
     InvoiceServiceError,
     build_invoice_draft,
@@ -18,6 +19,8 @@ from app.services.invoices import (
     list_invoices,
     save_seller_profile,
 )
+from app.services.orders import list_all_orders_without_pagination
+from app.services.tax_reporting import build_vat_report
 
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -36,6 +39,7 @@ class SellerProfilePayload(BaseModel):
     vat_id: str = Field(default="")
     tax_number: str = Field(default="")
     tax_mode: str = Field(default="small_business")
+    vat_effective_from: str = Field(default="")
     invoice_prefix: str = Field(default="RE")
     default_template: str = Field(default="clean")
     footer_note: str = Field(default="")
@@ -64,6 +68,22 @@ def api_get_invoice_profile() -> dict[str, Any]:
 @router.put("/profile", dependencies=ADMIN_ONLY)
 def api_put_invoice_profile(payload: SellerProfilePayload) -> dict[str, Any]:
     return {"ok": True, "profile": save_seller_profile(payload.model_dump())}
+
+
+@router.get("/tax-report", dependencies=ADMIN_ONLY)
+def api_get_tax_report(month: str = Query(...)) -> dict[str, Any]:
+    try:
+        populate_combined_orders()
+        orders = list_all_orders_without_pagination(
+            from_date=None,
+            to_date=None,
+            marketplace=None,
+            query=None,
+            status_filter=None,
+        )
+        return build_vat_report(month=month, orders=orders)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("", dependencies=ADMIN_ONLY)

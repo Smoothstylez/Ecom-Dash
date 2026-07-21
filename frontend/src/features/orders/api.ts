@@ -20,7 +20,16 @@ export type OrderSummary = {
   after_fees_cents?: number;
   fees_cents?: number;
   fee_source?: string;
+  sales_gross_cents?: number;
+  sales_net_cents?: number;
+  sales_vat_cents?: number;
+  vat_applicable?: boolean;
+  output_vat_cents?: number;
   purchase_cost_cents?: number;
+  purchase_vat_cents?: number;
+  purchase_is_vat_deductible?: boolean;
+  deductible_purchase_vat_cents?: number;
+  purchase_effective_cost_cents?: number;
   purchase_currency?: string;
   purchase_supplier?: string;
   purchase_notes?: string;
@@ -152,7 +161,12 @@ export function fetchOrderDetail(marketplace: string, orderId: string, signal?: 
   );
 }
 
-export function updateOrderPurchase(marketplace: string, orderId: string, purchaseCostEur: number | null) {
+export function updateOrderPurchase(
+  marketplace: string,
+  orderId: string,
+  purchaseCostEur: number | null,
+  options?: { purchaseVatEur?: number | null; purchaseIsVatDeductible?: boolean },
+) {
   return fetchJson<Record<string, unknown>>(
     buildDashboardApiUrl(`/api/orders/${encodeURIComponent(marketplace)}/${encodeURIComponent(orderId)}/purchase`),
     {
@@ -160,7 +174,11 @@ export function updateOrderPurchase(marketplace: string, orderId: string, purcha
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ purchase_cost_eur: purchaseCostEur }),
+      body: JSON.stringify({
+        purchase_cost_eur: purchaseCostEur,
+        purchase_vat_eur: options?.purchaseVatEur ?? null,
+        purchase_is_vat_deductible: Boolean(options?.purchaseIsVatDeductible),
+      }),
     },
   );
 }

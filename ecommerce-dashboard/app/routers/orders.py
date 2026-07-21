@@ -32,6 +32,8 @@ ADMIN_ONLY = [Depends(require_admin_access)]
 
 class PurchaseUpdateRequest(BaseModel):
     purchase_cost_eur: Optional[float] = Field(default=None)
+    purchase_vat_eur: Optional[float] = Field(default=None)
+    purchase_is_vat_deductible: Optional[bool] = Field(default=False)
     purchase_currency: Optional[str] = Field(default="EUR")
     supplier_name: Optional[str] = Field(default=None)
     purchase_notes: Optional[str] = Field(default=None)
@@ -202,11 +204,14 @@ def api_update_purchase(
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
     purchase_cents = _to_cents(payload.purchase_cost_eur)
+    purchase_vat_cents = _to_cents(payload.purchase_vat_eur)
 
     updated = upsert_purchase_enrichment(
         marketplace=market,
         order_id=order_id,
         purchase_cost_cents=purchase_cents,
+        purchase_vat_cents=purchase_vat_cents,
+        purchase_is_vat_deductible=payload.purchase_is_vat_deductible,
         purchase_currency=payload.purchase_currency,
         supplier_name=payload.supplier_name,
         purchase_notes=payload.purchase_notes,
@@ -264,6 +269,8 @@ async def api_upload_invoice(
     file: UploadFile = File(...),
     notes: Optional[str] = Form(default=None),
     purchase_cost_eur: Optional[float] = Form(default=None),
+    purchase_vat_eur: Optional[float] = Form(default=None),
+    purchase_is_vat_deductible: Optional[bool] = Form(default=False),
     purchase_currency: Optional[str] = Form(default=None),
     supplier_name: Optional[str] = Form(default=None),
 ) -> dict[str, Any]:
@@ -272,6 +279,7 @@ async def api_upload_invoice(
     order_token = _resolve_invoice_order_token(market, order_id)
     renamed_filename = _build_invoice_filename(market, order_token, upload_filename)
     purchase_cents = _to_cents(purchase_cost_eur) if purchase_cost_eur is not None else None
+    purchase_vat_cents = _to_cents(purchase_vat_eur) if purchase_vat_eur is not None else None
 
     target_path = build_invoice_storage_path(market, order_token, renamed_filename)
     try:
@@ -291,6 +299,8 @@ async def api_upload_invoice(
     )
 
     existing_purchase = row.get("purchase_cost_cents") if isinstance(row.get("purchase_cost_cents"), int) else None
+    existing_purchase_vat = row.get("purchase_vat_cents") if isinstance(row.get("purchase_vat_cents"), int) else 0
+    existing_purchase_is_vat_deductible = bool(row.get("purchase_is_vat_deductible"))
     existing_currency = str(row.get("purchase_currency") or "EUR")
     existing_supplier = str(row.get("supplier_name") or "").strip() or None
     existing_notes = str(row.get("purchase_notes") or "").strip() or None
@@ -299,6 +309,10 @@ async def api_upload_invoice(
         marketplace=market,
         order_id=order_id,
         purchase_cost_cents=purchase_cents if purchase_cost_eur is not None else existing_purchase,
+        purchase_vat_cents=purchase_vat_cents if purchase_vat_eur is not None else existing_purchase_vat,
+        purchase_is_vat_deductible=(
+            purchase_is_vat_deductible if purchase_vat_eur is not None else existing_purchase_is_vat_deductible
+        ),
         purchase_currency=purchase_currency if purchase_currency is not None else existing_currency,
         supplier_name=supplier_name if supplier_name is not None else existing_supplier,
         purchase_notes=notes if notes is not None else existing_notes,

@@ -160,7 +160,13 @@ Important order summary fields:
 - `total_cents`: gross order value in cents
 - `fees_cents`: fee total in cents
 - `after_fees_cents`: net after fees in cents
+- `sales_gross_cents`: steuerlich relevanter Brutto-Umsatz in cents
+- `sales_net_cents`: steuerlich relevanter Netto-Umsatz in cents
+- `sales_vat_cents`: enthaltene Ausgangs-USt in cents
 - `purchase_cost_cents`: stored purchase cost in cents
+- `purchase_vat_cents`: enthaltene Einkaufs-/Vorsteuer in cents
+- `purchase_is_vat_deductible`: whether that purchase VAT is deductible
+- `vat_applicable`: whether the order falls into the manually configured regular-VAT period
 - `profit_cents`: `after_fees_cents - purchase_cost_cents`
 - `fulfillment_status`: operational shipment state
 - `financial_status`: payment/refund state if available
@@ -327,6 +333,8 @@ curl --fail-with-body -sS \
 Request body fields:
 
 - `purchase_cost_eur`: float or `null`
+- `purchase_vat_eur`: float or `null`
+- `purchase_is_vat_deductible`: boolean
 - `purchase_currency`: string, defaults to `EUR`
 - `supplier_name`: string or `null`
 - `purchase_notes`: string or `null`
@@ -336,6 +344,8 @@ Example:
 ```json
 {
   "purchase_cost_eur": 54.90,
+  "purchase_vat_eur": 0,
+  "purchase_is_vat_deductible": false,
   "purchase_currency": "EUR",
   "supplier_name": "AliExpress Supplier",
   "purchase_notes": "Express line, June batch"
@@ -359,6 +369,8 @@ Form fields:
 - `file` required
 - `notes` optional
 - `purchase_cost_eur` optional float
+- `purchase_vat_eur` optional float
+- `purchase_is_vat_deductible` optional boolean
 - `purchase_currency` optional string
 - `supplier_name` optional string
 
@@ -376,6 +388,8 @@ curl --fail-with-body -sS \
   -H "X-Admin-Token: $DASHBOARD_ADMIN_TOKEN" \
   -F "file=@/absolute/path/to/purchase-invoice.pdf" \
   -F "purchase_cost_eur=54.90" \
+  -F "purchase_vat_eur=0" \
+  -F "purchase_is_vat_deductible=false" \
   -F "purchase_currency=EUR" \
   -F "supplier_name=AliExpress Supplier" \
   -F "notes=Supplier invoice June batch" \
@@ -448,6 +462,7 @@ Payload fields:
 - `vat_id`
 - `tax_number`
 - `tax_mode`
+- `vat_effective_from` ISO datetime string. Manual cutoff from which incoming orders are treated as VAT-applicable for reporting.
 - `invoice_prefix`
 - `default_template`
 - `footer_note`
@@ -457,6 +472,24 @@ Payload fields:
 Agent rule:
 
 - Do not partially guess missing legal or tax data. If user requests profile changes, apply only what was explicitly given.
+
+### VAT Report
+
+- Method: `GET`
+- Path: `/api/invoices/tax-report`
+- Auth: admin
+
+Query params:
+
+- `month` in `YYYY-MM`
+
+Behavior:
+
+- refreshes `combined_orders` from source data before calculation
+- uses `order_date` as the inclusion basis for order revenue within the month
+- uses the manual seller profile field `vat_effective_from` as the VAT cutoff
+- returns order output VAT, deductible purchase VAT, deductible monthly fee invoice VAT, deductible manual transaction VAT, and the resulting payable amount
+- includes a read-only threshold candidate: the first order where cumulative gross turnover reaches `100000 EUR`
 
 ### List Sales Invoices
 
@@ -646,6 +679,7 @@ Supported optional write fields:
 - `vat_rate`
 - `vat_amount`
 - `amount_net`
+- `is_vat_deductible`
 - `order_id`
 - `document_id`
 - `template_id`
@@ -676,6 +710,7 @@ Patchable fields:
 - `vat_rate`
 - `vat_amount`
 - `amount_net`
+- `is_vat_deductible`
 - `provider`
 - `counterparty_name`
 - `category`
@@ -857,6 +892,7 @@ Create payload:
   "period_from": "2026-06-01",
   "period_to": "2026-06-30",
   "invoice_amount_cents": 129900,
+  "vat_amount_cents": 24700,
   "currency": "EUR",
   "document_id": "uuid-or-null",
   "notes": "June Kaufland fee invoice"

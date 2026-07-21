@@ -28,6 +28,8 @@ type StatusMessage = {
 };
 
 type DraftState = Record<string, string>;
+type VatDraftState = Record<string, string>;
+type DeductibleDraftState = Record<string, boolean>;
 type BusyState = Record<string, boolean>;
 type PendingBlurSaveState = Record<string, boolean>;
 
@@ -188,6 +190,8 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   const [filterOpen, setFilterOpen] = useState(false);
   const [statusMessage, setStatusMessage] = useState<StatusMessage | null>(null);
   const [drafts, setDrafts] = useState<DraftState>({});
+  const [vatDrafts, setVatDrafts] = useState<VatDraftState>({});
+  const [deductibleDrafts, setDeductibleDrafts] = useState<DeductibleDraftState>({});
   const [savingPurchase, setSavingPurchase] = useState<BusyState>({});
   const [uploadingInvoice, setUploadingInvoice] = useState<BusyState>({});
   const [pageIndex, setPageIndex] = useState(0);
@@ -386,14 +390,18 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   function applyOrdersPayload(nextItems: OrderSummary[], nextTotal?: number) {
     setItems(nextItems);
     setTotal(Number(nextTotal || nextItems.length || 0));
-    setDrafts((current) => {
-      const next: DraftState = {};
-      for (const order of nextItems) {
-        const key = rowKey(order);
-        next[key] = key in current ? current[key] : centsToInputValue(order.purchase_cost_cents);
-      }
-      return next;
-    });
+    const nextDrafts: DraftState = {};
+    const nextVatDrafts: VatDraftState = {};
+    const nextDeductibleDrafts: DeductibleDraftState = {};
+    for (const order of nextItems) {
+      const key = rowKey(order);
+      nextDrafts[key] = key in drafts ? drafts[key] : centsToInputValue(order.purchase_cost_cents);
+      nextVatDrafts[key] = key in vatDrafts ? vatDrafts[key] : centsToInputValue(order.purchase_vat_cents);
+      nextDeductibleDrafts[key] = key in deductibleDrafts ? deductibleDrafts[key] : Boolean(order.purchase_is_vat_deductible);
+    }
+    setDrafts(nextDrafts);
+    setVatDrafts(nextVatDrafts);
+    setDeductibleDrafts(nextDeductibleDrafts);
   }
 
   function applyUploadedInvoiceToOrder(order: OrderSummary, uploadResult: Record<string, unknown>, purchaseCostCents: number | null) {
@@ -414,9 +422,15 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
 
     updateOrder(rowKey(order), (currentOrder) => {
       const nextPurchase = purchaseCostCents ?? Number(currentOrder.purchase_cost_cents || 0);
+      const nextPurchaseVat = Number(enrichmentPayload.purchase_vat_cents || currentOrder.purchase_vat_cents || 0);
+      const nextPurchaseIsVatDeductible = Boolean(
+        enrichmentPayload.purchase_is_vat_deductible ?? currentOrder.purchase_is_vat_deductible,
+      );
       return {
         ...currentOrder,
         purchase_cost_cents: nextPurchase,
+        purchase_vat_cents: nextPurchaseVat,
+        purchase_is_vat_deductible: nextPurchaseIsVatDeductible,
         profit_cents: Number(currentOrder.after_fees_cents || 0) - nextPurchase,
         invoice: nextInvoice,
       };
@@ -426,23 +440,38 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
   async function handleSavePurchase(order: OrderSummary) {
     const key = rowKey(order);
     const parsed = parsePurchaseEur(drafts[key] ?? centsToInputValue(order.purchase_cost_cents));
+    const parsedVat = parsePurchaseEur(vatDrafts[key] ?? centsToInputValue(order.purchase_vat_cents));
     if (!parsed.ok) {
       setStatus(parsed.message || "Einkaufspreis ist ungueltig.", "error");
+      return;
+    }
+    if (!parsedVat.ok) {
+      setStatus(parsedVat.message || "Vorsteuer ist ungueltig.", "error");
       return;
     }
 
     setSavingPurchase((current) => ({ ...current, [key]: true }));
     try {
-      await updateOrderPurchase(String(order.marketplace || ""), String(order.order_id || ""), parsed.value);
+      await updateOrderPurchase(String(order.marketplace || ""), String(order.order_id || ""), parsed.value, {
+        purchaseVatEur: parsedVat.value,
+        purchaseIsVatDeductible: Boolean(deductibleDrafts[key]),
+      });
       const nextPurchaseCostCents = parsed.value === null ? 0 : parsed.cents;
+      const nextPurchaseVatCents = parsedVat.value === null ? 0 : parsedVat.cents;
       updateOrder(key, (currentOrder) => ({
         ...currentOrder,
         purchase_cost_cents: nextPurchaseCostCents,
+        purchase_vat_cents: nextPurchaseVatCents,
+        purchase_is_vat_deductible: Boolean(deductibleDrafts[key]),
         profit_cents: Number(currentOrder.after_fees_cents || 0) - nextPurchaseCostCents,
       }));
       setDrafts((current) => ({
         ...current,
         [key]: parsed.value === null ? "" : centsToInputValue(nextPurchaseCostCents),
+      }));
+      setVatDrafts((current) => ({
+        ...current,
+        [key]: parsedVat.value === null ? "" : centsToInputValue(nextPurchaseVatCents),
       }));
       setStatus(`Einkauf gespeichert: ${order.marketplace} ${order.order_id}`, "ok");
     } catch (nextError) {
@@ -459,8 +488,13 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
 
     const key = rowKey(order);
     const parsed = parsePurchaseEur(drafts[key] ?? centsToInputValue(order.purchase_cost_cents));
+    const parsedVat = parsePurchaseEur(vatDrafts[key] ?? centsToInputValue(order.purchase_vat_cents));
     if (!parsed.ok) {
       setStatus(parsed.message || "Einkaufspreis ist ungueltig.", "error");
+      return;
+    }
+    if (!parsedVat.ok) {
+      setStatus(parsedVat.message || "Vorsteuer ist ungueltig.", "error");
       return;
     }
 
@@ -470,6 +504,10 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
       form.append("purchase_cost_eur", String(parsed.value));
       form.append("purchase_currency", "EUR");
     }
+    if (parsedVat.value !== null) {
+      form.append("purchase_vat_eur", String(parsedVat.value));
+    }
+    form.append("purchase_is_vat_deductible", String(Boolean(deductibleDrafts[key])));
 
     setUploadingInvoice((current) => ({ ...current, [key]: true }));
     try {
@@ -479,6 +517,10 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
       setDrafts((current) => ({
         ...current,
         [key]: parsed.value === null ? "" : centsToInputValue(parsed.cents),
+      }));
+      setVatDrafts((current) => ({
+        ...current,
+        [key]: parsedVat.value === null ? "" : centsToInputValue(parsedVat.cents),
       }));
       const priceHint = parsed.value !== null ? " inkl. Einkaufspreis" : "";
       setStatus(`Rechnung hochgeladen${priceHint}: ${order.marketplace} ${order.order_id}`, "ok");
@@ -760,9 +802,39 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                           }
                         }}
                       />
+                      <div className="cell-sub" style={{ marginTop: 6 }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>VSt</span>
+                          <input
+                            className="purchase-input"
+                            style={{ maxWidth: 92 }}
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            value={vatDrafts[key] ?? centsToInputValue(order.purchase_vat_cents)}
+                            disabled={Boolean(savingPurchase[key])}
+                            onChange={(event) => {
+                              const value = event.target.value;
+                              setVatDrafts((current) => ({ ...current, [key]: value }));
+                            }}
+                          />
+                          <input
+                            type="checkbox"
+                            checked={Boolean(deductibleDrafts[key])}
+                            onChange={(event) => {
+                              const checked = event.target.checked;
+                              setDeductibleDrafts((current) => ({ ...current, [key]: checked }));
+                            }}
+                          />
+                          <span>abziehbar</span>
+                        </label>
+                      </div>
                     </td>
                     <td className={`order-profit-cell ${previewProfitClass}`} data-label="Gewinn">{formatMoneyFromCents(previewProfit)}</td>
-                    <td data-label="Status">{String(order.fulfillment_status || "-")}</td>
+                    <td data-label="Status">
+                      <div>{String(order.fulfillment_status || "-")}</div>
+                      <div className="cell-sub">{Boolean(order.vat_applicable) ? "USt aktiv" : "KU / alt"}</div>
+                    </td>
                     <td data-label="Rechnung">
                       <div>
                         {href ? (

@@ -27,9 +27,10 @@
 
 ## Active Work Areas
 - UI Layout: Complete sidebar navigation implementation done
+- Ops verification: Kaufland shipment API helper was used to mark order `MWCCF65` as sent with DHL tracking `00340434785828315818`; post-sync order search now returns `fulfillment_status=sent` and the order disappeared from the `need_to_be_sent` queue.
 
 ## Immediate Next Steps
-1. None - all features working as expected
+1. Continue fulfillment on remaining `need_to_be_sent` Kaufland orders
 2. Review test coverage in `tests/`
 
 ## Configuration

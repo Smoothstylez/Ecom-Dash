@@ -19,6 +19,7 @@ from app.services.order_summaries import (
     to_iso_utc,
     to_kaufland_cents,
 )
+from app.services.tax_reporting import annotate_order_tax_fields, get_tax_settings
 
 
 def _connect_readonly(path: Path) -> sqlite3.Connection:
@@ -106,6 +107,7 @@ def _load_shopify_orders(*, include_raw_fallbacks: bool = True) -> list[dict[str
                 o.financial_status,
                 o.fulfillment_status,
                 o.total_price,
+                o.total_tax,
                 o.currency,
                 o.customer_first_name,
                 o.customer_last_name,
@@ -171,6 +173,17 @@ def _load_kaufland_orders(*, include_raw_fallbacks: bool = True) -> list[dict[st
                       AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS units_price_sum,
                 (
+                    SELECT COALESCE(SUM(
+                        CAST(COALESCE(NULLIF(ou.price, ''), 0) AS REAL)
+                        * COALESCE(ou.vat, 0)
+                        / (100 + COALESCE(ou.vat, 0))
+                    ), 0)
+                    FROM order_units ou
+                    WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                      AND COALESCE(ou.vat, 0) > 0
+                ) AS units_vat_sum,
+                (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
                           - COALESCE((
                                SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
@@ -189,6 +202,24 @@ def _load_kaufland_orders(*, include_raw_fallbacks: bool = True) -> list[dict[st
                     WHERE ou.id_order = o.id_order
                       AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS shipping_sum,
+                (
+                    SELECT COALESCE(SUM(
+                        CAST(COALESCE(NULLIF(ou.shipping_rate, ''), 0) AS REAL)
+                        * COALESCE(ou.vat, 0)
+                        / (100 + COALESCE(ou.vat, 0))
+                    ), 0)
+                    FROM order_units ou
+                    WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                      AND COALESCE(ou.vat, 0) > 0
+                ) AS shipping_vat_sum,
+                (
+                    SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL)), 0)
+                    FROM order_unit_refunds ref
+                    JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                    WHERE ou2.id_order = o.id_order
+                      AND COALESCE(ou2.status, '') NOT IN ('cancelled', 'canceled')
+                ) AS refund_amount_sum,
                 (
                     SELECT ou.product_title
                     FROM order_units ou
@@ -238,6 +269,10 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
     if purchase_cost_cents is None:
         purchase_cost_cents = 0
 
+    purchase_vat = enrichment.get("purchase_vat_cents")
+    purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
+    purchase_is_vat_deductible = bool(enrichment.get("purchase_is_vat_deductible"))
+
     profit_cents = int(base_order["after_fees_cents"]) - purchase_cost_cents
 
     invoice_payload: Optional[dict[str, Any]] = None
@@ -252,7 +287,12 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
 
     merged = {
         **base_order,
+        "sales_gross_cents": int(base_order.get("sales_gross_cents") or base_order.get("total_cents") or 0),
+        "sales_net_cents": int(base_order.get("sales_net_cents") or 0),
+        "sales_vat_cents": int(base_order.get("sales_vat_cents") or 0),
         "purchase_cost_cents": purchase_cost_cents,
+        "purchase_vat_cents": purchase_vat_cents,
+        "purchase_is_vat_deductible": purchase_is_vat_deductible,
         "purchase_cost_eur": cents_to_eur(purchase_cost_cents),
         "purchase_currency": enrichment.get("purchase_currency") or "EUR",
         "purchase_supplier": enrichment.get("supplier_name"),
@@ -575,6 +615,7 @@ def _list_orders_from_combined(
     offset: int,
     include_raw_fallbacks: bool,
 ) -> dict[str, Any]:
+    tax_settings = get_tax_settings()
     where_clauses: list[str] = []
     params: list[Any] = []
 
@@ -698,6 +739,7 @@ def _list_orders_from_combined(
 
         order["invoice"] = invoice_payload
         order["raw_json"] = order.get("raw_json") if include_raw_fallbacks else {}
+        annotate_order_tax_fields(order, tax_settings)
 
         for col in ("has_invoice", "invoice_document_id"):
             order.pop(col, None)
@@ -730,8 +772,10 @@ def _list_orders_from_sources(
     ]
     enrichment_map = fetch_enrichment_map()
     aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
+    tax_settings = get_tax_settings()
     merged_rows = [_merge_enrichment(row, enrichment_map) for row in source_rows]
     for row in merged_rows:
+        annotate_order_tax_fields(row, tax_settings)
         key = (str(row.get("marketplace") or ""), str(row.get("order_id") or ""))
         mappings = [dict(item) for item in aliexpress_mapping_index.get(key, [])]
         row["aliexpress_mappings"] = mappings
@@ -903,6 +947,17 @@ def _load_kaufland_order_detail(order_id: str) -> Optional[dict[str, Any]]:
                       AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS units_price_sum,
                 (
+                    SELECT COALESCE(SUM(
+                        CAST(COALESCE(NULLIF(ou.price, ''), 0) AS REAL)
+                        * COALESCE(ou.vat, 0)
+                        / (100 + COALESCE(ou.vat, 0))
+                    ), 0)
+                    FROM order_units ou
+                    WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                      AND COALESCE(ou.vat, 0) > 0
+                ) AS units_vat_sum,
+                (
                     SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
                           - COALESCE((
                                SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
@@ -921,6 +976,24 @@ def _load_kaufland_order_detail(order_id: str) -> Optional[dict[str, Any]]:
                     WHERE ou.id_order = o.id_order
                       AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                 ) AS shipping_sum,
+                (
+                    SELECT COALESCE(SUM(
+                        CAST(COALESCE(NULLIF(ou.shipping_rate, ''), 0) AS REAL)
+                        * COALESCE(ou.vat, 0)
+                        / (100 + COALESCE(ou.vat, 0))
+                    ), 0)
+                    FROM order_units ou
+                    WHERE ou.id_order = o.id_order
+                      AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                      AND COALESCE(ou.vat, 0) > 0
+                ) AS shipping_vat_sum,
+                (
+                    SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL)), 0)
+                    FROM order_unit_refunds ref
+                    JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                    WHERE ou2.id_order = o.id_order
+                      AND COALESCE(ou2.status, '') NOT IN ('cancelled', 'canceled')
+                ) AS refund_amount_sum,
                 (
                     SELECT ou.product_title
                     FROM order_units ou
@@ -1033,6 +1106,7 @@ def get_order_detail(marketplace: str, order_id: str) -> Optional[dict[str, Any]
     enrichment_map = fetch_enrichment_map()
     summary = detail.get("summary") if isinstance(detail.get("summary"), dict) else {}
     merged_summary = _merge_enrichment(summary, enrichment_map)
+    annotate_order_tax_fields(merged_summary, get_tax_settings())
     mapping_key = (market, str(merged_summary.get("order_id") or order_id))
     aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
     merged_summary["aliexpress_mappings"] = [dict(item) for item in aliexpress_mapping_index.get(mapping_key, [])]

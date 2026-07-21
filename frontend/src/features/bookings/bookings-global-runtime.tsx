@@ -641,6 +641,11 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
 
       const dateIso = toIsoFromLocalInput(dateElement.value);
       const amountCents = parseEuroToCents(amountElement.value);
+      const vatAmountElement = document.getElementById("bookingDetailTxVatAmount");
+      const vatDeductibleElement = document.getElementById("bookingDetailTxVatDeductible");
+      const vatAmountCents = vatAmountElement instanceof HTMLInputElement && String(vatAmountElement.value || "").trim()
+        ? parseEuroToCents(vatAmountElement.value)
+        : 0;
       const provider = String(providerElement.value || "").trim();
       if (!dateIso) {
         if (!silent) {
@@ -651,6 +656,18 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       if (!amountCents) {
         if (!silent) {
           setStatusMessage("Betrag muss groesser 0 sein.", "error");
+        }
+        return;
+      }
+      if (String(vatAmountElement instanceof HTMLInputElement ? vatAmountElement.value : "").trim() && !vatAmountCents) {
+        if (!silent) {
+          setStatusMessage("Vorsteuer ist ungueltig.", "error");
+        }
+        return;
+      }
+      if (Number(vatAmountCents || 0) > Number(amountCents || 0)) {
+        if (!silent) {
+          setStatusMessage("Vorsteuer darf nicht groesser als der Betrag sein.", "error");
         }
         return;
       }
@@ -666,6 +683,8 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
         type: normalizeBookingType((document.getElementById("bookingDetailTxType") as HTMLSelectElement | null)?.value),
         direction: String((document.getElementById("bookingDetailTxDirection") as HTMLSelectElement | null)?.value || "").trim().toUpperCase(),
         amount_gross: amountCents,
+        vat_amount: vatAmountCents || null,
+        is_vat_deductible: vatDeductibleElement instanceof HTMLSelectElement ? vatDeductibleElement.value === "true" : false,
         provider,
         status: String((document.getElementById("bookingDetailTxStatus") as HTMLSelectElement | null)?.value || "").trim().toLowerCase() || null,
         reference: String((document.getElementById("bookingDetailTxReference") as HTMLInputElement | null)?.value || "").trim() || null,
@@ -732,6 +751,10 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       const periodFrom = String(periodFromElement.value || "").trim();
       const periodTo = String(periodToElement.value || "").trim();
       const amountCents = parseEuroToCents(amountElement.value);
+      const vatAmountElement = document.getElementById("sammelDetailVatAmount");
+      const vatAmountCents = vatAmountElement instanceof HTMLInputElement && String(vatAmountElement.value || "").trim()
+        ? parseEuroToCents(vatAmountElement.value)
+        : 0;
       const notes = notesElement instanceof HTMLTextAreaElement ? String(notesElement.value || "").trim() || null : null;
       if (!provider) {
         if (!silent) {
@@ -751,12 +774,25 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
         }
         return;
       }
+      if (String(vatAmountElement instanceof HTMLInputElement ? vatAmountElement.value : "").trim() && !vatAmountCents) {
+        if (!silent) {
+          setStatusMessage("Vorsteuer ist ungueltig.", "error");
+        }
+        return;
+      }
+      if (Number(vatAmountCents || 0) > Number(amountCents || 0)) {
+        if (!silent) {
+          setStatusMessage("Vorsteuer darf nicht groesser als der Rechnungsbetrag sein.", "error");
+        }
+        return;
+      }
 
       const payload: Record<string, unknown> = {
         provider,
         period_from: periodFrom,
         period_to: periodTo,
         invoice_amount_cents: amountCents,
+        vat_amount_cents: vatAmountCents || 0,
         notes,
       };
 
@@ -1047,6 +1083,17 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
                 <input id="bookingDetailTxAmount" type="number" step="0.01" min="0.01" defaultValue={centsToInputValue(Number(transaction.amount_gross || 0))} />
               </div>
               <div className="control">
+                <label htmlFor="bookingDetailTxVatAmount">Vorsteuer (EUR)</label>
+                <input id="bookingDetailTxVatAmount" type="number" step="0.01" min="0" defaultValue={centsToInputValue(Number(transaction.vat_amount || 0))} />
+              </div>
+              <div className="control">
+                <label htmlFor="bookingDetailTxVatDeductible">Vorsteuer abziehbar</label>
+                <select id="bookingDetailTxVatDeductible" defaultValue={transaction.is_vat_deductible ? "true" : "false"}>
+                  <option value="false">nein</option>
+                  <option value="true">ja</option>
+                </select>
+              </div>
+              <div className="control">
                 <label htmlFor="bookingDetailTxProvider">Provider</label>
                 <input id="bookingDetailTxProvider" type="text" defaultValue={String(transaction.provider || "")} />
               </div>
@@ -1113,6 +1160,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       const invoiceAmount = Number(invoice.invoice_amount_cents || 0);
       const calculatedAmount = Number(invoice.calculated_sum_cents || 0);
       const differenceAmount = Number(invoice.difference_cents || 0);
+      const vatAmount = Number(invoice.vat_amount_cents || 0);
       const statusLabel = invoice.status === "matched" ? "Matched" : invoice.status === "mismatch" ? "Differenz" : (invoice.status || "Entwurf");
       const statusBadgeClass = invoice.status === "matched" ? "badge-sale" : invoice.status === "mismatch" ? "badge-refund" : "badge-default";
       const documentId = String(invoice.document_id || "").trim();
@@ -1155,6 +1203,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
                 <DetailRows
                   items={[
                     ["Rechnungsbetrag", formatMoneyFromCents(invoiceAmount)],
+                    ["Vorsteuer", formatMoneyFromCents(vatAmount)],
                     ["Berechnete Summe", formatMoneyFromCents(calculatedAmount)],
                     ["Differenz", formatMoneyFromCents(differenceAmount)],
                   ]}
@@ -1196,6 +1245,10 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
               <div className="control">
                 <label htmlFor="sammelDetailAmount">Rechnungsbetrag (EUR)</label>
                 <input id="sammelDetailAmount" type="text" inputMode="decimal" defaultValue={centsToInputValue(invoiceAmount)} />
+              </div>
+              <div className="control">
+                <label htmlFor="sammelDetailVatAmount">Vorsteuer (EUR)</label>
+                <input id="sammelDetailVatAmount" type="text" inputMode="decimal" defaultValue={centsToInputValue(vatAmount)} />
               </div>
               <div className="control">
                 <label>Aktueller Beleg</label>

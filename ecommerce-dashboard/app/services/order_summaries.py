@@ -256,15 +256,28 @@ def cents_to_eur(value: Any) -> Optional[float]:
     return round(cents / 100.0, 2)
 
 
+def _scale_cents(value_cents: int, *, numerator: int, denominator: int) -> int:
+    if denominator <= 0:
+        return max(int(value_cents), 0)
+    return max(int(round(int(value_cents) * (numerator / denominator))), 0)
+
+
 def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = True) -> dict[str, Any]:
     order_payload = safe_json_load(row["raw_json"]) if include_raw_fallbacks else {}
 
     financial_status_raw = str(row["financial_status"] or "").strip().lower()
     gross_total_cents = to_eur_cents(row["total_price"]) or 0
+    gross_tax_cents = to_eur_cents(row["total_tax"]) or 0
     refund_cents = to_eur_cents(row["refund_amount_sum"]) or 0
     total_cents = gross_total_cents
     if financial_status_raw == "partially_refunded":
         total_cents = max(gross_total_cents - refund_cents, 0)
+
+    sales_gross_cents = total_cents
+    sales_vat_cents = gross_tax_cents
+    if financial_status_raw == "partially_refunded" and gross_total_cents > 0 and refund_cents > 0:
+        sales_vat_cents = _scale_cents(gross_tax_cents, numerator=sales_gross_cents, denominator=gross_total_cents)
+    sales_net_cents = max(sales_gross_cents - sales_vat_cents, 0)
 
     fee_cents = to_eur_cents(row["fee_total"])
     fee_source: str = "api"
@@ -336,6 +349,9 @@ def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = 
         "article": article,
         "line_items_count": line_items_count,
         "total_cents": total_cents,
+        "sales_gross_cents": max(sales_gross_cents, 0),
+        "sales_net_cents": max(sales_net_cents, 0),
+        "sales_vat_cents": max(sales_vat_cents, 0),
         "fees_cents": max(fee_cents, 0),
         "after_fees_cents": max(after_fees_cents, 0),
         "shipping_cents": max(shipping_cents, 0),
@@ -358,6 +374,14 @@ def kaufland_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool =
         fees_cents = 0
 
     shipping_cents = to_kaufland_cents(row["shipping_sum"]) or 0
+    gross_sales_cents = max(total_cents + shipping_cents, 0)
+    source_vat_cents = max((to_kaufland_cents(row["units_vat_sum"]) or 0) + (to_kaufland_cents(row["shipping_vat_sum"]) or 0), 0)
+    refund_cents = to_kaufland_cents(row["refund_amount_sum"]) or 0
+    sales_gross_cents = max(gross_sales_cents - refund_cents, 0)
+    sales_vat_cents = source_vat_cents
+    if gross_sales_cents > 0 and refund_cents > 0:
+        sales_vat_cents = _scale_cents(source_vat_cents, numerator=sales_gross_cents, denominator=gross_sales_cents)
+    sales_net_cents = max(sales_gross_cents - sales_vat_cents, 0)
 
     customer = first_non_empty(row["customer_name"])
     if not customer and include_raw_fallbacks:
@@ -401,6 +425,9 @@ def kaufland_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool =
         "article": article,
         "line_items_count": line_items_count,
         "total_cents": total_cents,
+        "sales_gross_cents": sales_gross_cents,
+        "sales_net_cents": sales_net_cents,
+        "sales_vat_cents": sales_vat_cents,
         "fees_cents": fees_cents,
         "after_fees_cents": max(after_fees_cents, 0),
         "shipping_cents": max(shipping_cents, 0),

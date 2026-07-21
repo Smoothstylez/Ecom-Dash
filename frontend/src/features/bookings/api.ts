@@ -9,6 +9,10 @@ export type BookingRow = {
   direction?: string;
   booking_class?: string;
   amount_gross?: number;
+  vat_rate?: number | null;
+  vat_amount?: number | null;
+  amount_net?: number | null;
+  is_vat_deductible?: boolean;
   reference?: string;
   notes?: string;
   counterparty_name?: string;
@@ -91,6 +95,7 @@ export type MonthlyInvoiceRow = {
   period_from?: string;
   period_to?: string;
   invoice_amount_cents?: number;
+  vat_amount_cents?: number;
   calculated_sum_cents?: number;
   difference_cents?: number;
   status?: string;

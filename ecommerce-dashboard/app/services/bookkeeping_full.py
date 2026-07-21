@@ -169,6 +169,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
     changed = _migrate_orders_allow_zero_revenue(connection) or changed
     changed = _ensure_column(connection, "recurring_templates", "start_date", "TEXT") or changed
     changed = _ensure_column(connection, "transactions", "booking_class", "TEXT DEFAULT 'single'") or changed
+    changed = _ensure_column(connection, "transactions", "is_vat_deductible", "INTEGER NOT NULL DEFAULT 0") or changed
 
     # --- monthly_invoices ---
     if not _table_exists(connection, "monthly_invoices"):
@@ -179,6 +180,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
                 period_from TEXT NOT NULL,
                 period_to TEXT NOT NULL,
                 invoice_amount_cents INTEGER NOT NULL,
+                vat_amount_cents INTEGER NOT NULL DEFAULT 0,
                 currency TEXT NOT NULL DEFAULT 'EUR',
                 calculated_sum_cents INTEGER,
                 difference_cents INTEGER,
@@ -203,6 +205,8 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
             )
         """)
         changed = True
+
+    changed = _ensure_column(connection, "monthly_invoices", "vat_amount_cents", "INTEGER NOT NULL DEFAULT 0") or changed
 
     # --- backfill booking_class for existing rows ---
     if changed and _table_exists(connection, "transactions"):
@@ -632,6 +636,7 @@ def _transaction_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "vat_rate": None if row["vat_rate"] is None else float(row["vat_rate"]),
         "vat_amount": row["vat_amount"],
         "amount_net": row["amount_net"],
+        "is_vat_deductible": bool(row["is_vat_deductible"]),
         "provider": row["provider"],
         "counterparty_name": row["counterparty_name"],
         "category": row["category"],
@@ -702,6 +707,7 @@ def _transactions_select_sql() -> str:
             t.vat_rate,
             t.vat_amount,
             t.amount_net,
+            t.is_vat_deductible,
             t.provider,
             t.counterparty_name,
             t.category,
@@ -1040,6 +1046,8 @@ def _parse_transaction_payload(payload: Any) -> dict[str, Any]:
     if amount_net is not None and amount_net > amount_gross:
         raise BookkeepingServiceError(400, "amount_net must be <= amount_gross")
 
+    is_vat_deductible = bool(_parse_optional_bool(payload.get("is_vat_deductible"), "is_vat_deductible") or False)
+
     provider = _ensure_required_string(payload, "provider", max_length=120)
     counterparty_name = _ensure_optional_string(payload, "counterparty_name", max_length=120)
     if counterparty_name == "":
@@ -1110,6 +1118,7 @@ def _parse_transaction_payload(payload: Any) -> dict[str, Any]:
         "vat_rate": vat_rate,
         "vat_amount": vat_amount,
         "amount_net": amount_net,
+        "is_vat_deductible": is_vat_deductible,
         "provider": provider,
         "counterparty_name": counterparty_name,
         "category": category,
@@ -1140,6 +1149,7 @@ def _parse_transaction_patch_payload(payload: Any) -> dict[str, Any]:
         "vat_rate",
         "vat_amount",
         "amount_net",
+        "is_vat_deductible",
         "provider",
         "counterparty_name",
         "category",
@@ -1202,6 +1212,9 @@ def _parse_transaction_patch_payload(payload: Any) -> dict[str, Any]:
     if "amount_net" in payload:
         value = payload.get("amount_net")
         updates["amount_net"] = None if value is None else _parse_nonnegative_int(value, "amount_net")
+
+    if "is_vat_deductible" in payload:
+        updates["is_vat_deductible"] = bool(_parse_optional_bool(payload.get("is_vat_deductible"), "is_vat_deductible") or False)
 
     if "provider" in payload:
         value = payload.get("provider")
@@ -1661,11 +1674,11 @@ def create_bookkeeping_transaction(payload: Any) -> dict[str, Any]:
                 """
                 INSERT INTO transactions (
                     id, date, type, direction, amount_gross, currency,
-                    vat_rate, vat_amount, amount_net, provider, counterparty_name, category,
+                    vat_rate, vat_amount, amount_net, is_vat_deductible, provider, counterparty_name, category,
                     reference, notes, order_id, document_id, template_id, payment_account_id, period_key,
                     source, source_key, status, booking_class, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     transaction_id,
@@ -1677,6 +1690,7 @@ def create_bookkeeping_transaction(payload: Any) -> dict[str, Any]:
                     parsed["vat_rate"],
                     parsed["vat_amount"],
                     parsed["amount_net"],
+                    1 if parsed["is_vat_deductible"] else 0,
                     parsed["provider"],
                     parsed["counterparty_name"],
                     parsed["category"],
@@ -1717,7 +1731,7 @@ def update_bookkeeping_transaction(transaction_id: str, payload: Any) -> dict[st
     with _connect_bookkeeping_db() as connection:
         existing = connection.execute(
             """
-            SELECT id, date, amount_gross, vat_rate, vat_amount, amount_net, template_id, type
+            SELECT id, date, amount_gross, vat_rate, vat_amount, amount_net, is_vat_deductible, template_id, type
             FROM transactions
             WHERE id = ?
             """,
@@ -1793,6 +1807,7 @@ def update_bookkeeping_transaction(transaction_id: str, payload: Any) -> dict[st
             "vat_rate",
             "vat_amount",
             "amount_net",
+            "is_vat_deductible",
             "provider",
             "counterparty_name",
             "category",
@@ -2280,6 +2295,7 @@ def _monthly_invoice_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "period_from": row["period_from"],
         "period_to": row["period_to"],
         "invoice_amount_cents": row["invoice_amount_cents"],
+        "vat_amount_cents": row["vat_amount_cents"],
         "currency": row["currency"],
         "calculated_sum_cents": row["calculated_sum_cents"],
         "difference_cents": row["difference_cents"],
@@ -2486,6 +2502,9 @@ def create_monthly_invoice(payload: Any) -> dict[str, Any]:
     if period_from >= period_to:
         raise BookkeepingServiceError(400, "period_from must be before period_to")
     invoice_amount_cents = _parse_positive_int(payload.get("invoice_amount_cents"), "invoice_amount_cents")
+    vat_amount_cents = _parse_nonnegative_int(payload.get("vat_amount_cents", 0), "vat_amount_cents")
+    if vat_amount_cents > invoice_amount_cents:
+        raise BookkeepingServiceError(400, "vat_amount_cents must be <= invoice_amount_cents")
     currency = _normalize_currency(payload.get("currency", "EUR"), "currency")
 
     document_id = None
@@ -2542,10 +2561,10 @@ def create_monthly_invoice(payload: Any) -> dict[str, Any]:
             """
             INSERT INTO monthly_invoices (
                 id, provider, period_from, period_to, invoice_amount_cents, currency,
-                calculated_sum_cents, difference_cents, document_id, notes, status,
+                vat_amount_cents, calculated_sum_cents, difference_cents, document_id, notes, status,
                 created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 invoice_id,
@@ -2554,6 +2573,7 @@ def create_monthly_invoice(payload: Any) -> dict[str, Any]:
                 period_to,
                 invoice_amount_cents,
                 currency,
+                vat_amount_cents,
                 calculated_sum_cents,
                 difference_cents,
                 document_id,
@@ -2612,7 +2632,7 @@ def update_monthly_invoice(invoice_id: str, payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise BookkeepingServiceError(400, "invalid JSON payload")
 
-    allowed = {"provider", "period_from", "period_to", "invoice_amount_cents", "currency", "document_id", "notes"}
+    allowed = {"provider", "period_from", "period_to", "invoice_amount_cents", "vat_amount_cents", "currency", "document_id", "notes"}
     unknown = set(payload.keys()) - allowed
     if unknown:
         raise BookkeepingServiceError(400, f"unsupported fields: {', '.join(sorted(unknown))}")
@@ -2636,6 +2656,8 @@ def update_monthly_invoice(invoice_id: str, payload: Any) -> dict[str, Any]:
             updates["period_to"] = _parse_filter_date(payload["period_to"], "period_to", is_end=True)
         if "invoice_amount_cents" in payload:
             updates["invoice_amount_cents"] = _parse_positive_int(payload["invoice_amount_cents"], "invoice_amount_cents")
+        if "vat_amount_cents" in payload:
+            updates["vat_amount_cents"] = _parse_nonnegative_int(payload["vat_amount_cents"], "vat_amount_cents")
         if "currency" in payload:
             updates["currency"] = _normalize_currency(payload["currency"], "currency")
         if "document_id" in payload:
@@ -2680,6 +2702,9 @@ def update_monthly_invoice(invoice_id: str, payload: Any) -> dict[str, Any]:
         if overlap is not None:
             raise BookkeepingServiceError(409, "monthly invoice period overlaps an existing invoice for this provider")
         effective_amount = updates.get("invoice_amount_cents", existing["invoice_amount_cents"])
+        effective_vat_amount = updates.get("vat_amount_cents", existing["vat_amount_cents"])
+        if int(effective_vat_amount) > int(effective_amount):
+            raise BookkeepingServiceError(400, "vat_amount_cents must be <= invoice_amount_cents")
 
         # Re-reconcile
         sum_row = connection.execute(

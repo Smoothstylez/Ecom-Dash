@@ -59,7 +59,12 @@ def init_combined_db() -> None:
                 financial_status TEXT,
                 raw_status TEXT,
                 raw_json TEXT,
+                sales_gross_cents INTEGER NOT NULL DEFAULT 0,
+                sales_net_cents INTEGER NOT NULL DEFAULT 0,
+                sales_vat_cents INTEGER NOT NULL DEFAULT 0,
                 purchase_cost_cents INTEGER NOT NULL DEFAULT 0,
+                purchase_vat_cents INTEGER NOT NULL DEFAULT 0,
+                purchase_is_vat_deductible INTEGER NOT NULL DEFAULT 0,
                 purchase_currency TEXT NOT NULL DEFAULT 'EUR',
                 purchase_supplier TEXT,
                 purchase_notes TEXT,
@@ -98,6 +103,8 @@ def init_combined_db() -> None:
                 marketplace TEXT NOT NULL,
                 order_id TEXT NOT NULL,
                 purchase_cost_cents INTEGER,
+                purchase_vat_cents INTEGER NOT NULL DEFAULT 0,
+                purchase_is_vat_deductible INTEGER NOT NULL DEFAULT 0,
                 purchase_currency TEXT NOT NULL DEFAULT 'EUR',
                 supplier_name TEXT,
                 purchase_notes TEXT,
@@ -176,6 +183,7 @@ def init_combined_db() -> None:
                 vat_id TEXT NOT NULL DEFAULT '',
                 tax_number TEXT NOT NULL DEFAULT '',
                 tax_mode TEXT NOT NULL DEFAULT 'small_business',
+                vat_effective_from TEXT NOT NULL DEFAULT '',
                 invoice_prefix TEXT NOT NULL DEFAULT 'RE',
                 default_template TEXT NOT NULL DEFAULT 'clean',
                 footer_note TEXT NOT NULL DEFAULT '',
@@ -265,12 +273,20 @@ def _ensure_combined_orders_columns(connection: sqlite3.Connection) -> None:
     }:
         return
     _ensure_column(connection, "combined_orders", "purchase_cost_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "sales_gross_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "sales_net_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "sales_vat_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "purchase_vat_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "combined_orders", "purchase_is_vat_deductible", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "purchase_currency", "TEXT NOT NULL DEFAULT 'EUR'")
     _ensure_column(connection, "combined_orders", "purchase_supplier", "TEXT")
     _ensure_column(connection, "combined_orders", "purchase_notes", "TEXT")
     _ensure_column(connection, "combined_orders", "profit_cents", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "has_invoice", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "invoice_document_id", "TEXT")
+    _ensure_column(connection, "order_enrichments", "purchase_vat_cents", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "order_enrichments", "purchase_is_vat_deductible", "INTEGER NOT NULL DEFAULT 0")
+    _ensure_column(connection, "seller_profiles", "vat_effective_from", "TEXT NOT NULL DEFAULT ''")
 
 
 def refresh_combined_order_row(*, marketplace: str, order_id: str) -> bool:
@@ -371,7 +387,7 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                 SELECT
                     o.id, o.name, o.created_at, o.payment_method,
                     o.financial_status, o.fulfillment_status,
-                    o.total_price, o.currency,
+                    o.total_price, o.total_tax, o.currency,
                     o.customer_first_name, o.customer_last_name,
                     o.customer_email, o.email,
                     o.estimated_paypal_fee, o.estimated_net_after_fee,
@@ -431,6 +447,17 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                           AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                     ) AS units_price_sum,
                     (
+                        SELECT COALESCE(SUM(
+                            CAST(COALESCE(NULLIF(ou.price, ''), 0) AS REAL)
+                            * COALESCE(ou.vat, 0)
+                            / (100 + COALESCE(ou.vat, 0))
+                        ), 0)
+                        FROM order_units ou
+                        WHERE ou.id_order = o.id_order
+                          AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                          AND COALESCE(ou.vat, 0) > 0
+                    ) AS units_vat_sum,
+                    (
                         SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ou.revenue_gross, ''), 0) AS REAL)), 0)
                               - COALESCE((
                                    SELECT SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL))
@@ -449,6 +476,24 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                         WHERE ou.id_order = o.id_order
                           AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
                     ) AS shipping_sum,
+                    (
+                        SELECT COALESCE(SUM(
+                            CAST(COALESCE(NULLIF(ou.shipping_rate, ''), 0) AS REAL)
+                            * COALESCE(ou.vat, 0)
+                            / (100 + COALESCE(ou.vat, 0))
+                        ), 0)
+                        FROM order_units ou
+                        WHERE ou.id_order = o.id_order
+                          AND COALESCE(ou.status, '') NOT IN ('cancelled', 'canceled')
+                          AND COALESCE(ou.vat, 0) > 0
+                    ) AS shipping_vat_sum,
+                    (
+                        SELECT COALESCE(SUM(CAST(COALESCE(NULLIF(ref.amount, ''), '0') AS REAL)), 0)
+                        FROM order_unit_refunds ref
+                        JOIN order_units ou2 ON ref.id_order_unit = ou2.id_order_unit
+                        WHERE ou2.id_order = o.id_order
+                          AND COALESCE(ou2.status, '') NOT IN ('cancelled', 'canceled')
+                    ) AS refund_amount_sum,
                     (
                         SELECT ou.product_title FROM order_units ou
                         WHERE ou.id_order = o.id_order
@@ -512,6 +557,9 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
 
             purchase_cost = enrichment.get("purchase_cost_cents")
             purchase_cost_cents = int(purchase_cost) if isinstance(purchase_cost, int) else 0
+            purchase_vat = enrichment.get("purchase_vat_cents")
+            purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
+            purchase_is_vat_deductible = 1 if bool(enrichment.get("purchase_is_vat_deductible")) else 0
             profit_cents = int(order["after_fees_cents"]) - purchase_cost_cents
 
             order_id = f"{order['marketplace']}:{order['order_id']}"
@@ -523,7 +571,9 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     total_cents, fees_cents, after_fees_cents, shipping_cents,
                     currency, fulfillment_status, payment_method, fee_source,
                     financial_status, raw_status, raw_json,
-                    purchase_cost_cents, purchase_currency, purchase_supplier,
+                    sales_gross_cents, sales_net_cents, sales_vat_cents,
+                    purchase_cost_cents, purchase_vat_cents, purchase_is_vat_deductible,
+                    purchase_currency, purchase_supplier,
                     purchase_notes, profit_cents, has_invoice, invoice_document_id
                 ) VALUES (
                     ?, ?, ?, ?, ?,
@@ -532,6 +582,7 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     ?, ?, ?, ?,
                     ?, ?, ?,
                     ?, ?, ?,
+                    ?, ?, ?, ?,
                     ?, ?, ?, ?
                 )
                 """,
@@ -555,7 +606,12 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     order["financial_status"],
                     order["raw_status"],
                     order["raw_json"],
+                    int(order.get("sales_gross_cents") or 0),
+                    int(order.get("sales_net_cents") or 0),
+                    int(order.get("sales_vat_cents") or 0),
                     purchase_cost_cents,
+                    purchase_vat_cents,
+                    purchase_is_vat_deductible,
                     enrichment.get("purchase_currency") or "EUR",
                     enrichment.get("supplier_name"),
                     enrichment.get("purchase_notes"),
@@ -657,6 +713,8 @@ def clear_purchase_enrichment(
             """
             UPDATE order_enrichments
             SET purchase_cost_cents = 0,
+                purchase_vat_cents = 0,
+                purchase_is_vat_deductible = 0,
                 invoice_document_id = NULL,
                 updated_at = ?
             WHERE marketplace = ? AND order_id = ?
@@ -672,9 +730,11 @@ def upsert_purchase_enrichment(
     marketplace: str,
     order_id: str,
     purchase_cost_cents: Optional[int],
-    purchase_currency: Optional[str],
-    supplier_name: Optional[str],
-    purchase_notes: Optional[str],
+    purchase_vat_cents: Optional[int] = None,
+    purchase_is_vat_deductible: Optional[bool] = None,
+    purchase_currency: Optional[str] = None,
+    supplier_name: Optional[str] = None,
+    purchase_notes: Optional[str] = None,
 ) -> dict[str, Any]:
     timestamp = now_iso()
     with connect_combined_db() as connection:
@@ -693,12 +753,15 @@ def upsert_purchase_enrichment(
         connection.execute(
             """
             INSERT INTO order_enrichments (
-                marketplace, order_id, purchase_cost_cents, purchase_currency,
+                marketplace, order_id, purchase_cost_cents, purchase_vat_cents,
+                purchase_is_vat_deductible, purchase_currency,
                 supplier_name, purchase_notes, invoice_document_id, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(marketplace, order_id) DO UPDATE SET
                 purchase_cost_cents = excluded.purchase_cost_cents,
+                purchase_vat_cents = excluded.purchase_vat_cents,
+                purchase_is_vat_deductible = excluded.purchase_is_vat_deductible,
                 purchase_currency = excluded.purchase_currency,
                 supplier_name = excluded.supplier_name,
                 purchase_notes = excluded.purchase_notes,
@@ -708,6 +771,8 @@ def upsert_purchase_enrichment(
                 marketplace,
                 order_id,
                 purchase_cost_cents,
+                max(int(purchase_vat_cents or 0), 0),
+                1 if bool(purchase_is_vat_deductible) else 0,
                 _normalize_currency(purchase_currency),
                 supplier_name,
                 purchase_notes,
@@ -776,10 +841,11 @@ def create_invoice_document(
         connection.execute(
             """
             INSERT INTO order_enrichments (
-                marketplace, order_id, purchase_cost_cents, purchase_currency,
+                marketplace, order_id, purchase_cost_cents, purchase_vat_cents,
+                purchase_is_vat_deductible, purchase_currency,
                 supplier_name, purchase_notes, invoice_document_id, created_at, updated_at
             )
-            VALUES (?, ?, NULL, 'EUR', NULL, NULL, ?, ?, ?)
+            VALUES (?, ?, NULL, 0, 0, 'EUR', NULL, NULL, ?, ?, ?)
             ON CONFLICT(marketplace, order_id) DO UPDATE SET
                 invoice_document_id = excluded.invoice_document_id,
                 updated_at = excluded.updated_at
@@ -808,6 +874,8 @@ def fetch_enrichment_map() -> dict[tuple[str, str], dict[str, Any]]:
                 e.marketplace,
                 e.order_id,
                 e.purchase_cost_cents,
+                e.purchase_vat_cents,
+                e.purchase_is_vat_deductible,
                 e.purchase_currency,
                 e.supplier_name,
                 e.purchase_notes,
