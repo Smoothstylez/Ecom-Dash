@@ -359,6 +359,7 @@ def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = 
         "fulfillment_status": first_non_empty(row["fulfillment_status"], row["financial_status"], "unknown"),
         "payment_method": first_non_empty(row["payment_method"], "Shopify"),
         "fee_source": fee_source,
+        "is_test": bool(order_payload.get("test")),
     }
     summary["raw_status"] = summary.get("fulfillment_status")
     summary["financial_status"] = first_non_empty(row["financial_status"], "")

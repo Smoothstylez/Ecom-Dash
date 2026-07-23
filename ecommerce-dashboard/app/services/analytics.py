@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
+from app.config import ALLOWED_MARKETPLACES
+from app.services.bookkeeping_full import list_bookkeeping_transactions
 from app.services.orders import list_all_orders_without_pagination
 
 
@@ -135,6 +137,8 @@ def _normalize_order_metrics(order: dict[str, Any]) -> dict[str, Any]:
     profit = int(order.get("profit_cents") or (after_fees - purchase))
     shipping = max(int(order.get("shipping_cents") or 0), 0)
 
+    is_test = bool(order.get("is_test"))
+
     is_return_like = any(
         _is_return_like_status(value)
         for value in (
@@ -143,7 +147,7 @@ def _normalize_order_metrics(order: dict[str, Any]) -> dict[str, Any]:
             order.get("raw_status"),
         )
     )
-    if is_return_like and not _is_partial_refund_order(order):
+    if is_test or (is_return_like and not _is_partial_refund_order(order)):
         total = 0
         fees = 0
         after_fees = 0
@@ -316,6 +320,7 @@ def build_analytics(
     profit_total = 0
     shopify_revenue = 0
     kaufland_revenue = 0
+    amazon_revenue = 0
     shipping_total = 0
     orders_with_purchase = 0
     purchase_missing_count = 0
@@ -332,7 +337,7 @@ def build_analytics(
     }
 
     marketplace_map: dict[str, dict[str, int]] = {
-        "shopify": {
+        market_key: {
             "order_count": 0,
             "revenue_total_cents": 0,
             "fees_total_cents": 0,
@@ -342,18 +347,8 @@ def build_analytics(
             "shipping_total_cents": 0,
             "returns_order_count": 0,
             "orders_with_purchase_count": 0,
-        },
-        "kaufland": {
-            "order_count": 0,
-            "revenue_total_cents": 0,
-            "fees_total_cents": 0,
-            "after_fees_total_cents": 0,
-            "purchase_total_cents": 0,
-            "profit_total_cents": 0,
-            "shipping_total_cents": 0,
-            "returns_order_count": 0,
-            "orders_with_purchase_count": 0,
-        },
+        }
+        for market_key in sorted(ALLOWED_MARKETPLACES)
     }
 
     day_map: dict[date, dict[str, int]] = defaultdict(_new_metric_bucket)
@@ -424,6 +419,8 @@ def build_analytics(
             shopify_revenue += total
         elif order.get("marketplace") == "kaufland":
             kaufland_revenue += total
+        elif order.get("marketplace") == "amazon":
+            amazon_revenue += total
 
         market_key = str(order.get("marketplace") or "").strip().lower()
         market = marketplace_map.get(market_key)
@@ -482,7 +479,7 @@ def build_analytics(
     repeat_customer_rate_pct = _safe_pct(repeat_customers, unique_customers)
 
     marketplace_rows: list[dict[str, Any]] = []
-    for market_key in ("shopify", "kaufland"):
+    for market_key in sorted(marketplace_map):
         market = marketplace_map[market_key]
         market_order_count = int(market["order_count"])
         market_revenue_total = int(market["revenue_total_cents"])
@@ -640,6 +637,22 @@ def build_analytics(
             "margin_pct": prev_margin,
         }
 
+    expenses_total_cents = 0
+    try:
+        txns = list_bookkeeping_transactions({
+            "dateFrom": from_date,
+            "dateTo": to_date,
+            "limit": 100000,
+            "offset": 0,
+        })
+        for txn in txns.get("items") or []:
+            if txn.get("direction") == "OUT" and txn.get("order_id") is None:
+                expenses_total_cents += int(txn.get("amount_gross") or 0)
+    except Exception:
+        pass
+
+    net_profit_total_cents = max(profit_total - expenses_total_cents, 0)
+
     return {
         "order_count": order_count,
         "revenue_total_cents": revenue_total,
@@ -647,6 +660,8 @@ def build_analytics(
         "after_fees_total_cents": after_fees_total,
         "purchase_total_cents": purchase_total,
         "profit_total_cents": profit_total,
+        "expenses_total_cents": expenses_total_cents,
+        "net_profit_total_cents": net_profit_total_cents,
         "margin_pct": margin_pct,
         "aov_cents": aov_cents,
         "avg_profit_per_order_cents": avg_profit_per_order_cents,
@@ -665,6 +680,7 @@ def build_analytics(
         "top_payment_methods": payment_rows,
         "shopify_revenue_total_cents": shopify_revenue,
         "kaufland_revenue_total_cents": kaufland_revenue,
+        "amazon_revenue_total_cents": amazon_revenue,
         "monthly": monthly_rows,
         "trend": trend_payload,
         "top_articles": article_rows[:12],
