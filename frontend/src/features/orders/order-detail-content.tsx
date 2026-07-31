@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
+import { isAmazonFba, marketplaceLabel } from "@/shared/marketplace";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 import type { OrderDetail, OrderSummary } from "./api";
@@ -54,6 +55,8 @@ function feeSourceText(source: unknown) {
   switch (String(source || "").trim()) {
     case "api":
       return "API (exakt)";
+    case "amazon_finance":
+      return "Amazon Finance API (exakt)";
     case "stored_estimate":
       return "Gespeicherte Schaetzung";
     case "estimated":
@@ -157,7 +160,7 @@ function DetailRows({ items }: { items: Array<[string, unknown]> }) {
   );
 }
 
-function AddressCard({ title, address }: { title: string; address: unknown }) {
+function AddressCard({ title, address, note }: { title: string; address: unknown; note?: string }) {
   const addressRecord = asRecord(address);
   const name = [optionalText(addressRecord.first_name), optionalText(addressRecord.last_name)].filter(Boolean).join(" ");
   const street = [optionalText(addressRecord.street), optionalText(addressRecord.house_number)].filter(Boolean).join(" ")
@@ -174,10 +177,12 @@ function AddressCard({ title, address }: { title: string; address: unknown }) {
             ["Strasse", street || "-"],
             ["PLZ", addressRecord.postcode || addressRecord.zip || "-"],
             ["Stadt", addressRecord.city || "-"],
+            ["Region", addressRecord.state_or_region || "-"],
             ["Land", addressRecord.country || addressRecord.country_code || "-"],
             ["Telefon", addressRecord.phone || "-"],
           ]}
         />
+        {note ? <div className="table-meta">{note}</div> : null}
       </div>
     </article>
   );
@@ -208,6 +213,18 @@ function parseJsonRecord(value: unknown) {
   return asRecord(value);
 }
 
+function parseJsonArray(value: unknown) {
+  if (typeof value !== "string") {
+    return Array.isArray(value) ? value : [];
+  }
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
 function collectDetailImages(detail: OrderDetail) {
   const urls: string[] = [];
   const seen = new Set<string>();
@@ -227,6 +244,13 @@ function collectDetailImages(detail: OrderDetail) {
     add(item.featured_image);
     add(item.product_image);
     add(item.product_image_url);
+    add(item.image_url);
+    for (const image of asStringArray(item.image_urls)) {
+      add(image);
+    }
+    for (const image of parseJsonArray(item.image_urls_json)) {
+      add(image);
+    }
 
     const raw = parseJsonRecord(item.raw_json);
     add(raw.image);
@@ -340,8 +364,21 @@ function ShipmentSection({
 }) {
   const summary = detail.summary || {};
   const capabilities = asRecord(detail.shipment_capabilities);
-  const available = Boolean(capabilities.available);
+  const available = capabilities.available === true;
   const marketplace = text(capabilities.marketplace || summary.marketplace, "").toLowerCase();
+  const order = asRecord(detail.order);
+  const amazonFba = isAmazonFba(
+    marketplace,
+    capabilities.fulfillment_channel,
+    capabilities.fulfillment_type,
+    capabilities.is_fba,
+    summary.fulfillment_channel,
+    summary.fulfillment_type,
+    summary.is_fba,
+    order.fulfillment_channel,
+    order.fulfillment_type,
+    order.is_fba,
+  );
   const carrierOptions = asStringArray(capabilities.carrier_options);
   const pendingUnits = asRecordArray(capabilities.pending_units);
   const [carrier, setCarrier] = useState("");
@@ -358,11 +395,14 @@ function ShipmentSection({
   }, [detail, carrierOptions]);
 
   const trackingRequired = useMemo(() => {
+    if (capabilities.requires_tracking_number === false) {
+      return false;
+    }
     if (marketplace !== "kaufland") {
       return true;
     }
     return carrier !== "Other" && carrier !== "Other Hauler";
-  }, [carrier, marketplace]);
+  }, [capabilities.requires_tracking_number, carrier, marketplace]);
 
   const submitDisabled = shipmentSubmitting
     || !carrier
@@ -371,10 +411,12 @@ function ShipmentSection({
   return (
     <section className="detail-grid">
       <article className="detail-card detail-card-wide">
-        <h3>Versand & Tracking</h3>
+        <h3>{amazonFba && !available ? "Versand & Tracking (Amazon FBA, nur Ansicht)" : "Versand & Tracking"}</h3>
         <div className="shipment-panel">
           <p className="shipment-help">
-            {marketplace === "kaufland"
+            {amazonFba
+              ? "Amazon FBA uebernimmt Versand und Tracking. Versandaktionen richten sich nach der Backend-Faehigkeit dieser Bestellung."
+              : marketplace === "kaufland"
               ? "Kaufland meldet Versand pro Order Unit. Diese Aktion uebertraegt denselben Carrier und dieselbe Trackingnummer fuer alle aktuell offenen Units dieser Bestellung."
               : "Shopify erstellt fuer alle aktuell offenen Fulfillment Orders dieser Bestellung einen Versand mit dem ausgewaehlten Carrier und der Trackingnummer."}
           </p>
@@ -672,10 +714,22 @@ export function OrderDetailContent({
   const breakdown = asRecord(detail.bookkeeping_breakdown);
   const lineItems = asRecordArray(detail.line_items);
   const transactions = asRecordArray(detail.transactions);
+  const financialEvents = asRecordArray(detail.financial_events);
+  const fifoAllocations = asRecordArray(detail.fifo_allocations);
   const fulfillments = asRecordArray(detail.fulfillments);
   const refunds = asRecordArray(detail.refunds);
   const units = asRecordArray(detail.units);
-  const isShopify = String(summary.marketplace || "").trim().toLowerCase() === "shopify";
+  const marketplace = String(summary.marketplace || "").trim().toLowerCase();
+  const isShopify = marketplace === "shopify";
+  const amazonFba = isAmazonFba(
+    marketplace,
+    summary.fulfillment_channel,
+    summary.fulfillment_type,
+    summary.is_fba,
+    detailOrder.fulfillment_channel,
+    detailOrder.fulfillment_type,
+    detailOrder.is_fba,
+  );
 
   const orderCode = text(
     summary.external_order_id
@@ -697,6 +751,11 @@ export function OrderDetailContent({
   const invoiceUrl = buildInvoicePreviewUrl(summary);
   const purchaseSupplier = text(summary.purchase_supplier);
   const purchaseNotes = text(summary.purchase_notes);
+  const shippingAddress = asRecord(detail.shipping_address);
+  const billingAddress = asRecord(detail.billing_address);
+  const partialAmazonAddress = marketplace === "amazon"
+    && Boolean(shippingAddress.city || shippingAddress.postcode)
+    && !shippingAddress.address1;
   const financeRows: Array<[string, unknown]> = [
     ["Total", formatMoneyFromCents(numeric(summary.total_cents))],
     ["Sales Brutto", formatMoneyFromCents(numeric(summary.sales_gross_cents))],
@@ -731,7 +790,8 @@ export function OrderDetailContent({
           <div className="detail-kv">
             <DetailRows
               items={[
-                ["Marketplace", summary.marketplace || "-"],
+                ["Marketplace", amazonFba ? "Amazon FBA" : marketplaceLabel(summary.marketplace)],
+                ...(marketplace === "amazon" ? [["Fulfillment", amazonFba ? "FBA (Amazon uebernimmt Versand)" : "Seller Fulfilled"] as [string, unknown]] : []),
                 ["Order", orderCode],
                 ["Datum", formatDateTime(summary.order_date)],
                 ["Kunde", customerName],
@@ -773,9 +833,74 @@ export function OrderDetailContent({
         </article>
       </section>
 
+      {marketplace === "amazon" ? (
+        <section className="detail-grid">
+          <article className="detail-card">
+            <h3>Amazon-Finanzereignisse</h3>
+            <div className="detail-kv">
+              {financialEvents.length ? financialEvents.map((event, index) => {
+                const breakdown = asRecord(event.financial_breakdown);
+                const fees = asRecordArray(breakdown.fees);
+                const feeRows: Array<[string, unknown]> = fees.map((fee) => [
+                  `Gebuehr: ${text(fee.type, "Amazon Fee")}`,
+                  formatMoneyFromCents(numeric(fee.amount_cents)),
+                ]);
+                return (
+                  <div key={text(event.id, `event-${index}`)}>
+                    <DetailRows items={[
+                      [`${text(event.event_type, "Ereignis")} ${index + 1}`, `${formatMoneyFromCents(numeric(event.net_cents))} (${text(event.financial_finality, "pending")})`],
+                      ["Maturity", formatDateTime(breakdown.maturity_date)],
+                      ["Order ID", text(breakdown.order_id || event.amazon_order_id)],
+                      ["Amazon Shipment ID", text(breakdown.shipment_id)],
+                      ["Settlement ID", text(breakdown.settlement_id || event.settlement_id)],
+                      ...feeRows,
+                    ]} />
+                  </div>
+                );
+              }) : <span>Noch keine orderbezogenen Amazon-Finanzereignisse importiert.</span>}
+            </div>
+          </article>
+          <article className="detail-card">
+            <h3>FIFO-Wareneinsatz</h3>
+            <div className="detail-kv">
+              {fifoAllocations.length ? <DetailRows items={fifoAllocations.map((allocation, index) => [
+                `Lot ${index + 1} (${text(allocation.inbound_shipment_id || allocation.batch_reference)})`,
+                `${text(allocation.seller_sku)} · ${numeric(allocation.quantity)} x ${formatMoneyFromCents(numeric(allocation.unit_cost_cents))}`,
+              ])} /> : <span>Noch keine FIFO-Zuordnung vorhanden.</span>}
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {marketplace === "amazon" ? (
+        <SimpleTable
+          title="Amazon-Positionen"
+          headers={["Titel", "ASIN", "SKU", "Menge", "Brutto", "USt"]}
+          rows={lineItems.map((item, index) => ({
+            key: `${text(item.id, `amazon-item-${index}`)}:${index}`,
+            cells: [
+              item.title,
+              item.asin,
+              item.seller_sku,
+              item.quantity_ordered,
+              formatMoneyFromCents(numeric(item.item_price_cents)),
+              formatMoneyFromCents(numeric(item.item_tax_cents)),
+            ],
+          }))}
+        />
+      ) : null}
+
       <section className="detail-grid">
-        <AddressCard title="Lieferadresse" address={detail.shipping_address} />
-        <AddressCard title="Rechnungsadresse" address={detail.billing_address} />
+        <AddressCard
+          title="Lieferadresse"
+          address={detail.shipping_address}
+          note={partialAmazonAddress ? "Amazon liefert fuer diese FBA-Bestellung nur Stadt, Region, PLZ und Land. Name und Strasse sind durch die aktuelle PII-Berechtigung geschuetzt." : undefined}
+        />
+        <AddressCard
+          title="Rechnungsadresse"
+          address={detail.billing_address}
+          note={marketplace === "amazon" && !Object.keys(billingAddress).length ? "Amazon stellt fuer FBA keine separate Rechnungsadresse ueber diese API bereit." : undefined}
+        />
         <ImageCard detail={detail} />
         <article className="detail-card">
           <h3>Beleg</h3>

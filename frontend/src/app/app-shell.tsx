@@ -6,6 +6,7 @@ import {
   type ShellFilters,
 } from "@/app/dashboard-shell-state";
 import { applyDatePreset, datePresetLabel, formatDateToken } from "@/features/analytics/format";
+import { marketplaceLabel, normalizeMarketplaceFilter, type MarketplaceFilter } from "@/shared/marketplace";
 import { stripDashboardBasePath, withDashboardBasePath } from "@/shared/runtime/base-path";
 import type { DashboardRoute } from "@/shared/runtime/dashboard-route";
 
@@ -65,17 +66,6 @@ function buildInitialDateRangeUi(filters: ShellFilters): DateRangeUiState {
     customFrom: filters.from,
     customTo: filters.to,
   };
-}
-
-function channelLabel(value: string) {
-  const token = String(value || "").trim().toLowerCase();
-  if (token === "shopify") {
-    return "Shopify";
-  }
-  if (token === "kaufland") {
-    return "Kaufland";
-  }
-  return "Alle";
 }
 
 function dateRangeButtonLabel(filters: ShellFilters) {
@@ -334,10 +324,10 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
     setDateRangeMenuOpen(false);
   }
 
-  function selectMarketplace(nextMarketplace: string) {
+  function selectMarketplace(nextMarketplace: MarketplaceFilter) {
     const nextFilters = {
       ...filters,
-      marketplace: String(nextMarketplace || "").trim().toLowerCase(),
+      marketplace: normalizeMarketplaceFilter(nextMarketplace),
     } as ShellFilters;
     setFilters(nextFilters);
     setChannelMenuOpen(false);
@@ -509,6 +499,16 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
         >
           Kaufland
         </button>
+        <button
+          className={classNames("menu-item", filters.marketplace === "amazon" && "active")}
+          data-channel="amazon"
+          type="button"
+          onClick={() => {
+            selectMarketplace("amazon");
+          }}
+        >
+          Amazon
+        </button>
       </div>
 
       <div className={classNames("page-layout", sidebarCollapsed && "sidebar-collapsed")}>
@@ -543,7 +543,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                     openChannelMenu();
                   }}
                 >
-                  {channelLabel(filters.marketplace)}
+                  {marketplaceLabel(filters.marketplace)}
                 </button>
               </div>
               <div className="sidebar-control sidebar-control-menu">
@@ -714,6 +714,18 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-9.5 8.5c0 .83-.67 1.5-1.5 1.5H7v2H5.5V9H8c.83 0 1.5.67 1.5 1.5v1zm5 2c0 .83-.67 1.5-1.5 1.5h-2.5V9H13c.83 0 1.5.67 1.5 1.5v3zm4-3H17v1h1.5V11H17v2h-1.5V7h3v1.5zM9 9.5h1v-1H9v1zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm10 5.5h1v-3h-1v3z" /></svg>
                 <span>Google Ads</span>
+              </button>
+              <button
+                id="tabAmazonBtn"
+                className={classNames("sidebar-nav-btn", route === "amazon" && "active")}
+                type="button"
+                role="tab"
+                onClick={() => {
+                  navigate("/amazon");
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16v12H4V6zm2 2v8h12V8H6zm2 2h8v2H8v-2zm0 4h5v-2H8v2z" /></svg>
+                <span>Amazon FBA</span>
               </button>
               <button
                 id="tabEbayBtn"

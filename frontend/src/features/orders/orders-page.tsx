@@ -1,6 +1,7 @@
 import { useDashboardShellState } from "@/app/dashboard-shell-state";
 import { useDashboardRuntime } from "@/app/dashboard-runtime";
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
+import { isAmazonFba, marketplaceLabel } from "@/shared/marketplace";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
 import {
@@ -68,6 +69,12 @@ function rowKey(order: OrderSummary) {
   return `${String(order.marketplace || "")}:${String(order.order_id || "")}`;
 }
 
+function orderMarketplaceLabel(order: OrderSummary) {
+  return isAmazonFba(order.marketplace, order.fulfillment_channel, order.fulfillment_type, order.is_fba)
+    ? "Amazon FBA"
+    : marketplaceLabel(order.marketplace);
+}
+
 function centsToInputValue(cents: number | undefined) {
   const value = Number(cents || 0) / 100;
   return Number.isFinite(value) ? value.toFixed(2) : "";
@@ -87,7 +94,7 @@ function formatDateTime(value: string | undefined) {
 }
 
 function renderFeeSourceLabel(source: string | undefined): ReactNode {
-  if (!source || source === "api") {
+  if (!source || source === "api" || source === "amazon_finance") {
     return null;
   }
 
@@ -765,7 +772,7 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                     >
                       {formatDateTime(order.order_date)}
                     </td>
-                    <td data-label="Channel"><span className={`badge ${badgeClass}`}>{String(order.marketplace || "-")}</span></td>
+                    <td data-label="Channel"><span className={`badge ${badgeClass}`}>{orderMarketplaceLabel(order)}</span></td>
                     <td data-label="Order">{String(order.external_order_id || order.order_id || "-")}</td>
                     <td data-label="Kunde">{String(order.customer || "-")}</td>
                     <td data-label="Artikel" title={String(order.article || "-")}>{String(order.article || "-")}{Number(order.line_items_count || 1) > 1 ? <span className="cell-sub"> (+{Number(order.line_items_count || 1) - 1} weitere)</span> : null}</td>

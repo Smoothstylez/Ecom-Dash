@@ -4,8 +4,9 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 
-from app.config import ALLOWED_MARKETPLACES, KAUFLAND_DB_PATH, SHOPIFY_DB_PATH
+from app.config import ALLOWED_MARKETPLACES, AMAZON_FBA_DB_PATH, KAUFLAND_DB_PATH, SHOPIFY_DB_PATH
 from app.db import connect_combined_db, fetch_aliexpress_order_mappings, fetch_enrichment_map
+from app.services.amazon_fba import get_amazon_order_detail, load_amazon_order_summaries
 from app.services.importers.shopify_live import lookup_product_images
 from app.services.order_summaries import (
     cents_to_eur,
@@ -266,12 +267,17 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
 
     purchase_cost = enrichment.get("purchase_cost_cents")
     purchase_cost_cents = int(purchase_cost) if isinstance(purchase_cost, int) else None
+    if base_order.get("marketplace") == "amazon":
+        purchase_cost_cents = int(base_order.get("purchase_cost_cents") or 0)
     if purchase_cost_cents is None:
         purchase_cost_cents = 0
 
     purchase_vat = enrichment.get("purchase_vat_cents")
     purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
     purchase_is_vat_deductible = bool(enrichment.get("purchase_is_vat_deductible"))
+    if base_order.get("marketplace") == "amazon":
+        purchase_vat_cents = int(base_order.get("purchase_vat_cents") or 0)
+        purchase_is_vat_deductible = False
 
     profit_cents = int(base_order["after_fees_cents"]) - purchase_cost_cents
 
@@ -294,9 +300,9 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
         "purchase_vat_cents": purchase_vat_cents,
         "purchase_is_vat_deductible": purchase_is_vat_deductible,
         "purchase_cost_eur": cents_to_eur(purchase_cost_cents),
-        "purchase_currency": enrichment.get("purchase_currency") or "EUR",
-        "purchase_supplier": enrichment.get("supplier_name"),
-        "purchase_notes": enrichment.get("purchase_notes"),
+        "purchase_currency": base_order.get("purchase_currency") if base_order.get("marketplace") == "amazon" else enrichment.get("purchase_currency") or "EUR",
+        "purchase_supplier": base_order.get("purchase_supplier") if base_order.get("marketplace") == "amazon" else enrichment.get("supplier_name"),
+        "purchase_notes": base_order.get("purchase_notes") if base_order.get("marketplace") == "amazon" else enrichment.get("purchase_notes"),
         "invoice": invoice_payload,
         "profit_cents": profit_cents,
     }
@@ -555,6 +561,8 @@ def _combined_orders_ready(*, marketplace: Optional[str]) -> bool:
         return False
     if not KAUFLAND_DB_PATH.exists() and "kaufland" in requested_markets:
         return False
+    if not AMAZON_FBA_DB_PATH.exists() and "amazon" in requested_markets:
+        return False
 
     with connect_combined_db() as conn:
         table_exists = conn.execute(
@@ -586,7 +594,7 @@ def _requested_marketplaces(marketplace: Optional[str]) -> set[str]:
 
 
 def _source_order_counts() -> dict[str, int]:
-    counts = {"shopify": 0, "kaufland": 0}
+    counts = {"shopify": 0, "kaufland": 0, "amazon": 0}
     if SHOPIFY_DB_PATH.exists():
         with _connect_readonly(SHOPIFY_DB_PATH) as connection:
             row = connection.execute("SELECT COUNT(*) FROM orders").fetchone()
@@ -595,6 +603,8 @@ def _source_order_counts() -> dict[str, int]:
         with _connect_readonly(KAUFLAND_DB_PATH) as connection:
             row = connection.execute("SELECT COUNT(*) FROM orders").fetchone()
             counts["kaufland"] = int(row[0] if row else 0)
+    if AMAZON_FBA_DB_PATH.exists():
+        counts["amazon"] = len(load_amazon_order_summaries())
     return counts
 
 
@@ -769,6 +779,7 @@ def _list_orders_from_sources(
     source_rows = [
         *_load_shopify_orders(include_raw_fallbacks=include_raw_fallbacks),
         *_load_kaufland_orders(include_raw_fallbacks=include_raw_fallbacks),
+        *(load_amazon_order_summaries() if AMAZON_FBA_DB_PATH.exists() else []),
     ]
     enrichment_map = fetch_enrichment_map()
     aliexpress_mapping_index = _build_marketplace_aliexpress_mapping_index()
@@ -1097,8 +1108,10 @@ def get_order_detail(marketplace: str, order_id: str) -> Optional[dict[str, Any]
 
     if market == "shopify":
         detail = _load_shopify_order_detail(order_id)
-    else:
+    elif market == "kaufland":
         detail = _load_kaufland_order_detail(order_id)
+    else:
+        detail = get_amazon_order_detail(order_id)
 
     if detail is None:
         return None

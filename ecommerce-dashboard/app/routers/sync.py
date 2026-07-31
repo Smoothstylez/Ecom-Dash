@@ -16,6 +16,7 @@ from app.services.live_sync import (
     trigger_live_sync_background_now,
 )
 from app.services.source_sync import build_sync_status, sync_all_sources
+from app.services.importers.amazon_sp_api import build_amazon_fba_status
 
 
 router = APIRouter(prefix="/api/sync", tags=["sync"])
@@ -177,10 +178,13 @@ def api_sync_live_run(payload: Optional[LiveSyncRunRequest] = None) -> dict[str,
 def api_get_credentials() -> dict[str, Any]:
     shopify_configured = bool(os.getenv("SHOPIFY_SHOP_DOMAIN") and os.getenv("SHOPIFY_CLIENT_ID") and os.getenv("SHOPIFY_CLIENT_SECRET"))
     kaufland_configured = bool(os.getenv("SHOP_CLIENT_KEY") and os.getenv("SHOP_SECRET_KEY"))
+    amazon_status = build_amazon_fba_status()
+    amazon_configured = bool(amazon_status.get("configured"))
     return {
         "ok": True,
-        "has_credentials": shopify_configured or kaufland_configured,
+        "has_credentials": shopify_configured or kaufland_configured or amazon_configured,
         "shopify_configured": shopify_configured,
         "kaufland_configured": kaufland_configured,
-        "storage": "environment",
+        "amazon_configured": amazon_configured,
+        "storage": "environment and local ignored secret file",
     }

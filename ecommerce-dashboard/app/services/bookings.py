@@ -650,6 +650,7 @@ def sync_combined_orders_into_bookkeeping(
             "documents_inserted": 0,
             "documents_updated": 0,
             "documents_skipped": 0,
+            "orders_skipped_amazon": 0,
         }
 
     from app.db import fetch_enrichment_map
@@ -683,10 +684,11 @@ def sync_combined_orders_into_bookkeeping(
         "transactions_inserted": 0,
         "transactions_updated": 0,
         "transactions_deleted": 0,
-        "documents_inserted": 0,
-        "documents_updated": 0,
-        "documents_skipped": 0,
-    }
+            "documents_inserted": 0,
+            "documents_updated": 0,
+            "documents_skipped": 0,
+            "orders_skipped_amazon": 0,
+        }
 
     expected_source_keys: set[str] = set()
 
@@ -696,6 +698,11 @@ def sync_combined_orders_into_bookkeeping(
             source_order_id = str(source_order.get("order_id") or "").strip()
             external_order_id = str(source_order.get("external_order_id") or source_order_id).strip()
             if not market or not external_order_id:
+                continue
+            if market == "amazon":
+                # Amazon is booked from immutable settlement events and FIFO lots,
+                # never from the generic order-level COGS synchronizer.
+                summary["orders_skipped_amazon"] += 1
                 continue
 
             revenue_cents, fees_cents, purchase_cents, revenue_after_fees = _normalized_sync_amounts(source_order)
@@ -831,13 +838,24 @@ def sync_combined_orders_into_bookkeeping(
 
         connection.commit()
 
+    # A single-order refresh must never treat other marketplaces as stale.
+    # Marketplace-level syncs can safely reconcile that marketplace; full syncs
+    # retain the original global reconciliation behaviour.
+    cleanup_like = "combined:%"
+    if market_filter:
+        cleanup_like = f"combined:{market_filter}:%"
+
     with _connect_bookkeeping_db() as connection:
-        existing_keys = {
-            str(row["source_key"])
-            for row in connection.execute(
-                "SELECT source_key FROM transactions WHERE source_key LIKE 'combined:%'"
-            ).fetchall()
-        }
+        if order_filter:
+            existing_keys: set[str] = set()
+        else:
+            existing_keys = {
+                str(row["source_key"])
+                for row in connection.execute(
+                    "SELECT source_key FROM transactions WHERE source_key LIKE ?",
+                    (cleanup_like,),
+                ).fetchall()
+            }
         for stale_key in existing_keys - expected_source_keys:
             if _delete_synced_transaction(connection, source_key=stale_key):
                 summary["transactions_deleted"] += 1

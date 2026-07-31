@@ -39,6 +39,7 @@ import {
   trendGranularityLabel,
 } from "@/features/analytics/format";
 import type { AnalyticsPayload, AnalyticsQuery, AnalyticsTrendPoint } from "@/features/analytics/types";
+import { marketplaceLabel, normalizeMarketplaceFilter, type MarketplaceFilter } from "@/shared/marketplace";
 import { useTheme } from "@/shared/theme/theme-provider";
 
 Chart.register(
@@ -58,7 +59,7 @@ type AnalyticsFilters = {
   datePreset: DatePreset;
   from: string;
   to: string;
-  marketplace: string;
+  marketplace: MarketplaceFilter;
   q: string;
   trendGranularity: string;
 };
@@ -155,7 +156,7 @@ function normalizeFilters(input: ShellFilters, trendGranularity: string): Analyt
     datePreset: input.datePreset as DatePreset,
     from,
     to,
-    marketplace: String(input.marketplace || "").trim().toLowerCase(),
+    marketplace: normalizeMarketplaceFilter(input.marketplace),
     q: String(input.q || "").trim(),
     trendGranularity: normalizeTrendGranularity(trendGranularity),
   };
@@ -1178,7 +1179,7 @@ export function AnalyticsPage({ isActive }: AnalyticsPageProps) {
           onDrop={dragProps.onDrop}
           onDragEnd={dragProps.onDragEnd}
         >
-          <h2 className="chart-title" data-tooltip="Shopify vs. Kaufland: Umsatz, Gewinn und Qualitaetsmetriken.">Channel Vergleich</h2>
+          <h2 className="chart-title" data-tooltip="Umsatz, Gewinn und Qualitaetsmetriken je Channel.">Channel Vergleich</h2>
           <div className="table-wrap analytics-compact-table-wrap">
             <table className="analytics-compact-table">
               <thead>
@@ -1195,7 +1196,7 @@ export function AnalyticsPage({ isActive }: AnalyticsPageProps) {
               <tbody id="marketplaceCompareBody">
                 {payload.marketplaces.length ? payload.marketplaces.map((market) => (
                   <tr key={market.marketplace}>
-                    <td>{market.marketplace === "shopify" ? "Shopify" : market.marketplace === "kaufland" ? "Kaufland" : market.marketplace.toUpperCase()}</td>
+                    <td>{marketplaceLabel(market.marketplace) || market.marketplace.toUpperCase()}</td>
                     <td>{NUMBER_FORMATTER.format(market.order_count)}</td>
                     <td>{formatMoneyFromCents(market.revenue_total_cents)}</td>
                     <td className={market.profit_total_cents < 0 ? "value-neg" : "value-pos"}>{formatMoneyFromCents(market.profit_total_cents)}</td>

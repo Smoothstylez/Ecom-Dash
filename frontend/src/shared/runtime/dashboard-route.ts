@@ -6,6 +6,7 @@ export const DASHBOARD_ROUTES = [
   "invoices",
   "bookings",
   "google-ads",
+  "amazon",
   "ebay",
 ] as const;
 
@@ -31,6 +32,9 @@ export function resolveDashboardRoute(pathname: string): DashboardRoute {
   }
   if (normalized === "/google-ads") {
     return "google-ads";
+  }
+  if (normalized === "/amazon") {
+    return "amazon";
   }
   if (normalized === "/ebay") {
     return "ebay";

@@ -8,6 +8,7 @@ from typing import Any, Optional
 
 from app.config import (
     COMBINED_DB_PATH,
+    AMAZON_FBA_DB_PATH,
     INVOICES_DIR,
     KAUFLAND_DB_PATH,
     PROJECT_ROOT,
@@ -20,6 +21,7 @@ from app.services.order_summaries import (
     kaufland_summary_from_row,
     shopify_summary_from_row,
 )
+from app.services.amazon_fba import load_amazon_order_summaries
 
 
 def now_iso() -> str:
@@ -54,9 +56,12 @@ def init_combined_db() -> None:
                 shipping_cents INTEGER NOT NULL DEFAULT 0,
                 currency TEXT NOT NULL DEFAULT 'EUR',
                 fulfillment_status TEXT,
+                fulfillment_channel TEXT,
                 payment_method TEXT,
                 fee_source TEXT,
                 financial_status TEXT,
+                financial_finality TEXT,
+                source_marketplace_id TEXT,
                 raw_status TEXT,
                 raw_json TEXT,
                 sales_gross_cents INTEGER NOT NULL DEFAULT 0,
@@ -284,6 +289,9 @@ def _ensure_combined_orders_columns(connection: sqlite3.Connection) -> None:
     _ensure_column(connection, "combined_orders", "profit_cents", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "has_invoice", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "invoice_document_id", "TEXT")
+    _ensure_column(connection, "combined_orders", "fulfillment_channel", "TEXT")
+    _ensure_column(connection, "combined_orders", "financial_finality", "TEXT")
+    _ensure_column(connection, "combined_orders", "source_marketplace_id", "TEXT")
     _ensure_column(connection, "order_enrichments", "purchase_vat_cents", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "order_enrichments", "purchase_is_vat_deductible", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "seller_profiles", "vat_effective_from", "TEXT NOT NULL DEFAULT ''")
@@ -538,6 +546,14 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                 continue
             orders.append(order)
 
+    if AMAZON_FBA_DB_PATH.exists():
+        for order in load_amazon_order_summaries():
+            if market_filter and order["marketplace"] != market_filter:
+                continue
+            if order_filter and order["order_id"] != order_filter:
+                continue
+            orders.append(order)
+
     if market_filter and order_filter:
         with connect_combined_db() as connection:
             connection.execute(
@@ -555,11 +571,16 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
             key = (order["marketplace"], order["order_id"])
             enrichment = enrichment_map.get(key, {})
 
-            purchase_cost = enrichment.get("purchase_cost_cents")
-            purchase_cost_cents = int(purchase_cost) if isinstance(purchase_cost, int) else 0
-            purchase_vat = enrichment.get("purchase_vat_cents")
-            purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
-            purchase_is_vat_deductible = 1 if bool(enrichment.get("purchase_is_vat_deductible")) else 0
+            if order["marketplace"] == "amazon":
+                purchase_cost_cents = int(order.get("purchase_cost_cents") or 0)
+                purchase_vat_cents = int(order.get("purchase_vat_cents") or 0)
+                purchase_is_vat_deductible = 0
+            else:
+                purchase_cost = enrichment.get("purchase_cost_cents")
+                purchase_cost_cents = int(purchase_cost) if isinstance(purchase_cost, int) else 0
+                purchase_vat = enrichment.get("purchase_vat_cents")
+                purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
+                purchase_is_vat_deductible = 1 if bool(enrichment.get("purchase_is_vat_deductible")) else 0
             profit_cents = int(order["after_fees_cents"]) - purchase_cost_cents
 
             order_id = f"{order['marketplace']}:{order['order_id']}"
@@ -569,8 +590,8 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     id, marketplace, order_id, external_order_id, order_date,
                     customer, article, line_items_count,
                     total_cents, fees_cents, after_fees_cents, shipping_cents,
-                    currency, fulfillment_status, payment_method, fee_source,
-                    financial_status, raw_status, raw_json,
+                    currency, fulfillment_status, fulfillment_channel, payment_method, fee_source,
+                    financial_status, financial_finality, source_marketplace_id, raw_status, raw_json,
                     sales_gross_cents, sales_net_cents, sales_vat_cents,
                     purchase_cost_cents, purchase_vat_cents, purchase_is_vat_deductible,
                     purchase_currency, purchase_supplier,
@@ -579,11 +600,11 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     ?, ?, ?, ?, ?,
                     ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?, ?,
                     ?, ?, ?, ?,
-                    ?, ?, ?, ?
+                    ?, ?, ?, ?, ?
                 )
                 """,
                 (
@@ -601,9 +622,12 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     order["shipping_cents"],
                     order["currency"],
                     order["fulfillment_status"],
+                    order.get("fulfillment_channel"),
                     order["payment_method"],
                     order["fee_source"],
                     order["financial_status"],
+                    order.get("financial_finality"),
+                    order.get("source_marketplace_id"),
                     order["raw_status"],
                     order["raw_json"],
                     int(order.get("sales_gross_cents") or 0),
@@ -612,12 +636,12 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     purchase_cost_cents,
                     purchase_vat_cents,
                     purchase_is_vat_deductible,
-                    enrichment.get("purchase_currency") or "EUR",
-                    enrichment.get("supplier_name"),
-                    enrichment.get("purchase_notes"),
+                    order.get("purchase_currency") if order["marketplace"] == "amazon" else enrichment.get("purchase_currency") or "EUR",
+                    order.get("purchase_supplier") if order["marketplace"] == "amazon" else enrichment.get("supplier_name"),
+                    order.get("purchase_notes") if order["marketplace"] == "amazon" else enrichment.get("purchase_notes"),
                     profit_cents,
-                    1 if enrichment.get("invoice_document_id") else 0,
-                    enrichment.get("invoice_document_id"),
+                    1 if enrichment.get("invoice_document_id") and order["marketplace"] != "amazon" else 0,
+                    enrichment.get("invoice_document_id") if order["marketplace"] != "amazon" else None,
                 ),
             )
             rows_written += 1

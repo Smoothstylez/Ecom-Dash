@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type PropsWithChildren } from "react";
 
 import { applyDatePreset } from "@/features/analytics/format";
+import { type MarketplaceFilter } from "@/shared/marketplace";
 import { stripDashboardBasePath } from "@/shared/runtime/base-path";
 import { resolveDashboardRoute } from "@/shared/runtime/dashboard-route";
 
@@ -22,7 +23,7 @@ export type ShellFilters = {
   datePreset: DatePreset;
   from: string;
   to: string;
-  marketplace: string;
+  marketplace: MarketplaceFilter;
   q: string;
 };
 

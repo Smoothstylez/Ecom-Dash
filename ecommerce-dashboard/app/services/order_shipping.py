@@ -322,6 +322,18 @@ def build_shipment_capabilities(detail: dict[str, Any]) -> dict[str, Any]:
     summary = _coerce_record(detail.get("summary"))
     marketplace = _token(summary.get("marketplace"))
 
+    if marketplace == "amazon":
+        return {
+            "available": False,
+            "marketplace": "amazon",
+            "mode": "amazon_fba",
+            "carrier_options": [],
+            "pending_units": [],
+            "pending_units_count": 0,
+            "requires_tracking_number": False,
+            "reason": "Amazon-FBA-Bestellungen werden von Amazon versendet und koennen hier nicht manuell versendet werden.",
+        }
+
     if marketplace == "kaufland":
         units = _coerce_records(detail.get("units"))
         pending_units = [

@@ -778,7 +778,7 @@ def _parse_transaction_filters(raw_filters: dict[str, str | None]) -> dict[str, 
 
     marketplace = str(raw_filters.get("marketplace") or "").strip().lower()
     if marketplace:
-        if marketplace not in {"shopify", "kaufland"}:
+        if marketplace not in {"shopify", "kaufland", "amazon"}:
             raise BookkeepingServiceError(400, "invalid marketplace filter")
         parsed["marketplace"] = marketplace
 

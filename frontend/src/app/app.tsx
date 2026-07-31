@@ -19,6 +19,7 @@ const CustomersShell = lazy(() => import("@/features/customers/customers-shell")
 const InvoicesShell = lazy(() => import("@/features/invoices/invoices-shell").then(m => ({ default: m.InvoicesShell })));
 const BookingsShell = lazy(() => import("@/features/bookings/bookings-shell").then(m => ({ default: m.BookingsShell })));
 const GoogleAdsShell = lazy(() => import("@/features/google-ads/google-ads-shell").then(m => ({ default: m.GoogleAdsShell })));
+const AmazonShell = lazy(() => import("@/features/amazon/amazon-shell").then(m => ({ default: m.AmazonShell })));
 const EbayShell = lazy(() => import("@/features/ebay/ebay-shell").then(m => ({ default: m.EbayShell })));
 
 function RouteFallback() {
@@ -46,6 +47,9 @@ function renderRouteShell(route: DashboardRoute) {
   }
   if (route === "google-ads") {
     return <GoogleAdsShell isActive={true} />;
+  }
+  if (route === "amazon") {
+    return <AmazonShell isActive={true} />;
   }
   return <EbayShell isActive={true} />;
 }

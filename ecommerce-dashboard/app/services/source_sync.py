@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import (
+    AMAZON_FBA_DB_PATH,
     BOOKKEEPING_BOOTSTRAP_DB_PATH,
     BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR,
     BOOKKEEPING_DB_PATH,
@@ -184,6 +185,7 @@ def build_sync_status() -> dict[str, Any]:
     shopify_source = _pick_shopify_bootstrap_source()
     return {
         "runtime": {
+            "amazon_fba_db": {"path": str(AMAZON_FBA_DB_PATH), "exists": AMAZON_FBA_DB_PATH.exists()},
             "shopify_db": {"path": str(SHOPIFY_DB_PATH), "exists": SHOPIFY_DB_PATH.exists()},
             "kaufland_db": {"path": str(KAUFLAND_DB_PATH), "exists": KAUFLAND_DB_PATH.exists()},
             "bookkeeping_db": {"path": str(BOOKKEEPING_DB_PATH), "exists": BOOKKEEPING_DB_PATH.exists()},

@@ -60,7 +60,7 @@ class OrderShipmentRequest(BaseModel):
 def _validate_marketplace(marketplace: str) -> str:
     normalized = (marketplace or "").strip().lower()
     if normalized not in ALLOWED_MARKETPLACES:
-        raise HTTPException(status_code=400, detail="marketplace must be shopify or kaufland")
+        raise HTTPException(status_code=400, detail="marketplace must be shopify, kaufland, or amazon")
     return normalized
 
 
@@ -171,6 +171,8 @@ def api_submit_order_shipment(
     payload: OrderShipmentRequest,
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
+    if market == "amazon":
+        raise HTTPException(status_code=400, detail="AliExpress mappings are not used for Amazon-FBA orders")
     try:
         response_payload = submit_order_shipment(
             market,
@@ -203,6 +205,8 @@ def api_update_purchase(
     payload: PurchaseUpdateRequest,
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
+    if market == "amazon":
+        raise HTTPException(status_code=400, detail="Amazon-FBA costs are maintained through procurement batches and FIFO lots")
     purchase_cents = _to_cents(payload.purchase_cost_eur)
     purchase_vat_cents = _to_cents(payload.purchase_vat_eur)
 
@@ -227,6 +231,8 @@ def api_get_aliexpress_mappings(
     order_id: str,
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
+    if market == "amazon":
+        raise HTTPException(status_code=400, detail="AliExpress mappings are not used for Amazon-FBA orders")
     return {
         "ok": True,
         "marketplace": market,
@@ -245,6 +251,8 @@ def api_replace_aliexpress_mappings(
     payload: AliExpressOrderMappingsUpdateRequest,
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
+    if market == "amazon":
+        raise HTTPException(status_code=400, detail="AliExpress mappings are not used for Amazon-FBA orders")
     try:
         mappings = replace_aliexpress_order_mappings(
             marketplace=market,
@@ -275,6 +283,8 @@ async def api_upload_invoice(
     supplier_name: Optional[str] = Form(default=None),
 ) -> dict[str, Any]:
     market = _validate_marketplace(marketplace)
+    if market == "amazon":
+        raise HTTPException(status_code=400, detail="Amazon-FBA invoices belong to procurement batches, not individual orders")
     upload_filename = sanitize_filename(file.filename or "invoice")
     order_token = _resolve_invoice_order_token(market, order_id)
     renamed_filename = _build_invoice_filename(market, order_token, upload_filename)

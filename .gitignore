@@ -15,6 +15,7 @@ test-results/
 # Credentials and data
 ecommerce-dashboard/data/credentials.json
 ecommerce-dashboard/data/runtime-credentials.json
+ecommerce-dashboard/data/amazon-sp-api-secrets.json
 ecommerce-dashboard/.env.runtime
 data/combined.sqlite3
 data/sources/

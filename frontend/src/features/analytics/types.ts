@@ -1,3 +1,5 @@
+import { type MarketplaceFilter } from "@/shared/marketplace";
+
 export type AnalyticsMetricBucket = {
   order_count: number;
   revenue_total_cents: number;
@@ -109,7 +111,7 @@ export type AnalyticsPayload = {
 export type AnalyticsQuery = {
   from: string;
   to: string;
-  marketplace: string;
+  marketplace: MarketplaceFilter;
   q: string;
   trendGranularity: string;
 };

@@ -1,4 +1,5 @@
 import { fetchJson } from "@/shared/api/client";
+import { type MarketplaceFilter } from "@/shared/marketplace";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 
 export type InvoiceDocument = {
@@ -38,6 +39,9 @@ export type OrderSummary = {
   financial_status?: string;
   raw_status?: string;
   payment_method?: string;
+  fulfillment_channel?: string;
+  fulfillment_type?: string;
+  is_fba?: boolean;
   invoice?: InvoiceDocument | null;
   line_items_count?: number;
   currency?: string;
@@ -51,12 +55,28 @@ export type OrderDetail = {
   fulfillments?: Array<Record<string, unknown>>;
   refunds?: Array<Record<string, unknown>>;
   transactions?: Array<Record<string, unknown>>;
+  financial_events?: Array<Record<string, unknown>>;
+  fifo_allocations?: Array<Record<string, unknown>>;
   units?: Array<Record<string, unknown>>;
   shipping_address?: Record<string, unknown>;
   billing_address?: Record<string, unknown>;
   customer?: Record<string, unknown>;
   bookkeeping_breakdown?: Record<string, unknown>;
-  shipment_capabilities?: Record<string, unknown>;
+  shipment_capabilities?: ShipmentCapabilities;
+};
+
+export type ShipmentCapabilities = {
+  available?: boolean;
+  marketplace?: string;
+  mode?: string;
+  reason?: string;
+  carrier_options?: string[];
+  pending_units?: Array<Record<string, unknown>>;
+  pending_units_count?: number;
+  requires_tracking_number?: boolean;
+  fulfillment_channel?: string;
+  fulfillment_type?: string;
+  is_fba?: boolean;
 };
 
 export type SubmitOrderShipmentResponse = {
@@ -76,7 +96,7 @@ export type OrdersResponse = {
 export type OrdersQuery = {
   from?: string;
   to?: string;
-  marketplace?: string;
+  marketplace?: MarketplaceFilter;
   q?: string;
   status?: string;
   payment?: string[];

@@ -21,6 +21,7 @@ SHOPIFY_SOURCE_DIR = SOURCES_DIR / "shopify"
 KAUFLAND_SOURCE_DIR = SOURCES_DIR / "kaufland"
 BOOKKEEPING_SOURCE_DIR = SOURCES_DIR / "bookkeeping"
 EBAY_SOURCE_DIR = SOURCES_DIR / "ebay"
+AMAZON_FBA_SOURCE_DIR = SOURCES_DIR / "amazon_fba"
 
 
 def _resolve_env_path(env_name: str, default_path: Path) -> Path:
@@ -45,6 +46,11 @@ SHOPIFY_DB_PATH = _resolve_env_path("SHOPIFY_DB_PATH", SHOPIFY_SOURCE_DIR / "sho
 KAUFLAND_DB_PATH = _resolve_env_path("KAUFLAND_DB_PATH", KAUFLAND_SOURCE_DIR / "kaufland_data.sqlite3")
 BOOKKEEPING_DB_PATH = _resolve_env_path("BOOKKEEPING_DB_PATH", BOOKKEEPING_SOURCE_DIR / "dashboard.sqlite3")
 EBAY_DB_PATH = _resolve_env_path("EBAY_DB_PATH", EBAY_SOURCE_DIR / "ebay_data.sqlite3")
+AMAZON_FBA_DB_PATH = _resolve_env_path("AMAZON_FBA_DB_PATH", AMAZON_FBA_SOURCE_DIR / "amazon_fba.sqlite3")
+AMAZON_SP_API_SECRETS_PATH = _resolve_env_path(
+    "AMAZON_SP_API_SECRETS_PATH",
+    DATA_DIR / "amazon-sp-api-secrets.json",
+)
 SUPPORT_DB_PATH = _resolve_env_path("SUPPORT_DB_PATH", KAUFLAND_SOURCE_DIR / "kaufland_tickets.sqlite3")
 
 # Bootstrap source DBs used for local copy-sync into the runtime source DBs.
@@ -80,7 +86,7 @@ BOOKKEEPING_BOOTSTRAP_DOCUMENTS_DIR = _resolve_env_path(
 BOOKKEEPING_PROJECT_ROOT = _resolve_env_path("BOOKKEEPING_PROJECT_ROOT", PROJECT_ROOT)
 
 MAX_UPLOAD_BYTES = 12 * 1024 * 1024
-ALLOWED_MARKETPLACES = {"shopify", "kaufland"}
+ALLOWED_MARKETPLACES = {"shopify", "kaufland", "amazon"}
 AUTO_SYNC_ON_STARTUP = _env_flag("AUTO_SYNC_ON_STARTUP", "1")
 
 
@@ -95,3 +101,4 @@ def ensure_runtime_dirs() -> None:
     KAUFLAND_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     BOOKKEEPING_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
     EBAY_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
+    AMAZON_FBA_SOURCE_DIR.mkdir(parents=True, exist_ok=True)
