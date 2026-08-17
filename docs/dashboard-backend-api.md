@@ -916,6 +916,21 @@ Behavior:
 - `GET /api/sync/live/background/status`
 - `GET /api/sync/credentials`
 
+### Amazon Auto Refresh
+
+- `GET /api/amazon/status` includes `auto_refresh` with worker state and independent `orders`, `finance`, `inventory_inbound`, and `reconcile` task states.
+- `POST /api/amazon/auto-refresh/trigger` is admin-only and queues one quota-safe Amazon delta cycle.
+
+Payload:
+
+```json
+{
+  "reason": "manual"
+}
+```
+
+The scheduler uses short delta windows and per-task backoff on Amazon `429`/`503` responses. It never runs the historical 730-day import automatically.
+
 ### Source Sync
 
 - Method: `POST`
@@ -1041,32 +1056,229 @@ eBay orders query params:
 - `limit`
 - `offset`
 
-## Support Tickets API
+## Kaufland Support Agent API
 
-Status and reads:
+This is the canonical operational contract for autonomous Kaufland DE support
+work. The agent may read tickets, manage local notes, send messages, open
+tickets, and close tickets directly. Use API calls, not browser automation.
 
-- `GET /api/kaufland-tickets/status`
-- `GET /api/kaufland-tickets?filter=todo|waiting|closed|all&q=...&limit=...&offset=...`
-- `GET /api/kaufland-tickets/{id_ticket}`
-- `GET /api/kaufland-tickets/{id_ticket}/notes`
+### Required Operating Sequence
 
-Mutations and preview:
+1. Read `GET /api/kaufland-tickets/status`.
+2. Run `POST /api/kaufland-tickets/sync/poll` when `last_sync` is missing,
+   stale, or before selecting a working queue.
+3. List the queue with `GET /api/kaufland-tickets?filter=todo`.
+4. Read `GET /api/kaufland-tickets/{id_ticket}` immediately before every
+   remote mutation.
+5. After a successful message, open, or close action, poll again and re-read
+   the relevant ticket detail before reporting completion.
 
-- `POST /api/kaufland-tickets/sync/backfill` auth: admin
-- `POST /api/kaufland-tickets/sync/poll` auth: admin
-- `POST /api/kaufland-tickets/{id_ticket}/messages` auth: admin multipart fields: `text`, `interim_notice`, repeated `files`
-- `PATCH /api/kaufland-tickets/{id_ticket}/close` auth: admin
-- `POST /api/kaufland-tickets` auth: admin
-- `GET /api/kaufland-tickets/{id_ticket}/attachments/{filename}/preview` auth: admin
-- `POST /api/kaufland-tickets/{id_ticket}/notes` auth: admin
-- `PATCH /api/kaufland-tickets/{id_ticket}/notes/{note_id}` auth: admin
-- `DELETE /api/kaufland-tickets/{id_ticket}/notes/{note_id}` auth: admin
+Send `X-Admin-Token` on every support call, including reads, even though some
+local read routes remain open when no dashboard token is configured.
 
-Operational notes:
+### Status and Synchronization
 
-- Ticket detail currently includes `ticket`, `ticket_raw`, `order_unit_ids`, `messages`, `attachments`, `notes`, and optional `order_context`.
-- Attachment preview should be fetched with admin auth headers; browser navigation alone is insufficient when `APP_ADMIN_TOKEN` is configured.
-- `order_context` is derived from the linked Kaufland order and is intended for operator workflows.
+#### Read local state
+
+```bash
+dashboard_api_get "/api/kaufland-tickets/status"
+```
+
+The response includes `configured`, `counts`, `runtime_db`, and `last_sync`.
+Treat `last_sync` as the local freshness source of truth. A missing value, an
+old completion timestamp, or a prior error requires a poll before making an
+operational decision.
+
+#### Incremental poll
+
+```bash
+dashboard_api_json POST "/api/kaufland-tickets/sync/poll" \
+  '{"storefront":"de","include_closed":true,"page_limit":30,"max_pages":50,"lookback_minutes":60}'
+```
+
+`page_limit` must be between `1` and `30`. A successful HTTP response can
+still contain `{"status":"partial"}`; treat that as incomplete and operate
+only on tickets whose required detail is present. HTTP `502` means the
+Kaufland provider or ticket sync failed; do not report a successful refresh.
+
+#### Backfill
+
+```bash
+dashboard_api_json POST "/api/kaufland-tickets/sync/backfill" \
+  '{"storefront":"de","include_closed":true,"page_limit":30,"max_pages":1000}'
+```
+
+Backfill is for initial loading or history repair. Do not use it as the normal
+per-ticket refresh mechanism.
+
+### Inbox and Detail Reads
+
+#### List tickets
+
+```bash
+dashboard_api_get "/api/kaufland-tickets?filter=todo&limit=200&offset=0"
+```
+
+Supported `filter` values:
+
+- `todo`: `status` is `opened` and `is_seller_responsible` is `true`.
+- `waiting`: `status` is `opened` and `is_seller_responsible` is `false`.
+- `closed`: every ticket whose status is not `opened`.
+- `all`: every locally synchronized ticket.
+
+Optional `q` searches ticket IDs, topic, reason, linked order-unit IDs, and
+stored message text. The response contains `total`, `items`, `limit`, and
+`offset`; each item includes local message/note counts and linked
+`order_unit_ids`.
+
+#### Read complete ticket context
+
+```bash
+ticket_id="T-100"
+dashboard_api_get "/api/kaufland-tickets/${ticket_id}"
+```
+
+Read detail immediately before every mutation. The response has:
+
+- `ticket`: normalized ticket row, including `status`,
+  `is_seller_responsible`, timestamps, and linked order-unit count.
+- `ticket_raw`: parsed Kaufland payload for fields not promoted below.
+- `order_unit_ids`: linked Kaufland order-unit IDs.
+- `messages`: complete locally synchronized conversation history in ascending
+  timestamp order. `direction` is `outbound` for seller messages and `inbound`
+  otherwise.
+- `attachments`: metadata with `filename`, `uri`, and timestamp.
+- `notes`: local-only internal notes.
+- `order_context`: available dashboard order context for the linked Kaufland
+  order, or `null` if it is unavailable locally.
+
+Use normalized fields first. Do not decide from a cached list row, and do not
+treat local `first_response_due_at` as an authoritative Kaufland SLA.
+
+#### Preview an attachment
+
+```bash
+ticket_id="T-100"
+filename="example.pdf"
+encoded_filename="$(dashboard_urlencode "$filename")"
+base_url="$(dashboard_api_base_url)"
+dashboard_api_curl "$base_url/api/kaufland-tickets/${ticket_id}/attachments/${encoded_filename}/preview" \
+  --output "$filename"
+```
+
+Preview fetches the remote Kaufland attachment only on demand. A `404` can mean
+the local metadata is absent or the remote attachment URL is no longer
+available. Never expose a returned attachment URL in notes or summaries.
+
+### Local Internal Notes
+
+Notes are visible only in the dashboard. They never reach Kaufland and must
+not be reported as customer-visible actions.
+
+```bash
+ticket_id="T-100"
+dashboard_api_get "/api/kaufland-tickets/${ticket_id}/notes"
+dashboard_api_json POST "/api/kaufland-tickets/${ticket_id}/notes" \
+  '{"note_text":"Checked current order context before replying."}'
+dashboard_api_json PATCH "/api/kaufland-tickets/${ticket_id}/notes/note-1" \
+  '{"note_text":"Updated internal handoff."}'
+dashboard_api_json DELETE "/api/kaufland-tickets/${ticket_id}/notes/note-1"
+```
+
+Use a note before closing to record why the request is resolved. For a timeout
+or uncertain remote write outcome, re-read ticket detail before retrying; add a
+note only when it records a real operational fact, not speculative reasoning.
+
+### Send a Customer Message
+
+```bash
+ticket_id="T-100"
+base_url="$(dashboard_api_base_url)"
+dashboard_api_curl \
+  -X POST \
+  -F 'text=Your shipment is being checked.' \
+  -F 'interim_notice=true' \
+  "$base_url/api/kaufland-tickets/${ticket_id}/messages"
+```
+
+`text` is required. `interim_notice` defaults to `false`; set it to `true`
+only for an acknowledgement where seller responsibility must intentionally stay
+open for a later follow-up. Before sending, compare the proposed answer with
+the latest seller messages to avoid duplicates.
+
+Attach one or more files with repeated `files` fields:
+
+```bash
+dashboard_api_curl \
+  -X POST \
+  -F 'text=Please find the requested document attached.' \
+  -F 'interim_notice=false' \
+  -F 'files=@/absolute/path/example.pdf;type=application/pdf' \
+  "$base_url/api/kaufland-tickets/${ticket_id}/messages"
+```
+
+Each file must be at most 12 MiB and use one of these MIME types:
+
+- `text/plain`
+- `image/png`
+- `image/jpeg`
+- `image/gif`
+- `image/tiff`
+- `application/pdf`
+- `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+- `application/msword`
+
+After a successful send, poll and re-read the ticket. Kaufland normally moves
+responsibility to the waiting side after a non-interim seller message.
+
+### Open or Close a Ticket
+
+#### Open
+
+```bash
+dashboard_api_json POST "/api/kaufland-tickets" \
+  '{
+    "id_order_unit":[314568008668014],
+    "reason":"product_return",
+    "message":"Please provide a return option."
+  }'
+```
+
+All `id_order_unit` values must be numeric and belong to the same order. The
+allowed `reason` values are:
+
+- `product_not_as_described`
+- `product_defect`
+- `product_not_delivered`
+- `product_return`
+- `contact_other`
+
+The message is customer-visible. Poll and read the created ticket after the
+request succeeds.
+
+#### Close
+
+```bash
+ticket_id="T-100"
+dashboard_api_json PATCH "/api/kaufland-tickets/${ticket_id}/close"
+```
+
+Close only after the customer request is resolved or the seller is no longer
+expected to act. Create a local rationale note first, then poll and re-read
+the ticket to verify the resulting status.
+
+### Error Handling
+
+- `401`: token missing or invalid. Do not retry unchanged credentials.
+- `404`: ticket, note, attachment metadata, or remote preview is unavailable.
+  Re-poll before treating a ticket as absent.
+- `422`: request shape, ticket reason, or attachment validation failed. Correct
+  the payload before retrying.
+- `502`: Kaufland provider or synchronization failed. Do not report success;
+  wait for provider recovery, poll, and re-read before a retry.
+- Successful HTTP with `status: partial`: incomplete sync. Report the partial
+  result and do not assume unreturned ticket details are current.
 
 ## Google Ads API
 

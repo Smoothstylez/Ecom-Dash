@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.auth import require_admin_access
+from app.config import MAX_UPLOAD_BYTES
 from app.services.importers.kaufland_tickets import (
     SupportSyncOptions,
     build_kaufland_tickets_status,
@@ -30,6 +31,35 @@ from app.services.kaufland_tickets import (
 
 router = APIRouter(prefix="/api/kaufland-tickets", tags=["kaufland-tickets"])
 ADMIN_ONLY = [Depends(require_admin_access)]
+OPEN_TICKET_REASONS = frozenset(
+    {
+        "product_not_as_described",
+        "product_defect",
+        "product_not_delivered",
+        "product_return",
+        "contact_other",
+    }
+)
+ALLOWED_TICKET_ATTACHMENT_MIME_TYPES = frozenset(
+    {
+        "text/plain",
+        "image/png",
+        "image/jpeg",
+        "image/gif",
+        "image/tiff",
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "application/msword",
+    }
+)
+TicketOpenReason = Literal[
+    "product_not_as_described",
+    "product_defect",
+    "product_not_delivered",
+    "product_return",
+    "contact_other",
+]
 
 
 class TicketSyncRequest(BaseModel):
@@ -48,8 +78,13 @@ class TicketMessageRequest(BaseModel):
 
 class OpenTicketRequest(BaseModel):
     id_order_unit: list[int] = Field(min_length=1)
-    reason: str = Field(min_length=1)
+    reason: TicketOpenReason
     message: str = Field(min_length=1)
+
+    @field_validator("reason", mode="before")
+    @classmethod
+    def normalize_reason(cls, value: Any) -> str:
+        return str(value or "").strip().lower()
 
 
 class TicketNoteRequest(BaseModel):
@@ -64,6 +99,16 @@ def _to_data_uri(upload: UploadFile, data: bytes) -> dict[str, str]:
         "mime_type": mime_type,
         "data": f"data:{mime_type};base64,{encoded}",
     }
+
+
+def _sync_or_raise(*, mode: str, options: SupportSyncOptions) -> dict[str, Any]:
+    result = sync_kaufland_tickets(mode=mode, options=options)
+    if str(result.get("status") or "").lower() == "error":
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(result.get("error") or "Kaufland ticket sync failed"),
+        )
+    return result
 
 
 @router.get("/status")
@@ -97,7 +142,7 @@ def api_get_kaufland_ticket(id_ticket: str) -> dict[str, Any]:
 def api_kaufland_tickets_sync_backfill(payload: Optional[TicketSyncRequest] = None) -> dict[str, Any]:
     request = payload or TicketSyncRequest()
     init_support_db()
-    return sync_kaufland_tickets(
+    return _sync_or_raise(
         mode="backfill",
         options=SupportSyncOptions(
             storefront=request.storefront,
@@ -114,7 +159,7 @@ def api_kaufland_tickets_sync_backfill(payload: Optional[TicketSyncRequest] = No
 def api_kaufland_tickets_sync_poll(payload: Optional[TicketSyncRequest] = None) -> dict[str, Any]:
     request = payload or TicketSyncRequest(include_closed=True, page_limit=30, max_pages=50)
     init_support_db()
-    return sync_kaufland_tickets(
+    return _sync_or_raise(
         mode="poll",
         options=SupportSyncOptions(
             storefront=request.storefront,
@@ -140,6 +185,17 @@ async def api_send_kaufland_ticket_message(
         content = await upload.read()
         if not content:
             continue
+        mime_type = str(upload.content_type or "application/octet-stream").strip().lower()
+        if mime_type not in ALLOWED_TICKET_ATTACHMENT_MIME_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"unsupported ticket attachment MIME type: {mime_type}",
+            )
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"ticket attachment exceeds 12 MiB limit: {upload.filename or 'attachment'}",
+            )
         attachments.append(_to_data_uri(upload, content))
     try:
         return send_ticket_message(

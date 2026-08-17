@@ -19,7 +19,11 @@ Repository helper scripts:
 - `scripts/dashboard-api/upload-order-invoice.sh`
 - `scripts/dashboard-api/create-sales-invoice.sh`
 
-Support ticket routes are documented in `docs/dashboard-backend-api.md` and should be preferred over UI clicks when working the Kaufland support inbox.
+For any Kaufland support task, read `docs/dashboard-backend-api.md` section
+`Kaufland Support Agent API` before making a call. It is the canonical contract
+for ticket freshness, full history reads, local notes, attachment previews,
+direct message sends, ticket opening, ticket closing, allowed attachment types,
+and verification after every remote mutation.
 
 Core rules:
 
@@ -32,6 +36,10 @@ Core rules:
 - Use `multipart/form-data` for uploads.
 - Use `application/json` for JSON routes.
 - Do not use blocked destructive endpoints documented in the reference.
+- For support work: poll, list, detail, mutate, poll, then detail verification.
+- Do not send or close based only on a cached list row.
+- Treat a sync result with `status: partial` as incomplete, even if the HTTP response is successful.
+- Do not interpret `first_response_due_at` as a confirmed Kaufland SLA.
 
 Maintenance rule:
 

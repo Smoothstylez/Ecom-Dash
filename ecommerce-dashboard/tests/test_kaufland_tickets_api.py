@@ -273,3 +273,136 @@ def test_support_preview_missing_remote_is_404(monkeypatch, tmp_path: Path) -> N
     )
     assert response.status_code == 404
     assert "attachment preview unavailable" in response.json()["detail"]
+
+
+def test_support_poll_surfaces_provider_failures(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+    import app.routers.kaufland_tickets as router_module
+
+    monkeypatch.setattr(
+        router_module,
+        "sync_kaufland_tickets",
+        lambda **_: {"status": "error", "error": "Validation Failed"},
+    )
+
+    response = client.post(
+        "/api/kaufland-tickets/sync/poll",
+        headers={"x-admin-token": "test-token"},
+        json={},
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Validation Failed"
+
+
+def test_open_ticket_rejects_unknown_kaufland_reason(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/kaufland-tickets",
+        headers={"x-admin-token": "test-token"},
+        json={
+            "id_order_unit": [314568008668014],
+            "reason": "refund_now",
+            "message": "Please issue a refund.",
+        },
+    )
+
+    assert response.status_code == 422
+    assert "reason" in response.text
+
+
+def test_send_ticket_message_rejects_unsupported_attachment_mime_type(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+
+    response = client.post(
+        "/api/kaufland-tickets/T-100/messages",
+        headers={"x-admin-token": "test-token"},
+        data={"text": "See attachment", "interim_notice": "false"},
+        files={"files": ("script.exe", b"MZ", "application/x-msdownload")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "unsupported ticket attachment MIME type: application/x-msdownload"
+
+
+def test_send_ticket_message_rejects_attachment_larger_than_twelve_mib(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+    oversized_content = b"x" * (12 * 1024 * 1024 + 1)
+
+    response = client.post(
+        "/api/kaufland-tickets/T-100/messages",
+        headers={"x-admin-token": "test-token"},
+        data={"text": "See attachment", "interim_notice": "false"},
+        files={"files": ("large.pdf", oversized_content, "application/pdf")},
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "ticket attachment exceeds 12 MiB limit: large.pdf"
+
+
+def test_agent_can_poll_read_note_reply_and_close_ticket(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+    admin_headers = {"x-admin-token": "test-token"}
+    import app.routers.kaufland_tickets as router_module
+
+    monkeypatch.setattr(router_module, "sync_kaufland_tickets", lambda **_: {"status": "success", "summary": {"tickets_seen": 1}})
+    monkeypatch.setattr(
+        router_module,
+        "send_ticket_message",
+        lambda ticket_id, **payload: {"ok": True, "id_ticket": ticket_id, "sent_text": payload["text"]},
+    )
+    monkeypatch.setattr(router_module, "close_ticket", lambda ticket_id: {"ok": True, "id_ticket": ticket_id})
+
+    assert client.post("/api/kaufland-tickets/sync/poll", headers=admin_headers, json={}).status_code == 200
+    listed = client.get("/api/kaufland-tickets?filter=todo", headers=admin_headers).json()
+    assert listed["items"][0]["id_ticket"] == "T-100"
+    assert client.get("/api/kaufland-tickets/T-100", headers=admin_headers).json()["messages"][0]["text"] == "Where is my order?"
+
+    note_response = client.post(
+        "/api/kaufland-tickets/T-100/notes",
+        headers=admin_headers,
+        json={"note_text": "Agent checked shipment status before replying."},
+    )
+    assert note_response.status_code == 200
+
+    reply_response = client.post(
+        "/api/kaufland-tickets/T-100/messages",
+        headers=admin_headers,
+        data={"text": "Your shipment is being checked.", "interim_notice": "true"},
+    )
+    assert reply_response.status_code == 200
+    assert reply_response.json()["sent_text"] == "Your shipment is being checked."
+
+    close_response = client.patch("/api/kaufland-tickets/T-100/close", headers=admin_headers)
+    assert close_response.status_code == 200
+    assert close_response.json()["id_ticket"] == "T-100"
+
+
+def test_open_ticket_accepts_documented_kaufland_reason(monkeypatch, tmp_path: Path) -> None:
+    client = _build_client(monkeypatch, tmp_path)
+    import app.routers.kaufland_tickets as router_module
+
+    monkeypatch.setattr(
+        router_module,
+        "open_ticket",
+        lambda unit_ids, reason, message: {
+            "ok": True,
+            "id_order_unit": unit_ids,
+            "reason": reason,
+            "message": message,
+        },
+    )
+
+    response = client.post(
+        "/api/kaufland-tickets",
+        headers={"x-admin-token": "test-token"},
+        json={
+            "id_order_unit": [314568008668014],
+            "reason": "product_return",
+            "message": "Please provide a return option.",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reason"] == "product_return"

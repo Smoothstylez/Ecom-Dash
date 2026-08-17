@@ -102,10 +102,14 @@ Never print the token in logs, notes, or summaries.
 
 ### Support Tickets
 
-- Use `/api/kaufland-tickets` status/list/detail routes for inbox work.
-- Use the support sync routes before assuming a ticket is missing.
-- Use the message, close, open, note, and attachment-preview routes instead of UI clicks.
-- When `APP_ADMIN_TOKEN` is configured, send admin auth headers for attachment preview fetches too.
+- Read `docs/dashboard-backend-api.md` section `Kaufland Support Agent API` before any support operation.
+- Before selecting work, read `/api/kaufland-tickets/status` and run `/sync/poll` when `last_sync` is missing or stale.
+- Read `GET /api/kaufland-tickets/{id_ticket}` immediately before every message, open, close, or note mutation.
+- The agent is allowed to directly send messages, open tickets, close tickets, and manage local notes; follow the canonical sequence in `docs/dashboard-backend-api.md#kaufland-support-agent-api`.
+- After a message, open, or close response, poll and re-read ticket detail before reporting completion.
+- Local notes are never customer-visible. `interim_notice=true` keeps seller responsibility open intentionally.
+- Do not report a `partial` support sync as complete, and never use local overdue calculations as a Kaufland SLA.
+- Send admin authentication headers for every support route, including status, list, detail, and attachment preview.
 
 ### Sync
 
