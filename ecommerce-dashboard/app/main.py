@@ -39,6 +39,10 @@ from app.services.live_sync import (
     start_live_sync_background_worker,
     stop_live_sync_background_worker,
 )
+from app.services.amazon_auto_refresh import (
+    start_amazon_auto_refresh_worker,
+    stop_amazon_auto_refresh_worker,
+)
 from app.services.runtime_reconcile import reconcile_runtime_state
 from app.services.source_sync import build_sync_status, sync_all_sources
 
@@ -225,6 +229,15 @@ def on_startup() -> None:
         )
     except Exception as exc:  # pragma: no cover - startup robustness
         LOGGER.exception("startup live sync background worker failed: %s", exc)
+    try:
+        amazon_background_status = start_amazon_auto_refresh_worker()
+        LOGGER.info(
+            "Amazon auto refresh worker: enabled=%s running=%s",
+            amazon_background_status.get("enabled"),
+            amazon_background_status.get("thread_alive"),
+        )
+    except Exception as exc:  # pragma: no cover - startup robustness
+        LOGGER.exception("startup Amazon auto refresh worker failed: %s", exc)
 
 
 @app.on_event("shutdown")
@@ -233,6 +246,10 @@ def on_shutdown() -> None:
         stop_live_sync_background_worker(timeout_seconds=5.0)
     except Exception as exc:  # pragma: no cover - shutdown robustness
         LOGGER.exception("shutdown live sync background worker failed: %s", exc)
+    try:
+        stop_amazon_auto_refresh_worker(timeout_seconds=5.0)
+    except Exception as exc:  # pragma: no cover - shutdown robustness
+        LOGGER.exception("shutdown Amazon auto refresh worker failed: %s", exc)
 
 
 @app.get("/", include_in_schema=False)

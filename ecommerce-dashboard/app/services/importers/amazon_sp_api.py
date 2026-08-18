@@ -476,6 +476,23 @@ def init_amazon_fba_db() -> None:
                 FOREIGN KEY (event_id) REFERENCES amazon_financial_events(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS amazon_auto_refresh_tasks (
+                task_name TEXT PRIMARY KEY,
+                last_started_at TEXT,
+                last_finished_at TEXT,
+                last_success_at TEXT,
+                last_status TEXT NOT NULL DEFAULT 'never_started',
+                last_error TEXT,
+                backoff_level INTEGER NOT NULL DEFAULT 0,
+                next_eligible_at TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS amazon_auto_refresh_lease (
+                lease_name TEXT PRIMARY KEY,
+                owner_id TEXT NOT NULL,
+                expires_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS amazon_inventory_snapshots (
                 id TEXT PRIMARY KEY,
                 captured_at TEXT NOT NULL,
@@ -842,6 +859,11 @@ class AmazonSpApiClient:
         self._config = config
         self._access_token = ""
         self._expires_at = 0.0
+        self._rate_limits: dict[str, str] = {}
+
+    @property
+    def rate_limits(self) -> dict[str, str]:
+        return dict(self._rate_limits)
 
     def _lwa_access_token(self) -> str:
         if self._access_token and time.time() < self._expires_at:
@@ -888,6 +910,9 @@ class AmazonSpApiClient:
             request.add_header("Content-Type", "application/json")
         try:
             with urlopen(request, timeout=60) as response:
+                rate_limit = response.headers.get("x-amzn-RateLimit-Limit")
+                if rate_limit:
+                    self._rate_limits[path] = rate_limit
                 return _as_dict(json.loads(response.read().decode("utf-8")))
         except HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:500]
@@ -918,14 +943,16 @@ class AmazonSpApiClient:
             payload = self.request_json("/fba/inventory/v1/summaries", params={"nextToken": next_token})
         return result
 
-    def orders(self, marketplace_ids: list[str], created_after: str) -> list[dict[str, Any]]:
+    def orders(self, marketplace_ids: list[str], created_after: str, *, updated_after: Optional[str] = None) -> list[dict[str, Any]]:
         if not marketplace_ids:
             return []
         result: list[dict[str, Any]] = []
         for marketplace_id in marketplace_ids:
+            params = {"MarketplaceIds": marketplace_id, "MaxResultsPerPage": 100}
+            params["LastUpdatedAfter" if updated_after else "CreatedAfter"] = updated_after or created_after
             payload = self.request_json(
                 "/orders/v0/orders",
-                params={"MarketplaceIds": marketplace_id, "CreatedAfter": created_after, "MaxResultsPerPage": 100},
+                params=params,
             )
             while True:
                 response_payload = _as_dict(payload.get("payload"))
@@ -1872,14 +1899,22 @@ def _normalize_settlement_report_rows(rows: list[dict[str, str]]) -> list[dict[s
     return normalized
 
 
-def sync_inbound_shipments(client: AmazonSpApiClient, marketplaces: list[str], sync_run_id: str) -> dict[str, Any]:
+def sync_inbound_shipments(
+    client: AmazonSpApiClient,
+    marketplaces: list[str],
+    sync_run_id: str,
+    *,
+    item_lookback_days: int = 730,
+) -> dict[str, Any]:
     shipments = client.inbound_shipments(marketplaces)
     errors: list[dict[str, str]] = []
     legacy_items_by_shipment: dict[str, list[dict[str, Any]]] = {}
     bulk_items = getattr(client, "bulk_inbound_shipment_items", None)
     if callable(bulk_items) and marketplaces:
         try:
-            legacy_items_by_shipment = bulk_items(_primary_inbound_marketplace(marketplaces))
+            legacy_items_by_shipment = bulk_items(
+                _primary_inbound_marketplace(marketplaces), lookback_days=max(1, item_lookback_days)
+            )
         except AmazonSpApiError as exc:
             errors.append({"scope": "inbound_items_bulk", "error": str(exc)})
     else:
@@ -2018,7 +2053,10 @@ def sync_amazon_fba(
     include_inventory: bool = True,
     include_finances: bool = True,
     include_inbound: bool = True,
+    include_settlement_reports: bool = True,
+    include_catalog_images: bool = True,
     lookback_days: int = DEFAULT_ORDER_LOOKBACK_DAYS,
+    lookback_minutes: Optional[int] = None,
 ) -> dict[str, Any]:
     init_amazon_fba_db()
     config, missing = load_amazon_sp_api_config()
@@ -2030,7 +2068,10 @@ def sync_amazon_fba(
         "inventory": include_inventory,
         "finances": include_finances,
         "inbound": include_inbound,
+        "settlement_reports": include_settlement_reports,
+        "catalog_images": include_catalog_images,
         "lookback_days": max(1, int(lookback_days)),
+        "lookback_minutes": int(lookback_minutes) if lookback_minutes is not None else None,
     }
     sync_run_id = _stable_id("sync-run", f"{_utc_now()}:{_payload_hash(scopes)}")
     summary: dict[str, Any] = {
@@ -2049,6 +2090,7 @@ def sync_amazon_fba(
         "settlement_reports": 0,
         "settlement_report_rows": 0,
         "errors": [],
+        "rate_limits": {},
     }
     client = AmazonSpApiClient(config)
     try:
@@ -2060,9 +2102,10 @@ def sync_amazon_fba(
             summary["marketplaces"] = len(marketplaces)
             connection.commit()
 
-        since = (datetime.now(timezone.utc) - timedelta(days=max(1, int(lookback_days)))).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        lookback = timedelta(minutes=max(1, int(lookback_minutes))) if lookback_minutes is not None else timedelta(days=max(1, int(lookback_days)))
+        since = (datetime.now(timezone.utc) - lookback).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         if include_orders:
-            orders = client.orders(marketplaces, since)
+            orders = client.orders(marketplaces, since, updated_after=since if lookback_minutes is not None else None)
             with _connect() as connection:
                 for order in orders:
                     _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="order", payload=order, external_id=_text(order.get("AmazonOrderId")))
@@ -2079,7 +2122,7 @@ def sync_amazon_fba(
                     continue
                 image_map: dict[str, dict[str, Any]] = {}
                 catalog_images = getattr(client, "catalog_item_images", None)
-                if callable(catalog_images):
+                if include_catalog_images and callable(catalog_images):
                     for item in items:
                         asin = _text(item.get("ASIN"))
                         if not asin:
@@ -2097,7 +2140,12 @@ def sync_amazon_fba(
 
         if include_inbound:
             try:
-                inbound_summary = sync_inbound_shipments(client, marketplaces, sync_run_id)
+                inbound_summary = sync_inbound_shipments(
+                    client,
+                    marketplaces,
+                    sync_run_id,
+                    item_lookback_days=max(1, int(lookback_minutes or lookback_days) // 1440) if lookback_minutes is not None else max(1, int(lookback_days)),
+                )
                 summary["inbound_shipments"] = int(inbound_summary.get("shipments") or 0)
                 summary["inbound_items"] = int(inbound_summary.get("items") or 0)
                 summary["errors"].extend(inbound_summary.get("errors") or [])
@@ -2150,29 +2198,30 @@ def sync_amazon_fba(
                         summary["financial_events"] += 1
                     connection.commit()
 
-            try:
-                reports = client.list_reports("GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE")
-            except AmazonSpApiError as exc:
-                reports = []
-                summary["errors"].append({"scope": "settlement_reports", "error": str(exc)})
-            for report in reports:
-                if _text(report.get("processingStatus")) not in {"DONE", "_DONE_"}:
-                    continue
-                report_id = _text(report.get("reportId"))
-                if not report_id:
-                    continue
+            if include_settlement_reports:
                 try:
-                    imported = import_settlement_report(report_id)
+                    reports = client.list_reports("GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE")
                 except AmazonSpApiError as exc:
-                    summary["errors"].append({"scope": "settlement_report", "report_id": report_id, "error": str(exc)})
-                    continue
-                summary["settlement_reports"] += 1
-                summary["settlement_report_rows"] += int(imported.get("order_financial_rows") or 0)
+                    reports = []
+                    summary["errors"].append({"scope": "settlement_reports", "error": str(exc)})
+                for report in reports:
+                    if _text(report.get("processingStatus")) not in {"DONE", "_DONE_"}:
+                        continue
+                    report_id = _text(report.get("reportId"))
+                    if not report_id:
+                        continue
+                    try:
+                        imported = import_settlement_report(report_id)
+                    except AmazonSpApiError as exc:
+                        summary["errors"].append({"scope": "settlement_report", "report_id": report_id, "error": str(exc)})
+                        continue
+                    summary["settlement_reports"] += 1
+                    summary["settlement_report_rows"] += int(imported.get("order_financial_rows") or 0)
             summary["inbound_costs"] = sync_inbound_finance_costs()
             transaction_marketplace = _primary_inbound_marketplace(marketplaces)
             if transaction_marketplace:
                 transaction_now = datetime.now(timezone.utc) - timedelta(minutes=3)
-                transaction_since = transaction_now - timedelta(days=min(max(1, int(lookback_days)), 180))
+                transaction_since = transaction_now - (timedelta(minutes=max(1, int(lookback_minutes))) if lookback_minutes is not None else timedelta(days=min(max(1, int(lookback_days)), 180)))
                 try:
                     transactions = client.financial_transactions(
                         transaction_since.isoformat().replace("+00:00", "Z"),
@@ -2194,6 +2243,7 @@ def sync_amazon_fba(
         summary["status"] = "error"
         summary["errors"].append({"scope": "internal", "error": f"{type(exc).__name__}: {exc}"})
 
+    summary["rate_limits"] = client.rate_limits
     with _connect() as connection:
         connection.execute(
             "UPDATE sync_runs SET completed_at = ?, status = ?, summary_json = ?, error_message = ? WHERE id = ?",

@@ -225,7 +225,7 @@ export function loadPollingSettings(): PollingSettings {
   try {
     const raw = localStorage.getItem(POLLING_STORAGE_KEY);
     if (!raw) {
-      return { enabled: false, intervalSec: 30 };
+      return { enabled: true, intervalSec: 30 };
     }
     const parsed = JSON.parse(raw) as Partial<PollingSettings>;
     const intervalSec = Number(parsed.intervalSec || 30);
@@ -234,7 +234,7 @@ export function loadPollingSettings(): PollingSettings {
       intervalSec: intervalSec >= 5 && intervalSec <= 3600 ? intervalSec : 30,
     };
   } catch (_error) {
-    return { enabled: false, intervalSec: 30 };
+    return { enabled: true, intervalSec: 30 };
   }
 }
 

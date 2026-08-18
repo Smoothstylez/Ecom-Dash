@@ -35,6 +35,12 @@ from app.services.importers.amazon_sp_api import (
     request_settlement_report,
     sync_amazon_fba,
 )
+from app.services.amazon_auto_refresh import (
+    AmazonAutoRefreshBusyError,
+    get_amazon_auto_refresh_status,
+    run_manual_amazon_sync,
+    trigger_amazon_auto_refresh_now,
+)
 
 
 router = APIRouter(prefix="/api/amazon", tags=["amazon"])
@@ -47,6 +53,10 @@ class AmazonSyncRequest(BaseModel):
     include_finances: bool = True
     include_inbound: bool = True
     lookback_days: int = Field(default=30, ge=1, le=730)
+
+
+class AmazonAutoRefreshTriggerRequest(BaseModel):
+    reason: str = "api"
 
 
 class SettlementReportRequest(BaseModel):
@@ -109,19 +119,28 @@ class InboundInvoiceLineRequest(BaseModel):
 
 @router.get("/status")
 def api_amazon_status() -> dict[str, Any]:
-    return {"ok": True, **build_amazon_fba_status()}
+    return {"ok": True, **build_amazon_fba_status(), "auto_refresh": get_amazon_auto_refresh_status()}
 
 
 @router.post("/sync", dependencies=ADMIN_ONLY)
 def api_amazon_sync(payload: Optional[AmazonSyncRequest] = None) -> dict[str, Any]:
     request = payload or AmazonSyncRequest()
-    return sync_amazon_fba(
-        include_orders=request.include_orders,
-        include_inventory=request.include_inventory,
-        include_finances=request.include_finances,
-        include_inbound=request.include_inbound,
-        lookback_days=request.lookback_days,
-    )
+    try:
+        return run_manual_amazon_sync(
+            include_orders=request.include_orders,
+            include_inventory=request.include_inventory,
+            include_finances=request.include_finances,
+            include_inbound=request.include_inbound,
+            lookback_days=request.lookback_days,
+        )
+    except AmazonAutoRefreshBusyError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/auto-refresh/trigger", dependencies=ADMIN_ONLY)
+def api_trigger_amazon_auto_refresh(payload: Optional[AmazonAutoRefreshTriggerRequest] = None) -> dict[str, Any]:
+    request = payload or AmazonAutoRefreshTriggerRequest()
+    return {"ok": True, "auto_refresh": trigger_amazon_auto_refresh_now(request.reason)}
 
 
 @router.post("/reports/settlement", dependencies=ADMIN_ONLY)

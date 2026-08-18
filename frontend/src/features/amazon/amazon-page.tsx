@@ -3,12 +3,24 @@ import { useEffect, useState } from "react";
 import { formatMoneyFromCents } from "@/features/analytics/format";
 import { fetchJson } from "@/shared/api/client";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
+import { useDashboardShellState } from "@/app/dashboard-shell-state";
 
 type AmazonStatus = {
   configured?: boolean;
   missing?: string[];
   counts?: Record<string, number>;
   last_sync?: { completed_at?: string; status?: string; error_message?: string };
+  auto_refresh?: {
+    enabled?: boolean;
+    in_flight?: boolean;
+    tasks?: Record<string, {
+      last_status?: string;
+      last_success_at?: string | null;
+      next_eligible_at?: string | null;
+      backoff_seconds?: number;
+      last_error?: string | null;
+    }>;
+  };
 };
 
 type InventorySummary = {
@@ -72,6 +84,7 @@ function count(value: number | undefined) {
 }
 
 export function AmazonPage() {
+  const { refreshRequestToken } = useDashboardShellState();
   const [status, setStatus] = useState<AmazonStatus | null>(null);
   const [inventory, setInventory] = useState<InventorySummary | null>(null);
   const [finance, setFinance] = useState<FinanceOverview | null>(null);
@@ -89,27 +102,34 @@ export function AmazonPage() {
   const [invoiceMessage, setInvoiceMessage] = useState("");
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    const controller = new AbortController();
-    Promise.all([
-      fetchJson<AmazonStatus>(buildDashboardApiUrl("/api/amazon/status"), { signal: controller.signal }),
-      fetchJson<InventorySummary>(buildDashboardApiUrl("/api/amazon/inventory"), { signal: controller.signal }),
-      fetchJson<FinanceOverview>(buildDashboardApiUrl("/api/amazon/finance"), { signal: controller.signal }),
-      fetchJson<{ items?: InboundShipment[] }>(buildDashboardApiUrl("/api/amazon/inbound/shipments"), { signal: controller.signal }),
-      fetchJson<{ items?: InboundCost[] }>(buildDashboardApiUrl("/api/amazon/inbound/costs"), { signal: controller.signal }),
-    ]).then(([nextStatus, nextInventory, nextFinance, nextShipments, nextCosts]) => {
+  async function refreshAmazonData(signal?: AbortSignal) {
+    const controller = signal ? null : new AbortController();
+    const requestSignal = signal || controller?.signal;
+    try {
+      const [nextStatus, nextInventory, nextFinance, nextShipments, nextCosts] = await Promise.all([
+        fetchJson<AmazonStatus>(buildDashboardApiUrl("/api/amazon/status"), { signal: requestSignal }),
+        fetchJson<InventorySummary>(buildDashboardApiUrl("/api/amazon/inventory"), { signal: requestSignal }),
+        fetchJson<FinanceOverview>(buildDashboardApiUrl("/api/amazon/finance"), { signal: requestSignal }),
+        fetchJson<{ items?: InboundShipment[] }>(buildDashboardApiUrl("/api/amazon/inbound/shipments"), { signal: requestSignal }),
+        fetchJson<{ items?: InboundCost[] }>(buildDashboardApiUrl("/api/amazon/inbound/costs"), { signal: requestSignal }),
+      ]);
       setStatus(nextStatus);
       setInventory(nextInventory);
       setFinance(nextFinance);
       setShipments(nextShipments.items || []);
       setInboundCosts(nextCosts.items || []);
-    }).catch((requestError: unknown) => {
+    } catch (requestError: unknown) {
       if ((requestError as Error).name !== "AbortError") {
         setError(requestError instanceof Error ? requestError.message : "Amazon-Daten konnten nicht geladen werden.");
       }
-    });
+    }
+  }
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void refreshAmazonData(controller.signal);
     return () => controller.abort();
-  }, []);
+  }, [refreshRequestToken]);
 
   const visibleShipments = shipments.filter((shipment) => {
     if (shipmentFilter === "all") return true;
@@ -233,6 +253,21 @@ export function AmazonPage() {
         <article className="kpi-card"><span>Verkaufserloese (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.sales_cents || 0)}</strong><small>aus Amazon-Finanzereignissen</small></article>
         <article className="kpi-card"><span>Amazon-Gebuehren (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.fees_cents || 0)}</strong><small>inklusive FBA-Gebuehren</small></article>
       </div>
+      {status?.auto_refresh ? (
+        <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+          <h2>Amazon-Aktualisierung</h2>
+          <p className="page-subtitle">{status.auto_refresh.in_flight ? "Sync läuft" : status.auto_refresh.enabled ? "Automatisch aktiv" : "Automatisch deaktiviert"}</p>
+          <div className="table-wrap">
+            <table className="orders-table">
+              <thead><tr><th>Bereich</th><th>Letzter Erfolg</th><th>Nächste Ausführung</th><th>Status</th></tr></thead>
+              <tbody>{[["orders", "Orders"], ["finance", "Finance"], ["inventory_inbound", "Bestand/FBA"]].map(([key, label]) => {
+                const task = status.auto_refresh?.tasks?.[key];
+                return <tr key={key}><td>{label}</td><td>{task?.last_success_at || "-"}</td><td>{task?.next_eligible_at || "regulärer Intervall"}</td><td>{task?.backoff_seconds ? `Backoff ${Math.ceil(task.backoff_seconds / 60)} Min.` : task?.last_status || "wartet"}</td></tr>;
+              })}</tbody>
+            </table>
+          </div>
+        </section>
+      ) : null}
       <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
         <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
           <div>
