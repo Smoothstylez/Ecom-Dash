@@ -1274,7 +1274,7 @@ def _save_raw_record(connection: sqlite3.Connection, *, sync_run_id: str, resour
     )
 
 
-def _upsert_marketplaces(connection: sqlite3.Connection, payload: dict[str, Any]) -> list[str]:
+def _upsert_marketplaces(connection: sqlite3.Connection, payload: dict[str, Any], *, active_only: bool = True) -> list[str]:
     result: list[str] = []
     for item in _as_list(payload.get("payload")):
         participation = _as_dict(item)
@@ -1288,7 +1288,6 @@ def _upsert_marketplaces(connection: sqlite3.Connection, payload: dict[str, Any]
             or _text(marketplace.get("domainName")).lower() == "non-amazon"
         ):
             continue
-        result.append(marketplace_id)
         connection.execute(
             """
             INSERT INTO amazon_marketplaces(marketplace_id, name, country_code, domain_name, default_currency, participation_json, updated_at)
@@ -1307,6 +1306,10 @@ def _upsert_marketplaces(connection: sqlite3.Connection, payload: dict[str, Any]
                 _utc_now(),
             ),
         )
+        is_participating = bool(_as_dict(participation.get("participation")).get("isParticipating"))
+        if active_only and not is_participating:
+            continue
+        result.append(marketplace_id)
     return result
 
 

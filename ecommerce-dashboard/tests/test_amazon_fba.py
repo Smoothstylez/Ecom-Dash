@@ -1261,3 +1261,26 @@ def test_order_marketplace_errors_are_reported_in_sync_summary(monkeypatch, tmp_
     assert summary["orders"] == 1
     assert summary["status"] == "partial"
     assert {"scope": "orders", "marketplace_id": "FR", "error": "SP-API 429 for /orders/v0/orders: quota exceeded"} in summary["errors"]
+
+
+def test_upsert_marketplaces_filters_to_participating_by_default(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    payload = {"payload": [
+        {"marketplace": {"id": "DE", "name": "DE", "countryCode": "DE", "defaultCurrencyCode": "EUR", "domainName": "amazon.de"}, "participation": {"isParticipating": True}},
+        {"marketplace": {"id": "FR", "name": "FR", "countryCode": "FR", "defaultCurrencyCode": "EUR", "domainName": "amazon.fr"}, "participation": {"isParticipating": False}},
+        {"marketplace": {"id": "IT", "name": "IT", "countryCode": "IT", "defaultCurrencyCode": "EUR", "domainName": "amazon.it"}, "participation": {}},
+    ]}
+
+    with importer._connect() as connection:
+        active = importer._upsert_marketplaces(connection, payload)
+        connection.commit()
+        all_ids = importer._upsert_marketplaces(connection, payload, active_only=False)
+        connection.commit()
+        stored = connection.execute("SELECT marketplace_id FROM amazon_marketplaces ORDER BY marketplace_id").fetchall()
+
+    assert active == ["DE"]
+    assert sorted(all_ids) == ["DE", "FR", "IT"]
+    assert [row["marketplace_id"] for row in stored] == ["DE", "FR", "IT"]
