@@ -588,6 +588,7 @@ def init_amazon_fba_db() -> None:
                 status TEXT NOT NULL DEFAULT 'unassigned',
                 allocation_method TEXT NOT NULL DEFAULT 'value',
                 raw_json TEXT NOT NULL DEFAULT '{}',
+                notes TEXT NOT NULL DEFAULT '',
                 UNIQUE(source_event_id, cost_type),
                 FOREIGN KEY (shipment_id) REFERENCES amazon_inbound_shipments(shipment_id) ON DELETE SET NULL
             );
@@ -752,6 +753,11 @@ def init_amazon_fba_db() -> None:
         ):
             if column not in existing_columns:
                 connection.execute(f"ALTER TABLE amazon_order_items ADD COLUMN {column} {definition}")
+        inbound_cost_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(amazon_inbound_costs)").fetchall()
+        }
+        if "notes" not in inbound_cost_columns:
+            connection.execute("ALTER TABLE amazon_inbound_costs ADD COLUMN notes TEXT NOT NULL DEFAULT ''")
         shipment_columns = {
             str(row[1]) for row in connection.execute("PRAGMA table_info(amazon_inbound_shipments)").fetchall()
         }

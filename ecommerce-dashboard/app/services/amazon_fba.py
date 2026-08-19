@@ -375,6 +375,7 @@ def add_inbound_cost(
     status: str = "manual",
     source_event_id: Optional[str] = None,
     raw_json: str = "{}",
+    notes: str = "",
 ) -> dict[str, Any]:
     if amount_cents < 0:
         raise ValueError("amount_cents must be non-negative")
@@ -387,10 +388,10 @@ def add_inbound_cost(
             """
             INSERT INTO amazon_inbound_costs(
                 id, shipment_id, source_event_id, cost_type, amount_cents,
-                currency, status, allocation_method, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                currency, status, allocation_method, raw_json, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (cost_id, shipment_id, source_event_id, cost_type.strip(), amount_cents, currency.upper(), status, allocation_method, raw_json),
+            (cost_id, shipment_id, source_event_id, cost_type.strip(), amount_cents, currency.upper(), status, allocation_method, raw_json, notes.strip()),
         )
         connection.commit()
     return {"id": cost_id, "shipment_id": shipment_id, "amount_cents": amount_cents, "currency": currency.upper(), "status": status}

@@ -1120,3 +1120,41 @@ def test_modern_inbound_costs_are_persisted_on_exact_shipment(monkeypatch, tmp_p
     with importer._connect() as connection:
         cost = connection.execute("SELECT shipment_id, amount_cents, status FROM amazon_inbound_costs").fetchone()
     assert tuple(cost) == ("FBA15M02LDQF", 4400, "actual")
+
+
+def test_add_inbound_cost_persists_notes(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-NOTES", "ShipmentStatus": "CLOSED"},
+            items=[{"SellerSKU": "SKU-1", "FulfillmentNetworkSKU": "FNSKU-1", "QuantityShipped": 5, "QuantityReceived": 5}],
+        )
+
+    cost = amazon_fba.add_inbound_cost(
+        shipment_id="FBA-NOTES",
+        cost_type="supplier_product",
+        amount_cents=5_000,
+        notes="Zollgebuehr fuer Los 3",
+    )
+
+    with importer._connect() as connection:
+        row = connection.execute("SELECT notes FROM amazon_inbound_costs WHERE id = ?", (cost["id"],)).fetchone()
+    assert row["notes"] == "Zollgebuehr fuer Los 3"
+
+
+def test_inbound_cost_router_request_model_matches_service_signature() -> None:
+    import inspect
+
+    from app.routers.amazon import InboundCostRequest
+    from app.services.amazon_fba import add_inbound_cost
+
+    service_params = set(inspect.signature(add_inbound_cost).parameters) - {"shipment_id"}
+    request_fields = set(InboundCostRequest.model_fields)
+    assert request_fields.issubset(service_params), (
+        f"InboundCostRequest fields not accepted by add_inbound_cost: {request_fields - service_params}"
+    )
