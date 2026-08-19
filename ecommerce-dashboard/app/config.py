@@ -8,7 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = PROJECT_ROOT.parent
 
 # ── Versioning (written into backup manifests for future compatibility) ──
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.5.1"
 SCHEMA_VERSION = 1  # Increment when DB schema changes in a breaking way
 
 DATA_DIR = PROJECT_ROOT / "data"
