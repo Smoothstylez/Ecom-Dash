@@ -1158,3 +1158,59 @@ def test_inbound_cost_router_request_model_matches_service_signature() -> None:
     assert request_fields.issubset(service_params), (
         f"InboundCostRequest fields not accepted by add_inbound_cost: {request_fields - service_params}"
     )
+
+
+def test_load_amazon_sp_api_config_prefers_env_vars_over_secrets_file(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    secrets_path = tmp_path / "amazon-sp-api-secrets.json"
+    secrets_path.write_text(
+        json.dumps({"client_id": "file-client", "client_secret": "file-secret", "refresh_token": "file-refresh"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(importer, "AMAZON_SP_API_SECRETS_PATH", secrets_path)
+    monkeypatch.setenv("AMAZON_SP_API_CLIENT_ID", "env-client")
+    monkeypatch.setenv("AMAZON_SP_API_CLIENT_SECRET", "env-secret")
+    monkeypatch.setenv("AMAZON_SP_API_REFRESH_TOKEN", "env-refresh")
+
+    config, missing = importer.load_amazon_sp_api_config()
+
+    assert missing == []
+    assert config.client_id == "env-client"
+    assert config.client_secret == "env-secret"
+    assert config.refresh_token == "env-refresh"
+
+
+def test_load_amazon_sp_api_config_falls_back_to_secrets_file_without_env_vars(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    secrets_path = tmp_path / "amazon-sp-api-secrets.json"
+    secrets_path.write_text(
+        json.dumps({"client_id": "file-client", "client_secret": "file-secret", "refresh_token": "file-refresh"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(importer, "AMAZON_SP_API_SECRETS_PATH", secrets_path)
+    monkeypatch.delenv("AMAZON_SP_API_CLIENT_ID", raising=False)
+    monkeypatch.delenv("AMAZON_SP_API_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("AMAZON_SP_API_REFRESH_TOKEN", raising=False)
+
+    config, missing = importer.load_amazon_sp_api_config()
+
+    assert missing == []
+    assert config.client_id == "file-client"
+    assert config.client_secret == "file-secret"
+    assert config.refresh_token == "file-refresh"
+
+
+def test_load_amazon_sp_api_config_missing_everywhere_reports_missing(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_SP_API_SECRETS_PATH", tmp_path / "does-not-exist.json")
+    monkeypatch.delenv("AMAZON_SP_API_CLIENT_ID", raising=False)
+    monkeypatch.delenv("AMAZON_SP_API_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("AMAZON_SP_API_REFRESH_TOKEN", raising=False)
+
+    config, missing = importer.load_amazon_sp_api_config()
+
+    assert config is None
+    assert set(missing) == {"client_id", "client_secret", "refresh_token"}

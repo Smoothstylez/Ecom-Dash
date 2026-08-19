@@ -4,6 +4,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import sqlite3
 import time
 import uuid
@@ -839,17 +840,23 @@ def init_amazon_fba_db() -> None:
 
 
 def load_amazon_sp_api_config() -> tuple[Optional[AmazonSpApiConfig], list[str]]:
-    try:
-        raw = json.loads(AMAZON_SP_API_SECRETS_PATH.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return None, ["secret file missing"]
-    except (OSError, json.JSONDecodeError):
-        return None, ["secret file is unreadable"]
+    client_id = _text(os.getenv("AMAZON_SP_API_CLIENT_ID"))
+    client_secret = _text(os.getenv("AMAZON_SP_API_CLIENT_SECRET"))
+    refresh_token = _text(os.getenv("AMAZON_SP_API_REFRESH_TOKEN"))
 
-    payload = _as_dict(raw)
-    client_id = _text(payload.get("client_id"))
-    client_secret = _text(payload.get("client_secret"))
-    refresh_token = _text(payload.get("refresh_token"))
+    if not (client_id and client_secret and refresh_token):
+        try:
+            raw = json.loads(AMAZON_SP_API_SECRETS_PATH.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            raw = {}
+        except (OSError, json.JSONDecodeError):
+            return None, ["secret file is unreadable"]
+
+        payload = _as_dict(raw)
+        client_id = client_id or _text(payload.get("client_id"))
+        client_secret = client_secret or _text(payload.get("client_secret"))
+        refresh_token = refresh_token or _text(payload.get("refresh_token"))
+
     missing = [name for name, value in (
         ("client_id", client_id),
         ("client_secret", client_secret),

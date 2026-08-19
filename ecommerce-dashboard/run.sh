@@ -93,6 +93,15 @@ if [ -f "${OPTIONS_FILE}" ]; then
     export SHOP_SECRET_KEY="$(
         python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('shop_secret_key',''))" 2>/dev/null || echo ''
     )"
+    export AMAZON_SP_API_CLIENT_ID="$(
+        python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('amazon_sp_api_client_id',''))" 2>/dev/null || echo ''
+    )"
+    export AMAZON_SP_API_CLIENT_SECRET="$(
+        python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('amazon_sp_api_client_secret',''))" 2>/dev/null || echo ''
+    )"
+    export AMAZON_SP_API_REFRESH_TOKEN="$(
+        python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('amazon_sp_api_refresh_token',''))" 2>/dev/null || echo ''
+    )"
     export APP_ADMIN_TOKEN="$(
         python3 -c "import json; o=json.load(open('${OPTIONS_FILE}')); print(o.get('app_admin_token',''))" 2>/dev/null || echo ''
     )"
