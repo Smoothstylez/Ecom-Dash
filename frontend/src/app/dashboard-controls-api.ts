@@ -269,6 +269,35 @@ export async function fetchHealthStatus(): Promise<HealthPayload> {
   return fetchJson<HealthPayload>(`${API_BASE}/health`);
 }
 
+export type AmazonMarketplaceOption = {
+  marketplace_id: string;
+  name: string;
+  country_code: string;
+  domain_name: string;
+  is_participating: boolean;
+};
+
+export type AmazonMarketplaceSettings = {
+  marketplace_mode: "auto" | "manual";
+  selected_marketplace_ids: string[];
+  marketplaces: AmazonMarketplaceOption[];
+};
+
+export async function fetchAmazonMarketplaceSettings(): Promise<AmazonMarketplaceSettings> {
+  return fetchJson<AmazonMarketplaceSettings>(`${API_BASE}/amazon/marketplace-settings`);
+}
+
+export async function saveAmazonMarketplaceSettings(
+  mode: "auto" | "manual",
+  selectedIds: string[],
+): Promise<AmazonMarketplaceSettings> {
+  return fetchJson<AmazonMarketplaceSettings>(`${API_BASE}/amazon/marketplace-settings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ marketplace_mode: mode, selected_marketplace_ids: selectedIds }),
+  });
+}
+
 export async function fetchSyncStatus() {
   return fetchJson<Record<string, unknown>>(`${API_BASE}/sync/status`);
 }

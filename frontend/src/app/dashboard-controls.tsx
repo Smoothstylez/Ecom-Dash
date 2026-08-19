@@ -12,6 +12,7 @@ import {
   DASHBOARD_VERSION,
   buildPeriodExportUrl,
   buildStatusSnapshot,
+  fetchAmazonMarketplaceSettings,
   fetchCredentialsState,
   fetchCustomerGeoStatusHtml,
   fetchGoogleAdsPanelStatusHtmlForFilters,
@@ -23,7 +24,9 @@ import {
   runLiveSyncRequest,
   runRestore,
   runSourceSyncRequest,
+  saveAmazonMarketplaceSettings,
   triggerDownload,
+  type AmazonMarketplaceSettings,
   type PollingSettings,
   type RestoreResultState,
   type StatusLevel,
@@ -102,6 +105,11 @@ export function DashboardControls({ route }: DashboardControlsProps) {
   const [pollingSettings, setPollingSettings] = useState<PollingSettings>(() => loadPollingSettings());
   const [adminToken, setAdminToken] = useState(() => loadAdminToken());
   const [syncBusy, setSyncBusy] = useState(false);
+  const [amazonMarketplaces, setAmazonMarketplaces] = useState<AmazonMarketplaceSettings | null>(null);
+  const [amazonMarketplaceDraftMode, setAmazonMarketplaceDraftMode] = useState<"auto" | "manual">("auto");
+  const [amazonMarketplaceDraftSelection, setAmazonMarketplaceDraftSelection] = useState<string[]>([]);
+  const [amazonMarketplaceStatus, setAmazonMarketplaceStatus] = useState("");
+  const [amazonMarketplaceSaving, setAmazonMarketplaceSaving] = useState(false);
 
   const pollingTimerRef = useRef<number | null>(null);
   const pollingLastStampRef = useRef(0);
@@ -178,6 +186,47 @@ export function DashboardControls({ route }: DashboardControlsProps) {
     setStatusOpen(false);
     setSettingsOpen((current) => !current);
   }, []);
+
+  useEffect(() => {
+    if (!isSettingsOpen) {
+      return;
+    }
+    let cancelled = false;
+    void fetchAmazonMarketplaceSettings()
+      .then((settings) => {
+        if (cancelled) {
+          return;
+        }
+        setAmazonMarketplaces(settings);
+        setAmazonMarketplaceDraftMode(settings.marketplace_mode);
+        setAmazonMarketplaceDraftSelection(settings.selected_marketplace_ids);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setAmazonMarketplaceStatus("Amazon-Marketplace-Einstellungen konnten nicht geladen werden.");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSettingsOpen]);
+
+  const handleAmazonMarketplaceSave = useCallback(async () => {
+    setAmazonMarketplaceSaving(true);
+    setAmazonMarketplaceStatus("");
+    try {
+      const saved = await saveAmazonMarketplaceSettings(amazonMarketplaceDraftMode, amazonMarketplaceDraftSelection);
+      setAmazonMarketplaces(saved);
+      setAmazonMarketplaceDraftMode(saved.marketplace_mode);
+      setAmazonMarketplaceDraftSelection(saved.selected_marketplace_ids);
+      setAmazonMarketplaceStatus("Gespeichert.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Speichern fehlgeschlagen.";
+      setAmazonMarketplaceStatus(`Speichern fehlgeschlagen: ${message}`);
+    } finally {
+      setAmazonMarketplaceSaving(false);
+    }
+  }, [amazonMarketplaceDraftMode, amazonMarketplaceDraftSelection]);
 
   const toggleStatusPanel = useCallback(() => {
     if (isStatusOpen) {
@@ -650,6 +699,60 @@ export function DashboardControls({ route }: DashboardControlsProps) {
                   <button id="adminTokenSaveBtn" className="btn-inline primary" type="button" onClick={() => handleAdminTokenSave()}>Token speichern</button>
                   <button id="adminTokenClearBtn" className="btn-inline ghost" type="button" onClick={() => { setAdminToken(""); persistAdminToken(""); applyStatus("Admin-Token entfernt.", "ok"); }}>Token entfernen</button>
                 </div>
+              </div>
+            </div>
+            <div className="settings-section">
+              <h3>Amazon Marketplaces</h3>
+              <div className="credentials-form">
+                <label className="settings-inline-row">
+                  <span className="settings-toggle-label">Modus</span>
+                  <select
+                    id="amazonMarketplaceModeSelect"
+                    className="settings-inline-input"
+                    value={amazonMarketplaceDraftMode}
+                    onChange={(event) => setAmazonMarketplaceDraftMode(event.target.value as "auto" | "manual")}
+                  >
+                    <option value="auto">Automatisch (empfohlen)</option>
+                    <option value="manual">Manuell</option>
+                  </select>
+                </label>
+                {amazonMarketplaceDraftMode === "manual" ? (
+                  <div className="settings-status-line">
+                    {(amazonMarketplaces?.marketplaces || []).map((marketplace) => (
+                      <label key={marketplace.marketplace_id} className="settings-toggle-row">
+                        <span className="settings-toggle-label">
+                          {marketplace.name} ({marketplace.country_code}){marketplace.is_participating ? "" : " \u2013 nicht aktiv laut Amazon"}
+                        </span>
+                        <input
+                          type="checkbox"
+                          className="settings-toggle-input"
+                          checked={amazonMarketplaceDraftSelection.includes(marketplace.marketplace_id)}
+                          onChange={(event) => {
+                            setAmazonMarketplaceDraftSelection((current) =>
+                              event.target.checked
+                                ? [...current, marketplace.marketplace_id]
+                                : current.filter((id) => id !== marketplace.marketplace_id),
+                            );
+                          }}
+                        />
+                        <span className="settings-toggle-switch" />
+                      </label>
+                    ))}
+                    {(amazonMarketplaces?.marketplaces || []).length === 0 ? (
+                      <div className="settings-status-line">Noch keine Amazon-Marketplaces bekannt. Erst einen Sync ausfuehren.</div>
+                    ) : null}
+                  </div>
+                ) : null}
+                <button
+                  id="amazonMarketplaceSaveBtn"
+                  className="btn-inline primary"
+                  type="button"
+                  disabled={amazonMarketplaceSaving}
+                  onClick={() => void handleAmazonMarketplaceSave()}
+                >
+                  Speichern
+                </button>
+                <div className="settings-status-line">{amazonMarketplaceStatus}</div>
               </div>
             </div>
           </div>
