@@ -956,28 +956,33 @@ class AmazonSpApiClient:
             payload = self.request_json("/fba/inventory/v1/summaries", params={"nextToken": next_token})
         return result
 
-    def orders(self, marketplace_ids: list[str], created_after: str, *, updated_after: Optional[str] = None) -> list[dict[str, Any]]:
+    def orders(self, marketplace_ids: list[str], created_after: str, *, updated_after: Optional[str] = None) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
         if not marketplace_ids:
-            return []
+            return [], []
         result: list[dict[str, Any]] = []
+        errors: list[dict[str, str]] = []
         for marketplace_id in marketplace_ids:
-            params = {"MarketplaceIds": marketplace_id, "MaxResultsPerPage": 100}
-            params["LastUpdatedAfter" if updated_after else "CreatedAfter"] = updated_after or created_after
-            payload = self.request_json(
-                "/orders/v0/orders",
-                params=params,
-            )
-            while True:
-                response_payload = _as_dict(payload.get("payload"))
-                for item in _as_list(response_payload.get("Orders")):
-                    order = _as_dict(item)
-                    order.setdefault("MarketplaceId", marketplace_id)
-                    result.append(order)
-                next_token = _text(response_payload.get("NextToken"))
-                if not next_token:
-                    break
-                payload = self.request_json("/orders/v0/orders", params={"NextToken": next_token})
-        return result
+            try:
+                params = {"MarketplaceIds": marketplace_id, "MaxResultsPerPage": 100}
+                params["LastUpdatedAfter" if updated_after else "CreatedAfter"] = updated_after or created_after
+                payload = self.request_json(
+                    "/orders/v0/orders",
+                    params=params,
+                )
+                while True:
+                    response_payload = _as_dict(payload.get("payload"))
+                    for item in _as_list(response_payload.get("Orders")):
+                        order = _as_dict(item)
+                        order.setdefault("MarketplaceId", marketplace_id)
+                        result.append(order)
+                    next_token = _text(response_payload.get("NextToken"))
+                    if not next_token:
+                        break
+                    payload = self.request_json("/orders/v0/orders", params={"NextToken": next_token})
+            except AmazonSpApiError as exc:
+                errors.append({"marketplace_id": marketplace_id, "error": str(exc)})
+                continue
+        return result, errors
 
     def inbound_shipments(self, marketplace_ids: list[str]) -> list[dict[str, Any]]:
         statuses = ",".join((
@@ -2118,7 +2123,8 @@ def sync_amazon_fba(
         lookback = timedelta(minutes=max(1, int(lookback_minutes))) if lookback_minutes is not None else timedelta(days=max(1, int(lookback_days)))
         since = (datetime.now(timezone.utc) - lookback).replace(microsecond=0).isoformat().replace("+00:00", "Z")
         if include_orders:
-            orders = client.orders(marketplaces, since, updated_after=since if lookback_minutes is not None else None)
+            orders, order_errors = client.orders(marketplaces, since, updated_after=since if lookback_minutes is not None else None)
+            summary["errors"].extend({"scope": "orders", **err} for err in order_errors)
             with _connect() as connection:
                 for order in orders:
                     _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="order", payload=order, external_id=_text(order.get("AmazonOrderId")))

@@ -640,10 +640,11 @@ def test_orders_queries_each_marketplace_individually(monkeypatch) -> None:
         return {"payload": {"Orders": [{"AmazonOrderId": f"ORDER-{marketplace_id}", "MarketplaceId": marketplace_id}]}}
 
     monkeypatch.setattr(client, "request_json", request_json)
-    orders = client.orders(["DE", "FR"], "2026-01-01T00:00:00Z")
+    orders, errors = client.orders(["DE", "FR"], "2026-01-01T00:00:00Z")
 
     assert requested_marketplaces == ["DE", "FR"]
     assert [order["AmazonOrderId"] for order in orders] == ["ORDER-DE", "ORDER-FR"]
+    assert errors == []
 
 
 def test_settlement_report_line_imports_order_sales_and_fees(monkeypatch, tmp_path) -> None:
@@ -1214,3 +1215,49 @@ def test_load_amazon_sp_api_config_missing_everywhere_reports_missing(monkeypatc
 
     assert config is None
     assert set(missing) == {"client_id", "client_secret", "refresh_token"}
+
+
+def test_orders_keeps_results_from_marketplaces_before_a_failing_one(monkeypatch) -> None:
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiConfig, AmazonSpApiError
+
+    client = AmazonSpApiClient(AmazonSpApiConfig("client", "secret", "refresh"))
+
+    def request_json(path, *, params=None, method="GET", body=None):
+        marketplace_id = params.get("MarketplaceIds")
+        if marketplace_id == "FR":
+            raise AmazonSpApiError("SP-API 429 for /orders/v0/orders: quota exceeded")
+        return {"payload": {"Orders": [{"AmazonOrderId": f"ORDER-{marketplace_id}", "MarketplaceId": marketplace_id}]}}
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    orders, errors = client.orders(["DE", "FR", "IT"], "2026-01-01T00:00:00Z")
+
+    assert [order["AmazonOrderId"] for order in orders] == ["ORDER-DE", "ORDER-IT"]
+    assert errors == [{"marketplace_id": "FR", "error": "SP-API 429 for /orders/v0/orders: quota exceeded"}]
+
+
+def test_order_marketplace_errors_are_reported_in_sync_summary(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiError
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(importer, "load_amazon_sp_api_config", lambda: (importer.AmazonSpApiConfig("c", "s", "r"), []))
+
+    def fake_marketplace_participations(self):
+        return {"payload": [
+            {"marketplace": {"id": "DE", "name": "DE", "countryCode": "DE", "defaultCurrencyCode": "EUR", "domainName": "amazon.de"}, "participation": {}},
+            {"marketplace": {"id": "FR", "name": "FR", "countryCode": "FR", "defaultCurrencyCode": "EUR", "domainName": "amazon.fr"}, "participation": {}},
+        ]}
+
+    def fake_orders(self, marketplace_ids, created_after, *, updated_after=None):
+        return [{"AmazonOrderId": "ORDER-DE", "MarketplaceId": "DE"}], [
+            {"marketplace_id": "FR", "error": "SP-API 429 for /orders/v0/orders: quota exceeded"}
+        ]
+
+    monkeypatch.setattr(AmazonSpApiClient, "marketplace_participations", fake_marketplace_participations)
+    monkeypatch.setattr(AmazonSpApiClient, "orders", fake_orders)
+
+    summary = importer.sync_amazon_fba(include_orders=True, include_inventory=False, include_finances=False, include_inbound=False)
+
+    assert summary["orders"] == 1
+    assert summary["status"] == "partial"
+    assert {"scope": "orders", "marketplace_id": "FR", "error": "SP-API 429 for /orders/v0/orders: quota exceeded"} in summary["errors"]
