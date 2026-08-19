@@ -177,6 +177,25 @@ def record_task_failure(task_name: str, error: str, now: datetime | None = None)
     return result
 
 
+def record_task_partial(task_name: str, error: str, now: datetime | None = None) -> dict[str, Any]:
+    current = now or _now()
+    next_eligible = _iso(current + timedelta(seconds=int(TASKS[task_name]["interval_seconds"])))
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE amazon_auto_refresh_tasks
+            SET last_finished_at=?, last_status='partial', last_error=?, backoff_level=0, next_eligible_at=?
+            WHERE task_name=?
+            """,
+            (_iso(current), error[:500], next_eligible, task_name),
+        )
+        row = connection.execute("SELECT * FROM amazon_auto_refresh_tasks WHERE task_name = ?", (task_name,)).fetchone()
+        connection.commit()
+    result = dict(row)
+    result["backoff_seconds"] = 0
+    return result
+
+
 def _mark_task_started(task_name: str, now: datetime) -> None:
     with _connect() as connection:
         connection.execute(
@@ -206,10 +225,9 @@ def run_manual_amazon_sync(**kwargs: Any) -> dict[str, Any]:
     if not _CYCLE_LOCK.acquire(blocking=False):
         raise AmazonAutoRefreshBusyError("Amazon auto refresh is already running")
     owner_id = f"manual:{_PROCESS_OWNER_ID}"
-    if not acquire_database_lease(owner_id):
-        _CYCLE_LOCK.release()
-        raise AmazonAutoRefreshBusyError("Amazon sync is already running in another worker")
     try:
+        if not acquire_database_lease(owner_id):
+            raise AmazonAutoRefreshBusyError("Amazon sync is already running in another worker")
         return sync_amazon_fba(**kwargs)
     finally:
         release_database_lease(owner_id)
@@ -220,20 +238,20 @@ def run_amazon_auto_refresh_cycle(now: datetime | None = None, reason: str = "in
     if not _CYCLE_LOCK.acquire(blocking=False):
         return {"status": "already_running", "reason": reason, "tasks": {}}
     owner_id = f"auto:{_PROCESS_OWNER_ID}"
-    if not acquire_database_lease(owner_id):
-        _CYCLE_LOCK.release()
-        return {"status": "already_running", "reason": reason, "tasks": {}}
     heartbeat_stop = threading.Event()
-
-    def heartbeat() -> None:
-        while not heartbeat_stop.wait(timeout=60):
-            if not renew_database_lease(owner_id):
-                return
-
-    heartbeat_thread = threading.Thread(target=heartbeat, name="amazon-sync-lease-heartbeat", daemon=True)
-    heartbeat_thread.start()
-    current = now or _now()
+    heartbeat_thread: threading.Thread | None = None
     try:
+        if not acquire_database_lease(owner_id):
+            return {"status": "already_running", "reason": reason, "tasks": {}}
+
+        def heartbeat() -> None:
+            while not heartbeat_stop.wait(timeout=60):
+                if not renew_database_lease(owner_id):
+                    return
+
+        heartbeat_thread = threading.Thread(target=heartbeat, name="amazon-sync-lease-heartbeat", daemon=True)
+        heartbeat_thread.start()
+        current = now or _now()
         with _WORKER_STATE_LOCK:
             _WORKER_STATE["in_flight"] = True
         results: dict[str, Any] = {}
@@ -252,8 +270,14 @@ def run_amazon_auto_refresh_cycle(now: datetime | None = None, reason: str = "in
                 state = record_task_failure(task_name, str(exc), _now())
                 results[task_name] = {"status": state["last_status"], "error": state["last_error"], "backoff_seconds": state["backoff_seconds"]}
                 continue
-            record_task_success(task_name, _now())
-            results[task_name] = {"status": str(result.get("status") or "success"), "summary": result.get("summary")}
+            if result.get("status") == "partial":
+                error_items = (result.get("summary") or {}).get("errors") or []
+                error_text = "; ".join(str(item.get("error") or item) for item in error_items) or "partial sync"
+                state = record_task_partial(task_name, error_text, _now())
+                results[task_name] = {"status": state["last_status"], "error": state["last_error"], "summary": result.get("summary")}
+            else:
+                record_task_success(task_name, _now())
+                results[task_name] = {"status": str(result.get("status") or "success"), "summary": result.get("summary")}
             if result["changed"]:
                 changestamp.bump()
         output = {"status": "success", "reason": reason, "tasks": results}
@@ -264,7 +288,8 @@ def run_amazon_auto_refresh_cycle(now: datetime | None = None, reason: str = "in
         with _WORKER_STATE_LOCK:
             _WORKER_STATE["in_flight"] = False
         heartbeat_stop.set()
-        heartbeat_thread.join(timeout=1.0)
+        if heartbeat_thread is not None:
+            heartbeat_thread.join(timeout=1.0)
         release_database_lease(owner_id)
         _CYCLE_LOCK.release()
 

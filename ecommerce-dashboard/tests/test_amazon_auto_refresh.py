@@ -184,3 +184,89 @@ def test_generic_failure_waits_for_normal_task_interval(monkeypatch, tmp_path) -
 
     assert "orders" not in auto_refresh.select_due_tasks(now + timedelta(minutes=4, seconds=59))
     assert "orders" in auto_refresh.select_due_tasks(now + timedelta(minutes=5))
+
+
+def test_partial_sync_is_recorded_as_partial_not_success(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_auto_refresh as auto_refresh
+
+    _configure_db(monkeypatch, tmp_path)
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+
+    def fake_run(task_name, _now):
+        return {
+            "changed": True,
+            "status": "partial",
+            "summary": {"errors": [{"scope": "inventory", "error": "SP-API 500 internal error"}]},
+        }
+
+    monkeypatch.setattr(auto_refresh, "run_amazon_task", fake_run)
+    result = auto_refresh.run_amazon_auto_refresh_cycle(now)
+
+    assert result["tasks"]["orders"]["status"] == "partial"
+    assert "SP-API 500" in result["tasks"]["orders"]["error"]
+
+    state = auto_refresh.get_amazon_auto_refresh_status()["tasks"]["orders"]
+    assert state["last_status"] == "partial"
+    assert state["backoff_level"] == 0
+    assert state["last_success_at"] is None
+
+
+def test_partial_sync_still_bumps_changestamp(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_auto_refresh as auto_refresh
+    from app import changestamp
+
+    _configure_db(monkeypatch, tmp_path)
+    now = datetime(2026, 8, 17, 12, 0, tzinfo=timezone.utc)
+    calls = []
+    monkeypatch.setattr(changestamp, "bump", lambda: calls.append(1))
+
+    def fake_run(task_name, _now):
+        return {"changed": True, "status": "partial", "summary": {"errors": [{"scope": "x", "error": "SP-API 500"}]}}
+
+    monkeypatch.setattr(auto_refresh, "run_amazon_task", fake_run)
+    result = auto_refresh.run_amazon_auto_refresh_cycle(now)
+
+    assert len(calls) == len(result["tasks"])
+    assert len(calls) > 0
+
+
+def test_manual_sync_releases_cycle_lock_when_lease_acquisition_raises(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_auto_refresh as auto_refresh
+
+    _configure_db(monkeypatch, tmp_path)
+
+    def raise_lease_error(owner_id, now=None):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(auto_refresh, "acquire_database_lease", raise_lease_error)
+
+    try:
+        auto_refresh.run_manual_amazon_sync(include_orders=False)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected RuntimeError to propagate")
+
+    assert auto_refresh._CYCLE_LOCK.acquire(blocking=False)
+    auto_refresh._CYCLE_LOCK.release()
+
+
+def test_auto_cycle_releases_cycle_lock_when_lease_acquisition_raises(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_auto_refresh as auto_refresh
+
+    _configure_db(monkeypatch, tmp_path)
+
+    def raise_lease_error(owner_id, now=None):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(auto_refresh, "acquire_database_lease", raise_lease_error)
+
+    try:
+        auto_refresh.run_amazon_auto_refresh_cycle()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("expected RuntimeError to propagate")
+
+    assert auto_refresh._CYCLE_LOCK.acquire(blocking=False)
+    auto_refresh._CYCLE_LOCK.release()
