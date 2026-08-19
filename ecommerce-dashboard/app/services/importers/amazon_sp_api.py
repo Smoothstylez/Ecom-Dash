@@ -384,6 +384,13 @@ def init_amazon_fba_db() -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS amazon_sync_settings (
+                id TEXT PRIMARY KEY,
+                marketplace_mode TEXT NOT NULL DEFAULT 'auto',
+                selected_marketplace_ids TEXT NOT NULL DEFAULT '[]',
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS amazon_orders (
                 amazon_order_id TEXT PRIMARY KEY,
                 seller_order_id TEXT NOT NULL DEFAULT '',
@@ -1311,6 +1318,52 @@ def _upsert_marketplaces(connection: sqlite3.Connection, payload: dict[str, Any]
             continue
         result.append(marketplace_id)
     return result
+
+
+_VALID_MARKETPLACE_MODES = {"auto", "manual"}
+
+
+def get_amazon_marketplace_settings() -> dict[str, Any]:
+    init_amazon_fba_db()
+    with _connect() as connection:
+        connection.execute(
+            "INSERT OR IGNORE INTO amazon_sync_settings(id, marketplace_mode, selected_marketplace_ids, updated_at) VALUES ('default', 'auto', '[]', ?)",
+            (_utc_now(),),
+        )
+        connection.commit()
+        row = connection.execute(
+            "SELECT marketplace_mode, selected_marketplace_ids FROM amazon_sync_settings WHERE id = 'default'"
+        ).fetchone()
+    try:
+        selected = json.loads(str(row["selected_marketplace_ids"]))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        selected = []
+    return {
+        "marketplace_mode": str(row["marketplace_mode"]),
+        "selected_marketplace_ids": [str(m) for m in selected] if isinstance(selected, list) else [],
+    }
+
+
+def set_amazon_marketplace_settings(*, marketplace_mode: str, selected_marketplace_ids: list[str]) -> dict[str, Any]:
+    mode = str(marketplace_mode or "").strip().lower()
+    if mode not in _VALID_MARKETPLACE_MODES:
+        raise ValueError(f"marketplace_mode must be one of {sorted(_VALID_MARKETPLACE_MODES)}")
+    normalized_ids = [str(m).strip() for m in selected_marketplace_ids if str(m).strip()]
+    init_amazon_fba_db()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO amazon_sync_settings(id, marketplace_mode, selected_marketplace_ids, updated_at)
+            VALUES ('default', ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                marketplace_mode=excluded.marketplace_mode,
+                selected_marketplace_ids=excluded.selected_marketplace_ids,
+                updated_at=excluded.updated_at
+            """,
+            (mode, _json_dumps(normalized_ids), _utc_now()),
+        )
+        connection.commit()
+    return {"marketplace_mode": mode, "selected_marketplace_ids": normalized_ids}
 
 
 def _upsert_order(connection: sqlite3.Connection, order: dict[str, Any], *, synthetic: bool = False) -> None:

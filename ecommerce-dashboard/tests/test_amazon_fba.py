@@ -1314,3 +1314,43 @@ def test_sync_amazon_fba_excludes_non_participating_marketplace_by_default(monke
     queried_marketplaces.clear()
     importer.sync_amazon_fba(include_orders=True, include_inventory=False, include_finances=False, include_inbound=False, include_all_marketplaces=True)
     assert queried_marketplaces == [["DE", "FR"]]
+
+
+def test_amazon_marketplace_settings_default_to_auto(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    settings = importer.get_amazon_marketplace_settings()
+
+    assert settings == {"marketplace_mode": "auto", "selected_marketplace_ids": []}
+
+
+def test_amazon_marketplace_settings_round_trip(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    saved = importer.set_amazon_marketplace_settings(
+        marketplace_mode="manual", selected_marketplace_ids=["A1PA6795UKMFR9"]
+    )
+    assert saved == {"marketplace_mode": "manual", "selected_marketplace_ids": ["A1PA6795UKMFR9"]}
+
+    reloaded = importer.get_amazon_marketplace_settings()
+    assert reloaded == saved
+
+
+def test_amazon_marketplace_settings_rejects_invalid_mode(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    try:
+        importer.set_amazon_marketplace_settings(marketplace_mode="bogus", selected_marketplace_ids=[])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for invalid marketplace_mode")
