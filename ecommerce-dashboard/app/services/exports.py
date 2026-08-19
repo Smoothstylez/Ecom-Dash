@@ -15,6 +15,7 @@ from zipfile import ZIP_DEFLATED, BadZipFile, ZipFile
 
 from app.config import (
     ALLOWED_MARKETPLACES,
+    AMAZON_FBA_DB_PATH,
     APP_VERSION,
     BOOKKEEPING_DB_PATH,
     BOOKKEEPING_DOCUMENTS_DIR,
@@ -211,6 +212,7 @@ def create_full_backup_archive() -> ExportArchive:
         ("kaufland", KAUFLAND_DB_PATH),
         ("bookkeeping", BOOKKEEPING_DB_PATH),
         ("ebay", EBAY_DB_PATH),
+        ("amazon_fba", AMAZON_FBA_DB_PATH),
     ]
 
     db_manifest: list[dict[str, Any]] = []
@@ -680,6 +682,7 @@ _DB_RESTORE_MAP: dict[str, Path] = {
     "kaufland": KAUFLAND_DB_PATH,
     "bookkeeping": BOOKKEEPING_DB_PATH,
     "ebay": EBAY_DB_PATH,
+    "amazon_fba": AMAZON_FBA_DB_PATH,
 }
 
 # Map archive storage prefixes to their runtime directories.
