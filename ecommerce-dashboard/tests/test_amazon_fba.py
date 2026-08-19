@@ -1412,3 +1412,52 @@ def test_sync_amazon_fba_include_all_marketplaces_bypasses_manual_selection(monk
     importer.sync_amazon_fba(include_orders=True, include_inventory=False, include_finances=False, include_inbound=False, include_all_marketplaces=True)
 
     assert queried == [["DE", "FR"]]
+
+
+def test_marketplace_settings_endpoints_round_trip(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.importers.amazon_sp_api as importer_module
+
+    monkeypatch.setattr(importer_module, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "test-token")
+
+    importer_module.init_amazon_fba_db()
+    with importer_module._connect() as connection:
+        importer_module._upsert_marketplaces(
+            connection,
+            {"payload": [
+                {"marketplace": {"id": "DE", "name": "Amazon.de", "countryCode": "DE", "defaultCurrencyCode": "EUR", "domainName": "amazon.de"}, "participation": {"isParticipating": True}},
+            ]},
+            active_only=False,
+        )
+        connection.commit()
+
+    client = TestClient(main_module.app)
+
+    response = client.get("/api/amazon/marketplace-settings")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["marketplace_mode"] == "auto"
+    assert payload["marketplaces"] == [
+        {"marketplace_id": "DE", "name": "Amazon.de", "country_code": "DE", "domain_name": "amazon.de", "is_participating": True}
+    ]
+
+    unauthorized = client.post("/api/amazon/marketplace-settings", json={"marketplace_mode": "manual", "selected_marketplace_ids": ["DE"]})
+    assert unauthorized.status_code == 401
+
+    saved = client.post(
+        "/api/amazon/marketplace-settings",
+        json={"marketplace_mode": "manual", "selected_marketplace_ids": ["DE"]},
+        headers={"X-Admin-Token": "test-token"},
+    )
+    assert saved.status_code == 200
+    assert saved.json()["marketplace_mode"] == "manual"
+
+    rejected = client.post(
+        "/api/amazon/marketplace-settings",
+        json={"marketplace_mode": "manual", "selected_marketplace_ids": ["NOT-A-REAL-ID"]},
+        headers={"X-Admin-Token": "test-token"},
+    )
+    assert rejected.status_code == 400

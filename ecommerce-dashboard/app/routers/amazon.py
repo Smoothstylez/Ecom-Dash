@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any, Optional
 
@@ -30,9 +31,13 @@ from app.services.amazon_fba import (
 from app.uploads import EmptyUploadError, UploadTooLargeError, stream_fileobj_to_path
 from app.services.importers.amazon_sp_api import (
     AmazonSpApiError,
+    _as_dict,
+    _connect,
     build_amazon_fba_status,
+    get_amazon_marketplace_settings,
     import_settlement_report,
     request_settlement_report,
+    set_amazon_marketplace_settings,
     sync_amazon_fba,
 )
 from app.services.amazon_auto_refresh import (
@@ -58,6 +63,11 @@ class AmazonSyncRequest(BaseModel):
 
 class AmazonAutoRefreshTriggerRequest(BaseModel):
     reason: str = "api"
+
+
+class AmazonMarketplaceSettingsRequest(BaseModel):
+    marketplace_mode: str
+    selected_marketplace_ids: list[str] = Field(default_factory=list)
 
 
 class SettlementReportRequest(BaseModel):
@@ -121,6 +131,47 @@ class InboundInvoiceLineRequest(BaseModel):
 @router.get("/status")
 def api_amazon_status() -> dict[str, Any]:
     return {"ok": True, **build_amazon_fba_status(), "auto_refresh": get_amazon_auto_refresh_status()}
+
+
+@router.get("/marketplace-settings")
+def api_get_amazon_marketplace_settings() -> dict[str, Any]:
+    settings = get_amazon_marketplace_settings()
+    with _connect() as connection:
+        rows = connection.execute(
+            "SELECT marketplace_id, name, country_code, domain_name, participation_json FROM amazon_marketplaces ORDER BY name"
+        ).fetchall()
+    marketplaces = []
+    for row in rows:
+        try:
+            participation = json.loads(str(row["participation_json"] or "{}"))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            participation = {}
+        is_participating = bool(_as_dict(participation.get("participation")).get("isParticipating")) if isinstance(participation, dict) else False
+        marketplaces.append({
+            "marketplace_id": row["marketplace_id"],
+            "name": row["name"],
+            "country_code": row["country_code"],
+            "domain_name": row["domain_name"],
+            "is_participating": is_participating,
+        })
+    return {"ok": True, **settings, "marketplaces": marketplaces}
+
+
+@router.post("/marketplace-settings", dependencies=ADMIN_ONLY)
+def api_set_amazon_marketplace_settings(payload: AmazonMarketplaceSettingsRequest) -> dict[str, Any]:
+    with _connect() as connection:
+        known_ids = {row["marketplace_id"] for row in connection.execute("SELECT marketplace_id FROM amazon_marketplaces").fetchall()}
+    unknown = [m for m in payload.selected_marketplace_ids if m not in known_ids]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown marketplace_id(s): {unknown}")
+    try:
+        result = set_amazon_marketplace_settings(
+            marketplace_mode=payload.marketplace_mode,
+            selected_marketplace_ids=payload.selected_marketplace_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"ok": True, **result}
 
 
 @router.post("/sync", dependencies=ADMIN_ONLY)
