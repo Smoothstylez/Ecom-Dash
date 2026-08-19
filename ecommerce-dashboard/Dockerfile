@@ -5,7 +5,7 @@ LABEL \
     io.hass.name="E-Commerce Dashboard" \
     io.hass.description="React-based e-commerce analytics dashboard with integrated bookkeeping" \
     io.hass.type="addon" \
-    io.hass.version="0.5.4"
+    io.hass.version="0.5.5"
 
 # Prevent python from writing pyc files and buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1
