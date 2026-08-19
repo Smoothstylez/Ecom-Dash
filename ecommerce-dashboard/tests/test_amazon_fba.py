@@ -1354,3 +1354,61 @@ def test_amazon_marketplace_settings_rejects_invalid_mode(monkeypatch, tmp_path)
         pass
     else:
         raise AssertionError("expected ValueError for invalid marketplace_mode")
+
+
+def test_sync_amazon_fba_uses_manual_marketplace_selection(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(importer, "load_amazon_sp_api_config", lambda: (importer.AmazonSpApiConfig("c", "s", "r"), []))
+    importer.init_amazon_fba_db()
+    importer.set_amazon_marketplace_settings(marketplace_mode="manual", selected_marketplace_ids=["FR"])
+
+    def fake_marketplace_participations(self):
+        return {"payload": [
+            {"marketplace": {"id": "DE", "name": "DE", "countryCode": "DE", "defaultCurrencyCode": "EUR", "domainName": "amazon.de"}, "participation": {"isParticipating": True}},
+            {"marketplace": {"id": "FR", "name": "FR", "countryCode": "FR", "defaultCurrencyCode": "EUR", "domainName": "amazon.fr"}, "participation": {"isParticipating": False}},
+        ]}
+
+    queried: list[list[str]] = []
+
+    def fake_orders(self, marketplace_ids, created_after, *, updated_after=None):
+        queried.append(list(marketplace_ids))
+        return [], []
+
+    monkeypatch.setattr(AmazonSpApiClient, "marketplace_participations", fake_marketplace_participations)
+    monkeypatch.setattr(AmazonSpApiClient, "orders", fake_orders)
+
+    importer.sync_amazon_fba(include_orders=True, include_inventory=False, include_finances=False, include_inbound=False)
+
+    assert queried == [["FR"]]
+
+
+def test_sync_amazon_fba_include_all_marketplaces_bypasses_manual_selection(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(importer, "load_amazon_sp_api_config", lambda: (importer.AmazonSpApiConfig("c", "s", "r"), []))
+    importer.init_amazon_fba_db()
+    importer.set_amazon_marketplace_settings(marketplace_mode="manual", selected_marketplace_ids=["FR"])
+
+    def fake_marketplace_participations(self):
+        return {"payload": [
+            {"marketplace": {"id": "DE", "name": "DE", "countryCode": "DE", "defaultCurrencyCode": "EUR", "domainName": "amazon.de"}, "participation": {"isParticipating": True}},
+            {"marketplace": {"id": "FR", "name": "FR", "countryCode": "FR", "defaultCurrencyCode": "EUR", "domainName": "amazon.fr"}, "participation": {"isParticipating": False}},
+        ]}
+
+    queried: list[list[str]] = []
+
+    def fake_orders(self, marketplace_ids, created_after, *, updated_after=None):
+        queried.append(list(marketplace_ids))
+        return [], []
+
+    monkeypatch.setattr(AmazonSpApiClient, "marketplace_participations", fake_marketplace_participations)
+    monkeypatch.setattr(AmazonSpApiClient, "orders", fake_orders)
+
+    importer.sync_amazon_fba(include_orders=True, include_inventory=False, include_finances=False, include_inbound=False, include_all_marketplaces=True)
+
+    assert queried == [["DE", "FR"]]

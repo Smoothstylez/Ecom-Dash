@@ -2169,12 +2169,20 @@ def sync_amazon_fba(
         "rate_limits": {},
     }
     client = AmazonSpApiClient(config)
+    marketplace_sync_settings = get_amazon_marketplace_settings()
     try:
         with _connect() as connection:
             connection.execute("INSERT INTO sync_runs(id, started_at, status, requested_scopes_json) VALUES (?, ?, 'running', ?)", (sync_run_id, _utc_now(), _json_dumps(scopes)))
             participations = client.marketplace_participations()
             _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="marketplace_participations", payload=participations)
-            marketplaces = _upsert_marketplaces(connection, participations, active_only=not include_all_marketplaces)
+            all_marketplaces = _upsert_marketplaces(connection, participations, active_only=False)
+            if include_all_marketplaces:
+                marketplaces = all_marketplaces
+            elif marketplace_sync_settings["marketplace_mode"] == "manual":
+                allowed = set(marketplace_sync_settings["selected_marketplace_ids"])
+                marketplaces = [m for m in all_marketplaces if m in allowed]
+            else:
+                marketplaces = _upsert_marketplaces(connection, participations, active_only=True)
             summary["marketplaces"] = len(marketplaces)
             connection.commit()
 
