@@ -52,6 +52,7 @@ class AmazonSyncRequest(BaseModel):
     include_inventory: bool = True
     include_finances: bool = True
     include_inbound: bool = True
+    include_all_marketplaces: bool = False
     lookback_days: int = Field(default=30, ge=1, le=730)
 
 
@@ -131,6 +132,7 @@ def api_amazon_sync(payload: Optional[AmazonSyncRequest] = None) -> dict[str, An
             include_inventory=request.include_inventory,
             include_finances=request.include_finances,
             include_inbound=request.include_inbound,
+            include_all_marketplaces=request.include_all_marketplaces,
             lookback_days=request.lookback_days,
         )
     except AmazonAutoRefreshBusyError as exc:

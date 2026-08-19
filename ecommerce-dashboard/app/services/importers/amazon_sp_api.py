@@ -2076,6 +2076,7 @@ def sync_amazon_fba(
     include_inbound: bool = True,
     include_settlement_reports: bool = True,
     include_catalog_images: bool = True,
+    include_all_marketplaces: bool = False,
     lookback_days: int = DEFAULT_ORDER_LOOKBACK_DAYS,
     lookback_minutes: Optional[int] = None,
 ) -> dict[str, Any]:
@@ -2091,6 +2092,7 @@ def sync_amazon_fba(
         "inbound": include_inbound,
         "settlement_reports": include_settlement_reports,
         "catalog_images": include_catalog_images,
+        "include_all_marketplaces": include_all_marketplaces,
         "lookback_days": max(1, int(lookback_days)),
         "lookback_minutes": int(lookback_minutes) if lookback_minutes is not None else None,
     }
@@ -2119,7 +2121,7 @@ def sync_amazon_fba(
             connection.execute("INSERT INTO sync_runs(id, started_at, status, requested_scopes_json) VALUES (?, ?, 'running', ?)", (sync_run_id, _utc_now(), _json_dumps(scopes)))
             participations = client.marketplace_participations()
             _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="marketplace_participations", payload=participations)
-            marketplaces = _upsert_marketplaces(connection, participations)
+            marketplaces = _upsert_marketplaces(connection, participations, active_only=not include_all_marketplaces)
             summary["marketplaces"] = len(marketplaces)
             connection.commit()
 
