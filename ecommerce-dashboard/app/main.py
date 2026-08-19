@@ -262,6 +262,7 @@ def root(request: Request) -> Response:
 @app.get("/orders", include_in_schema=False)
 @app.get("/analytics", include_in_schema=False)
 @app.get("/ebay", include_in_schema=False)
+@app.get("/amazon", include_in_schema=False)
 @app.get("/google-ads", include_in_schema=False)
 @app.get("/customers", include_in_schema=False)
 @app.get("/invoices", include_in_schema=False)
