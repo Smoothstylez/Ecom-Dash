@@ -647,6 +647,54 @@ def test_orders_queries_each_marketplace_individually(monkeypatch) -> None:
     assert errors == []
 
 
+def test_order_items_retries_quota_exceeded(monkeypatch) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiConfig, AmazonSpApiError
+
+    client = AmazonSpApiClient(AmazonSpApiConfig("client", "secret", "refresh"))
+    attempts = 0
+    sleeps: list[float] = []
+
+    def request_json(path, *, params=None, method="GET", body=None):
+        nonlocal attempts
+        assert path == "/orders/v0/orders/ORDER-1/orderItems"
+        attempts += 1
+        if attempts < 3:
+            raise AmazonSpApiError("SP-API 429 for /orders/v0/orders/ORDER-1/orderItems")
+        return {"payload": {"OrderItems": [{"ASIN": "B0TEST", "SellerSKU": "SKU-1"}]}}
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    monkeypatch.setattr(importer.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert client.order_items("ORDER-1") == [{"ASIN": "B0TEST", "SellerSKU": "SKU-1"}]
+    assert attempts == 3
+    assert sleeps == [1.5, 3.0]
+
+
+def test_catalog_item_images_retries_quota_exceeded(monkeypatch) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiConfig, AmazonSpApiError
+
+    client = AmazonSpApiClient(AmazonSpApiConfig("client", "secret", "refresh"))
+    attempts = 0
+    sleeps: list[float] = []
+
+    def request_json(path, *, params=None, method="GET", body=None):
+        nonlocal attempts
+        assert path == "/catalog/2022-04-01/items/B0TEST"
+        attempts += 1
+        if attempts == 1:
+            raise AmazonSpApiError("SP-API 429 for /catalog/2022-04-01/items/B0TEST")
+        return {"images": []}
+
+    monkeypatch.setattr(client, "request_json", request_json)
+    monkeypatch.setattr(importer.time, "sleep", lambda seconds: sleeps.append(seconds))
+
+    assert client.catalog_item_images("B0TEST", "A1PA6795UKMFR9") == {"image_url": "", "image_urls": []}
+    assert attempts == 2
+    assert sleeps == [1.5]
+
+
 def test_settlement_report_line_imports_order_sales_and_fees(monkeypatch, tmp_path) -> None:
     import app.services.importers.amazon_sp_api as importer
 

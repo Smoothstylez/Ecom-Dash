@@ -1152,7 +1152,19 @@ class AmazonSpApiClient:
         return enriched
 
     def order_items(self, amazon_order_id: str) -> list[dict[str, Any]]:
-        payload = self.request_json(f"/orders/v0/orders/{amazon_order_id}/orderItems")
+        path = f"/orders/v0/orders/{amazon_order_id}/orderItems"
+
+        def request_page(params: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+            for attempt in range(3):
+                try:
+                    return self.request_json(path, params=params)
+                except AmazonSpApiError as exc:
+                    if " 429 " not in str(exc) or attempt == 2:
+                        raise
+                    time.sleep(1.5 * (attempt + 1))
+            raise AmazonSpApiError(f"SP-API request failed for {path}")
+
+        payload = request_page()
         result: list[dict[str, Any]] = []
         while True:
             response_payload = _as_dict(payload.get("payload"))
@@ -1160,14 +1172,24 @@ class AmazonSpApiClient:
             next_token = _text(response_payload.get("NextToken"))
             if not next_token:
                 break
-            payload = self.request_json(f"/orders/v0/orders/{amazon_order_id}/orderItems", params={"NextToken": next_token})
+            payload = request_page({"NextToken": next_token})
         return result
 
     def catalog_item_images(self, asin: str, marketplace_id: str) -> dict[str, Any]:
-        payload = self.request_json(
-            f"/catalog/2022-04-01/items/{asin}",
-            params={"marketplaceIds": marketplace_id, "includedData": "images"},
-        )
+        path = f"/catalog/2022-04-01/items/{asin}"
+        for attempt in range(3):
+            try:
+                payload = self.request_json(
+                    path,
+                    params={"marketplaceIds": marketplace_id, "includedData": "images"},
+                )
+                break
+            except AmazonSpApiError as exc:
+                if " 429 " not in str(exc) or attempt == 2:
+                    raise
+                time.sleep(1.5 * (attempt + 1))
+        else:
+            raise AmazonSpApiError(f"SP-API request failed for {path}")
         return extract_catalog_item_images(payload)
 
     def financial_events(self, posted_after: str) -> dict[str, Any]:
