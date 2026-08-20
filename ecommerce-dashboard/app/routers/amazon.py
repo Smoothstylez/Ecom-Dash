@@ -22,7 +22,9 @@ from app.services.amazon_fba import (
     create_procurement_batch,
     get_amazon_finance_overview,
     get_amazon_inventory_summary,
+    get_amazon_sku_detail,
     get_inbound_shipment,
+    list_amazon_sku_inventory,
     list_inbound_shipments,
     list_inbound_costs,
     list_procurement_batches,
@@ -216,6 +218,19 @@ def api_import_settlement_report(report_id: str) -> dict[str, Any]:
 @router.get("/inventory")
 def api_amazon_inventory() -> dict[str, Any]:
     return {"ok": True, **get_amazon_inventory_summary()}
+
+
+@router.get("/inventory/skus")
+def api_amazon_sku_inventory() -> dict[str, Any]:
+    return {"ok": True, "items": list_amazon_sku_inventory()}
+
+
+@router.get("/inventory/skus/{sku_key}")
+def api_amazon_sku_detail(sku_key: str) -> dict[str, Any]:
+    detail = get_amazon_sku_detail(sku_key)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="SKU not found")
+    return {"ok": True, **detail}
 
 
 @router.get("/finance")

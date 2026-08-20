@@ -133,6 +133,7 @@ This reference supports full non-destructive automation for:
 - monthly invoice create and patch
 - sync status and sync execution
 - analytics, customers, eBay, and Google Ads reads
+- Amazon FBA SKU inventory reads
 - Google Ads upload
 - backup export download
 - support ticket status, list/detail reads, sync, replies, close/open actions, attachment preview, and local note management
@@ -930,6 +931,20 @@ Payload:
 ```
 
 The scheduler uses short delta windows and per-task backoff on Amazon `429`/`503` responses. It never runs the historical 730-day import automatically.
+
+### Amazon FBA SKU Inventory
+
+- `GET /api/amazon/inventory/skus` — no auth. Returns `{"ok": true, "items": [...]}`,
+  one entry per SKU (`sku_key`, `seller_sku`, `asin`, `title`, `quantity_sold`,
+  `sales_cents`, `cogs_cents`, `margin_cents`, `margin_percent`,
+  `fulfillable_quantity`, `inbound_working_quantity`, `inbound_shipped_quantity`,
+  `reserved_quantity`). Includes SKUs with stock but no sales yet.
+- `GET /api/amazon/inventory/skus/{sku_key}` — no auth. Same fields plus
+  `fee_per_unit_cents` (approximate — Amazon reports fees per order, not per
+  line item; exact for single-SKU orders, proportional by revenue share for
+  multi-SKU orders), `quantity_sold_last_30_days`, `days_of_stock` (`null`
+  when there is no recent sales velocity), and `shipments` (associated inbound
+  shipments with quantity/status). Returns `404` when `sku_key` is unknown.
 
 ### Source Sync
 

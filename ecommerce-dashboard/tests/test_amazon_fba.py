@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 import json
 import io
+from datetime import datetime, timedelta, timezone
 from urllib.error import HTTPError
 
 import pytest
@@ -1859,3 +1860,159 @@ def test_marketplace_settings_endpoints_round_trip(monkeypatch, tmp_path) -> Non
         headers={"X-Admin-Token": "test-token"},
     )
     assert rejected.status_code == 400
+
+
+def test_list_amazon_sku_inventory_aggregates_sales_cogs_and_stock(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    batch = amazon_fba.create_procurement_batch(
+        reference="sku-inv-1", name="SKU Inventory Test",
+        lines=[{"seller_sku": "H10B", "title": "HIBREW H10B", "quantity": 5}],
+    )
+    lot = amazon_fba.create_inventory_lot(
+        batch_line_id=batch["lines"][0]["id"], unit_cost_cents=10_000, received_at="2026-07-01T00:00:00Z",
+    )
+
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, seller_order_id, purchase_date, order_status, fulfillment_channel, currency, order_total_cents, raw_json, updated_at) "
+            "VALUES ('ORDER-SKU-1', 'ORDER-SKU-1', '2026-07-15T00:00:00Z', 'Shipped', 'AFN', 'EUR', 30000, '{}', '2026-07-15T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, asin, title, quantity_ordered, quantity_shipped, currency, item_price_cents, item_tax_cents) "
+            "VALUES ('ITEM-SKU-1', 'ORDER-SKU-1', 'H10B', 'B0H10B', 'HIBREW H10B', 2, 2, 'EUR', 30000, 4790)"
+        )
+        connection.execute(
+            "INSERT INTO amazon_inventory_snapshots(id, captured_at, marketplace_id, seller_sku, fnsku, asin, product_name, fulfillable_quantity, inbound_working_quantity, inbound_shipped_quantity, reserved_quantity, unfulfillable_quantity, raw_json) "
+            "VALUES ('SNAP-SKU-1', '2026-07-20T00:00:00Z', 'A1PA6795UKMFR9', 'H10B', 'FNSKU-H10B', 'B0H10B', 'HIBREW H10B', 3, 0, 0, 0, 0, '{}')"
+        )
+        connection.commit()
+
+    amazon_fba.allocate_order_fifo("ORDER-SKU-1")
+
+    items = amazon_fba.list_amazon_sku_inventory()
+    assert len(items) == 1
+    item = items[0]
+    assert item["sku_key"] == "H10B"
+    assert item["seller_sku"] == "H10B"
+    assert item["title"] == "HIBREW H10B"
+    assert item["quantity_sold"] == 2
+    assert item["sales_cents"] == 30000
+    assert item["cogs_cents"] == 20000
+    assert item["margin_cents"] == 10000
+    assert item["margin_percent"] == pytest.approx(33.3, abs=0.1)
+    assert item["fulfillable_quantity"] == 3
+
+
+def test_list_amazon_sku_inventory_includes_unsold_stock_without_sales(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_inventory_snapshots(id, captured_at, marketplace_id, seller_sku, fnsku, asin, product_name, fulfillable_quantity, inbound_working_quantity, inbound_shipped_quantity, reserved_quantity, unfulfillable_quantity, raw_json) "
+            "VALUES ('SNAP-NEW-1', '2026-07-20T00:00:00Z', 'A1PA6795UKMFR9', 'NEWSKU', 'FNSKU-NEW', 'B0NEW', 'Brand New Product', 10, 5, 0, 0, 0, '{}')"
+        )
+        connection.commit()
+
+    items = amazon_fba.list_amazon_sku_inventory()
+    assert len(items) == 1
+    item = items[0]
+    assert item["sku_key"] == "NEWSKU"
+    assert item["title"] == "Brand New Product"
+    assert item["quantity_sold"] == 0
+    assert item["sales_cents"] == 0
+    assert item["margin_percent"] is None
+    assert item["fulfillable_quantity"] == 10
+    assert item["inbound_working_quantity"] == 5
+
+
+def test_get_amazon_sku_detail_returns_none_for_unknown_sku(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    assert amazon_fba.get_amazon_sku_detail("DOES-NOT-EXIST") is None
+
+
+def test_get_amazon_sku_detail_computes_fee_per_unit_and_associated_shipments(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    recent_purchase_date = (datetime.now(timezone.utc) - timedelta(days=5)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, seller_order_id, purchase_date, order_status, fulfillment_channel, currency, order_total_cents, raw_json, updated_at) "
+            "VALUES ('ORDER-DETAIL-1', 'ORDER-DETAIL-1', ?, 'Shipped', 'AFN', 'EUR', 20000, '{}', ?)",
+            (recent_purchase_date, recent_purchase_date),
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, asin, title, quantity_ordered, quantity_shipped, currency, item_price_cents, item_tax_cents) "
+            "VALUES ('ITEM-DETAIL-1', 'ORDER-DETAIL-1', 'DETAILSKU', 'B0DETAIL', 'Detail Product', 1, 1, 'EUR', 20000, 3190)"
+        )
+        connection.execute(
+            "INSERT INTO amazon_financial_events(id, event_type, amazon_order_id, settlement_id, posted_date, financial_finality, currency, sales_cents, fees_cents, net_cents, raw_json) "
+            "VALUES ('EVT-DETAIL-1', 'ModernTransaction:Shipment', 'ORDER-DETAIL-1', NULL, ?, 'deferred', 'EUR', 20000, 4000, 16000, '{}')",
+            (recent_purchase_date,),
+        )
+        connection.execute(
+            "INSERT INTO amazon_inbound_shipments(id, shipment_id, plan_id, shipment_name, status, destination_fulfillment_center_id, raw_json, updated_at) "
+            "VALUES ('SHIP-DETAIL-1', 'SHIP-DETAIL-1', '', 'Batch 1', 'CLOSED', 'FC1', '{}', ?)",
+            (recent_purchase_date,),
+        )
+        connection.execute(
+            "INSERT INTO amazon_inbound_shipment_items(id, shipment_id, seller_sku, fnsku, asin, title, quantity_shipped, quantity_received, raw_json) "
+            "VALUES ('SHIPITEM-DETAIL-1', 'SHIP-DETAIL-1', 'DETAILSKU', 'FNSKU-DETAIL', 'B0DETAIL', 'Detail Product', 10, 10, '{}')"
+        )
+        connection.commit()
+
+    detail = amazon_fba.get_amazon_sku_detail("DETAILSKU")
+    assert detail is not None
+    assert detail["sku_key"] == "DETAILSKU"
+    assert detail["fee_per_unit_cents"] == 4000
+    assert detail["quantity_sold_last_30_days"] == 1
+    assert detail["days_of_stock"] is not None
+    assert len(detail["shipments"]) == 1
+    assert detail["shipments"][0]["shipment_id"] == "SHIP-DETAIL-1"
+    assert detail["shipments"][0]["quantity_received"] == 10
+
+
+def test_amazon_sku_inventory_endpoints_round_trip(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.importers.amazon_sp_api as importer_module
+
+    monkeypatch.setattr(importer_module, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer_module.init_amazon_fba_db()
+    with importer_module._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_inventory_snapshots(id, captured_at, marketplace_id, seller_sku, fnsku, asin, product_name, fulfillable_quantity, inbound_working_quantity, inbound_shipped_quantity, reserved_quantity, unfulfillable_quantity, raw_json) "
+            "VALUES ('SNAP-API-1', '2026-07-20T00:00:00Z', 'A1PA6795UKMFR9', 'APISKU', 'FNSKU-API', 'B0API', 'API Test Product', 4, 0, 0, 0, 0, '{}')"
+        )
+        connection.commit()
+
+    client = TestClient(main_module.app)
+
+    listing = client.get("/api/amazon/inventory/skus")
+    assert listing.status_code == 200
+    items = listing.json()["items"]
+    assert len(items) == 1
+    assert items[0]["sku_key"] == "APISKU"
+
+    detail = client.get("/api/amazon/inventory/skus/APISKU")
+    assert detail.status_code == 200
+    assert detail.json()["sku_key"] == "APISKU"
+
+    missing = client.get("/api/amazon/inventory/skus/NOT-A-SKU")
+    assert missing.status_code == 404

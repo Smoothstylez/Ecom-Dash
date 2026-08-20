@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from app.services.importers.amazon_sp_api import (
@@ -255,6 +255,167 @@ def get_amazon_inventory_summary() -> dict[str, Any]:
             "reserved": sum(int(item["reserved_quantity"] or 0) for item in items),
             "unfulfillable": sum(int(item["unfulfillable_quantity"] or 0) for item in items),
         },
+    }
+
+
+def list_amazon_sku_inventory() -> list[dict[str, Any]]:
+    """Aggregate sales, FIFO cost, and current stock per SKU for the
+    'Bestand' inventory view. The canonical key is seller_sku (falling
+    back to asin/fnsku when seller_sku is blank), matching how order
+    items, FIFO lots, and inbound shipment items already reference SKUs.
+    Includes SKUs that only have current stock and no sales yet."""
+    init_amazon_fba_db()
+    with _connect() as connection:
+        latest_snapshot = connection.execute(
+            "SELECT MAX(captured_at) FROM amazon_inventory_snapshots"
+        ).fetchone()[0]
+
+        sales_rows = connection.execute(
+            """
+            SELECT
+                COALESCE(NULLIF(seller_sku, ''), asin) AS sku_key,
+                MAX(seller_sku) AS seller_sku, MAX(asin) AS asin, MAX(title) AS title,
+                SUM(quantity_shipped) AS quantity_sold, SUM(item_price_cents) AS sales_cents
+            FROM amazon_order_items
+            WHERE COALESCE(NULLIF(seller_sku, ''), asin) <> ''
+            GROUP BY sku_key
+            """
+        ).fetchall()
+        sales_by_sku = {str(row["sku_key"]): dict(row) for row in sales_rows}
+
+        cogs_rows = connection.execute(
+            """
+            SELECT l.seller_sku AS sku_key,
+                   SUM(COALESCE(a.allocated_cost_cents, a.quantity * a.unit_cost_cents)) AS cogs_cents
+            FROM fifo_allocations a
+            JOIN inventory_lots l ON l.id = a.inventory_lot_id
+            WHERE l.seller_sku <> ''
+            GROUP BY l.seller_sku
+            """
+        ).fetchall()
+        cogs_by_sku = {str(row["sku_key"]): int(row["cogs_cents"] or 0) for row in cogs_rows}
+
+        stock_rows: list[sqlite3.Row] = []
+        if latest_snapshot:
+            stock_rows = connection.execute(
+                """
+                SELECT
+                    COALESCE(NULLIF(seller_sku, ''), fnsku) AS sku_key,
+                    MAX(seller_sku) AS seller_sku, MAX(asin) AS asin, MAX(product_name) AS product_name,
+                    MAX(fulfillable_quantity) AS fulfillable_quantity,
+                    MAX(inbound_working_quantity) AS inbound_working_quantity,
+                    MAX(inbound_shipped_quantity) AS inbound_shipped_quantity,
+                    MAX(reserved_quantity) AS reserved_quantity
+                FROM amazon_inventory_snapshots
+                WHERE captured_at = ? AND COALESCE(NULLIF(seller_sku, ''), fnsku) <> ''
+                GROUP BY sku_key
+                """,
+                (latest_snapshot,),
+            ).fetchall()
+        stock_by_sku = {str(row["sku_key"]): dict(row) for row in stock_rows}
+
+    items: list[dict[str, Any]] = []
+    for sku_key in set(sales_by_sku) | set(stock_by_sku):
+        sales = sales_by_sku.get(sku_key, {})
+        stock = stock_by_sku.get(sku_key, {})
+        sales_cents = int(sales.get("sales_cents") or 0)
+        cogs_cents = cogs_by_sku.get(sku_key, 0)
+        items.append({
+            "sku_key": sku_key,
+            "seller_sku": str(sales.get("seller_sku") or stock.get("seller_sku") or ""),
+            "asin": str(sales.get("asin") or stock.get("asin") or ""),
+            "title": str(sales.get("title") or stock.get("product_name") or ""),
+            "quantity_sold": int(sales.get("quantity_sold") or 0),
+            "sales_cents": sales_cents,
+            "cogs_cents": cogs_cents,
+            "margin_cents": sales_cents - cogs_cents,
+            "margin_percent": round((sales_cents - cogs_cents) / sales_cents * 100, 1) if sales_cents else None,
+            "fulfillable_quantity": int(stock.get("fulfillable_quantity") or 0),
+            "inbound_working_quantity": int(stock.get("inbound_working_quantity") or 0),
+            "inbound_shipped_quantity": int(stock.get("inbound_shipped_quantity") or 0),
+            "reserved_quantity": int(stock.get("reserved_quantity") or 0),
+        })
+    items.sort(key=lambda item: (item["title"] or item["sku_key"]).lower())
+    return items
+
+
+def get_amazon_sku_detail(sku_key: str) -> Optional[dict[str, Any]]:
+    """Per-SKU drill-down: everything from list_amazon_sku_inventory(), plus
+    the average Amazon fee per unit, estimated days of stock remaining, and
+    associated inbound shipments.
+
+    Amazon reports fees per order, not per line item. When an order has a
+    single SKU the fee attribution below is exact; for multi-SKU orders the
+    order's total fees are split proportionally by each item's share of the
+    order's item revenue (an approximation, not an exact per-item value)."""
+    base = next((item for item in list_amazon_sku_inventory() if item["sku_key"] == sku_key), None)
+    if base is None:
+        return None
+
+    init_amazon_fba_db()
+    canonical_event = _canonical_financial_event_predicate("e")
+    thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with _connect() as connection:
+        order_rows = connection.execute(
+            f"""
+            SELECT oi.item_price_cents,
+                   COALESCE((SELECT SUM(oi2.item_price_cents) FROM amazon_order_items oi2 WHERE oi2.amazon_order_id = oi.amazon_order_id), 0) AS order_item_revenue_cents,
+                   COALESCE((SELECT SUM(e.fees_cents) FROM amazon_financial_events e WHERE e.amazon_order_id = oi.amazon_order_id AND {canonical_event}), 0) AS order_fees_cents
+            FROM amazon_order_items oi
+            WHERE COALESCE(NULLIF(oi.seller_sku, ''), oi.asin) = ?
+            """,
+            (sku_key,),
+        ).fetchall()
+        recent_quantity = connection.execute(
+            """
+            SELECT COALESCE(SUM(oi.quantity_shipped), 0)
+            FROM amazon_order_items oi
+            JOIN amazon_orders o ON o.amazon_order_id = oi.amazon_order_id
+            WHERE COALESCE(NULLIF(oi.seller_sku, ''), oi.asin) = ? AND o.purchase_date >= ?
+            """,
+            (sku_key, thirty_days_ago),
+        ).fetchone()[0]
+        shipment_rows = connection.execute(
+            """
+            SELECT s.shipment_id, s.shipment_name, s.status, i.quantity_shipped, i.quantity_received
+            FROM amazon_inbound_shipment_items i
+            JOIN amazon_inbound_shipments s ON s.shipment_id = i.shipment_id
+            WHERE COALESCE(NULLIF(i.seller_sku, ''), i.asin) = ?
+            ORDER BY s.updated_at DESC
+            """,
+            (sku_key,),
+        ).fetchall()
+
+    total_fees_cents = 0.0
+    for row in order_rows:
+        order_revenue = int(row["order_item_revenue_cents"] or 0)
+        item_revenue = int(row["item_price_cents"] or 0)
+        order_fees = int(row["order_fees_cents"] or 0)
+        share = (item_revenue / order_revenue) if order_revenue else 0.0
+        total_fees_cents += order_fees * share
+    fee_per_unit_cents = round(total_fees_cents / base["quantity_sold"]) if base["quantity_sold"] else None
+
+    current_stock = base["fulfillable_quantity"] + base["inbound_working_quantity"] + base["inbound_shipped_quantity"]
+    daily_velocity = int(recent_quantity or 0) / 30.0
+    days_of_stock = round(current_stock / daily_velocity, 1) if daily_velocity > 0 else None
+
+    shipments = [
+        {
+            "shipment_id": str(row["shipment_id"]),
+            "shipment_name": str(row["shipment_name"] or ""),
+            **normalize_fba_status(str(row["status"] or "")),
+            "quantity_shipped": int(row["quantity_shipped"] or 0),
+            "quantity_received": int(row["quantity_received"] or 0),
+        }
+        for row in shipment_rows
+    ]
+
+    return {
+        **base,
+        "fee_per_unit_cents": fee_per_unit_cents,
+        "quantity_sold_last_30_days": int(recent_quantity or 0),
+        "days_of_stock": days_of_stock,
+        "shipments": shipments,
     }
 
 
