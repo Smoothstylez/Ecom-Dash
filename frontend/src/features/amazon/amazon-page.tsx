@@ -68,7 +68,7 @@ type InboundShipmentDetail = {
   shipment: InboundShipment & { plan_id?: string };
   items: Array<{ seller_sku: string; fnsku: string; asin: string; quantity_shipped: number; quantity_received: number }>;
   costs: Array<{ id: string; cost_type: string; amount_cents: number; currency: string; status: string }>;
-  invoices: Array<{ id: string; supplier_name: string; invoice_number: string; gross_cents: number; document_path: string }>;
+  invoices: Array<{ id: string; supplier_name: string; invoice_number: string; gross_cents: number; vat_cents: number; document_path: string }>;
   invoice_lines: Array<{ id: string; invoice_id: string; seller_sku: string; fnsku: string; asin: string; title: string; quantity: number; net_cents: number; vat_cents: number }>;
   cost_allocations: Array<{ id: string; seller_sku: string; fnsku: string; quantity: number; net_cents: number; currency: string; allocation_method: string }>;
 };
@@ -310,6 +310,10 @@ export function AmazonPage() {
     const netCents = Math.round(Number(String(invoiceLineNet[key] || "0").replace(",", ".")) * 100);
     if (!invoice || netCents < 0 || item.quantity_received <= 0) {
       setInvoiceMessage("Zuerst Rechnung speichern und einen gueltigen Nettobetrag eingeben.");
+      return;
+    }
+    if (invoice.vat_cents !== 0) {
+      setInvoiceMessage("Brutto-/Netto-/USt-Positionen werden mit dem detaillierten Editor erfasst.");
       return;
     }
     try {
