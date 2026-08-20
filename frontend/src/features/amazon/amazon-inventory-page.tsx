@@ -11,6 +11,7 @@ type SkuSummary = {
   seller_sku: string;
   asin: string;
   title: string;
+  image_url: string;
   quantity_sold: number;
   sales_cents: number;
   cogs_cents: number;
@@ -20,6 +21,7 @@ type SkuSummary = {
   inbound_working_quantity: number;
   inbound_shipped_quantity: number;
   reserved_quantity: number;
+  hidden: boolean;
 };
 
 type SkuShipment = {
@@ -51,30 +53,40 @@ export function AmazonInventoryPage() {
   const [error, setError] = useState("");
   const [selectedSku, setSelectedSku] = useState<SkuDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
+  const [hiddenActionMessage, setHiddenActionMessage] = useState("");
+
+  async function loadItems(signal?: AbortSignal, includeHidden = showHidden) {
+    try {
+      const response = await fetchJson<{ items?: SkuSummary[] }>(
+        buildDashboardApiUrl(`/api/amazon/inventory/skus${includeHidden ? "?include_hidden=true" : ""}`),
+        { signal },
+      );
+      setItems(response.items || []);
+    } catch (requestError: unknown) {
+      if ((requestError as Error).name !== "AbortError") {
+        setError(requestError instanceof Error ? requestError.message : "Bestand konnte nicht geladen werden.");
+      }
+    } finally {
+      setLoading(false);
+    }
+  }
 
   useEffect(() => {
     const controller = new AbortController();
-    (async () => {
-      try {
-        const response = await fetchJson<{ items?: SkuSummary[] }>(buildDashboardApiUrl("/api/amazon/inventory/skus"), { signal: controller.signal });
-        setItems(response.items || []);
-      } catch (requestError: unknown) {
-        if ((requestError as Error).name !== "AbortError") {
-          setError(requestError instanceof Error ? requestError.message : "Bestand konnte nicht geladen werden.");
-        }
-      } finally {
-        setLoading(false);
-      }
-    })();
+    setLoading(true);
+    void loadItems(controller.signal, showHidden);
     return () => controller.abort();
-  }, []);
+  }, [showHidden]);
 
   const detailPortalTarget = useAmazonDetailModal(Boolean(selectedSku), selectedSku ? (selectedSku.title || selectedSku.sku_key) : "", () => {
     setSelectedSku(null);
+    setHiddenActionMessage("");
   });
 
   async function openSku(skuKey: string) {
     setDetailLoading(true);
+    setHiddenActionMessage("");
     try {
       const detail = await fetchJson<SkuDetail>(buildDashboardApiUrl(`/api/amazon/inventory/skus/${encodeURIComponent(skuKey)}`));
       setSelectedSku(detail);
@@ -85,11 +97,32 @@ export function AmazonInventoryPage() {
     }
   }
 
+  async function toggleHidden(skuKey: string, hidden: boolean) {
+    try {
+      await fetchJson(buildDashboardApiUrl(`/api/amazon/inventory/skus/${encodeURIComponent(skuKey)}/hidden`), {
+        method: "POST",
+        body: JSON.stringify({ hidden }),
+        headers: { "Content-Type": "application/json" },
+      });
+      setSelectedSku((current) => (current ? { ...current, hidden } : current));
+      setHiddenActionMessage(hidden ? "SKU ausgeblendet." : "SKU wieder eingeblendet.");
+      await loadItems(undefined, showHidden);
+    } catch (requestError) {
+      setHiddenActionMessage(requestError instanceof Error ? requestError.message : "Konnte nicht gespeichert werden.");
+    }
+  }
+
   return (
     <section className="card table-card" style={{ marginTop: "1rem" }}>
       <div className="table-head">
         <h2 className="table-title">FBA Bestand</h2>
-        <div className="table-meta">{loading ? "..." : `${count(items.length)} SKUs`}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
+          <label className="table-meta" style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+            <input type="checkbox" checked={showHidden} onChange={(event) => setShowHidden(event.target.checked)} />
+            Ausgeblendete anzeigen
+          </label>
+          <div className="table-meta">{loading ? "..." : `${count(items.length)} SKUs`}</div>
+        </div>
       </div>
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="table-wrap">
@@ -97,8 +130,25 @@ export function AmazonInventoryPage() {
           <thead><tr><th>SKU</th><th>Verfügbar</th><th>Inbound</th><th>Verkauft</th><th>Umsatz</th><th>Marge</th></tr></thead>
           <tbody>
             {items.length ? items.map((item) => (
-              <tr key={item.sku_key} onClick={() => void openSku(item.sku_key)} style={{ cursor: "pointer" }}>
-                <td><strong>{item.title || item.seller_sku || item.sku_key}</strong><br /><small>{item.seller_sku}</small></td>
+              <tr key={item.sku_key} onClick={() => void openSku(item.sku_key)} style={{ cursor: "pointer", opacity: item.hidden ? 0.5 : 1 }}>
+                <td>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                    {item.image_url ? (
+                      <img
+                        src={item.image_url}
+                        alt=""
+                        width={36}
+                        height={36}
+                        style={{ objectFit: "cover", borderRadius: 6, flexShrink: 0 }}
+                      />
+                    ) : (
+                      <div style={{ width: 36, height: 36, borderRadius: 6, background: "var(--th-surface-warm, #eee)", flexShrink: 0 }} />
+                    )}
+                    <div>
+                      <strong>{item.title || item.seller_sku || item.sku_key}</strong><br /><small>{item.seller_sku}</small>
+                    </div>
+                  </div>
+                </td>
                 <td>{count(item.fulfillable_quantity)}</td>
                 <td>{count(item.inbound_working_quantity + item.inbound_shipped_quantity)}</td>
                 <td>{count(item.quantity_sold)}</td>
@@ -115,7 +165,13 @@ export function AmazonInventoryPage() {
       {detailPortalTarget && selectedSku ? createPortal(
         <div>
           {detailLoading ? <p>SKU wird geladen...</p> : null}
-          <p className="page-subtitle">{selectedSku.seller_sku} · {selectedSku.asin || "kein ASIN"}</p>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.6rem" }}>
+            <p className="page-subtitle">{selectedSku.seller_sku} · {selectedSku.asin || "kein ASIN"}</p>
+            <button type="button" className="button" onClick={() => void toggleHidden(selectedSku.sku_key, !selectedSku.hidden)}>
+              {selectedSku.hidden ? "Wieder einblenden" : "Ausblenden"}
+            </button>
+          </div>
+          {hiddenActionMessage ? <p className="table-meta">{hiddenActionMessage}</p> : null}
           <div className="detail-grid">
             <article className="detail-card">
               <h3>Verkauf</h3>

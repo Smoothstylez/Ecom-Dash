@@ -1933,6 +1933,128 @@ def test_list_amazon_sku_inventory_includes_unsold_stock_without_sales(monkeypat
     assert item["inbound_working_quantity"] == 5
 
 
+def test_list_amazon_sku_inventory_excludes_fully_dormant_skus_by_default(monkeypatch, tmp_path) -> None:
+    """A SKU with zero sales and zero current stock (e.g. only a stale
+    order-item row from a long-canceled order for a discontinued product)
+    carries no decision-relevant information and clutters the inventory
+    view -- exclude it by default."""
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, seller_order_id, purchase_date, order_status, fulfillment_channel, currency, order_total_cents, raw_json, updated_at) "
+            "VALUES ('ORDER-DORMANT-1', 'ORDER-DORMANT-1', '2026-06-01T00:00:00Z', 'Canceled', 'AFN', 'EUR', 0, '{}', '2026-06-01T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, asin, title, quantity_ordered, quantity_shipped, currency, item_price_cents, item_tax_cents) "
+            "VALUES ('ITEM-DORMANT-1', 'ORDER-DORMANT-1', 'DORMANTSKU', 'B0DORMANT', 'Discontinued Product', 1, 0, 'EUR', 0, 0)"
+        )
+        connection.commit()
+
+    default_items = amazon_fba.list_amazon_sku_inventory()
+    assert default_items == []
+
+    all_items = amazon_fba.list_amazon_sku_inventory(include_dormant=True)
+    assert len(all_items) == 1
+    assert all_items[0]["sku_key"] == "DORMANTSKU"
+
+
+def test_list_amazon_sku_inventory_includes_image_url_from_order_items(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, seller_order_id, purchase_date, order_status, fulfillment_channel, currency, order_total_cents, raw_json, updated_at) "
+            "VALUES ('ORDER-IMG-1', 'ORDER-IMG-1', '2026-07-01T00:00:00Z', 'Shipped', 'AFN', 'EUR', 1000, '{}', '2026-07-01T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, asin, title, quantity_ordered, quantity_shipped, currency, item_price_cents, item_tax_cents, image_url) "
+            "VALUES ('ITEM-IMG-1', 'ORDER-IMG-1', 'IMGSKU', 'B0IMG', 'Product With Image', 1, 1, 'EUR', 1000, 0, 'https://example.test/image.jpg')"
+        )
+        connection.commit()
+
+    items = amazon_fba.list_amazon_sku_inventory()
+    assert len(items) == 1
+    assert items[0]["image_url"] == "https://example.test/image.jpg"
+
+
+def test_set_amazon_sku_hidden_persists_and_filters_default_listing(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_inventory_snapshots(id, captured_at, marketplace_id, seller_sku, fnsku, asin, product_name, fulfillable_quantity, inbound_working_quantity, inbound_shipped_quantity, reserved_quantity, unfulfillable_quantity, raw_json) "
+            "VALUES ('SNAP-HIDE-1', '2026-07-20T00:00:00Z', 'A1PA6795UKMFR9', 'HIDEMESKU', 'FNSKU-HIDE', 'B0HIDE', 'Hide Me Product', 5, 0, 0, 0, 0, '{}')"
+        )
+        connection.commit()
+
+    assert len(amazon_fba.list_amazon_sku_inventory()) == 1
+
+    amazon_fba.set_amazon_sku_hidden("HIDEMESKU", hidden=True)
+
+    assert amazon_fba.list_amazon_sku_inventory() == []
+    shown_with_hidden = amazon_fba.list_amazon_sku_inventory(include_hidden=True)
+    assert len(shown_with_hidden) == 1
+    assert shown_with_hidden[0]["hidden"] is True
+
+    amazon_fba.set_amazon_sku_hidden("HIDEMESKU", hidden=False)
+    assert len(amazon_fba.list_amazon_sku_inventory()) == 1
+
+
+def test_amazon_sku_hidden_endpoint_round_trip(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.importers.amazon_sp_api as importer_module
+
+    monkeypatch.setattr(importer_module, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "test-token")
+    importer_module.init_amazon_fba_db()
+    with importer_module._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_inventory_snapshots(id, captured_at, marketplace_id, seller_sku, fnsku, asin, product_name, fulfillable_quantity, inbound_working_quantity, inbound_shipped_quantity, reserved_quantity, unfulfillable_quantity, raw_json) "
+            "VALUES ('SNAP-EP-1', '2026-07-20T00:00:00Z', 'A1PA6795UKMFR9', 'EPSKU', 'FNSKU-EP', 'B0EP', 'Endpoint Product', 5, 0, 0, 0, 0, '{}')"
+        )
+        connection.commit()
+
+    client = TestClient(main_module.app)
+
+    unauthorized = client.post("/api/amazon/inventory/skus/EPSKU/hidden", json={"hidden": True})
+    assert unauthorized.status_code == 401
+
+    hide = client.post(
+        "/api/amazon/inventory/skus/EPSKU/hidden",
+        json={"hidden": True},
+        headers={"X-Admin-Token": "test-token"},
+    )
+    assert hide.status_code == 200
+
+    listing = client.get("/api/amazon/inventory/skus")
+    assert listing.json()["items"] == []
+
+    listing_with_hidden = client.get("/api/amazon/inventory/skus?include_hidden=true")
+    assert len(listing_with_hidden.json()["items"]) == 1
+    assert listing_with_hidden.json()["items"][0]["hidden"] is True
+
+    unhide = client.post(
+        "/api/amazon/inventory/skus/EPSKU/hidden",
+        json={"hidden": False},
+        headers={"X-Admin-Token": "test-token"},
+    )
+    assert unhide.status_code == 200
+    listing_again = client.get("/api/amazon/inventory/skus")
+    assert len(listing_again.json()["items"]) == 1
+
+
 def test_get_amazon_sku_detail_returns_none_for_unknown_sku(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

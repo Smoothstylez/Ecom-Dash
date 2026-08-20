@@ -29,6 +29,7 @@ from app.services.amazon_fba import (
     list_inbound_costs,
     list_procurement_batches,
     list_settlement_suggestions,
+    set_amazon_sku_hidden,
 )
 from app.uploads import EmptyUploadError, UploadTooLargeError, stream_fileobj_to_path
 from app.services.importers.amazon_sp_api import (
@@ -70,6 +71,10 @@ class AmazonAutoRefreshTriggerRequest(BaseModel):
 class AmazonMarketplaceSettingsRequest(BaseModel):
     marketplace_mode: str
     selected_marketplace_ids: list[str] = Field(default_factory=list)
+
+
+class AmazonSkuHiddenRequest(BaseModel):
+    hidden: bool
 
 
 class SettlementReportRequest(BaseModel):
@@ -221,8 +226,8 @@ def api_amazon_inventory() -> dict[str, Any]:
 
 
 @router.get("/inventory/skus")
-def api_amazon_sku_inventory() -> dict[str, Any]:
-    return {"ok": True, "items": list_amazon_sku_inventory()}
+def api_amazon_sku_inventory(include_hidden: bool = False) -> dict[str, Any]:
+    return {"ok": True, "items": list_amazon_sku_inventory(include_hidden=include_hidden)}
 
 
 @router.get("/inventory/skus/{sku_key}")
@@ -231,6 +236,12 @@ def api_amazon_sku_detail(sku_key: str) -> dict[str, Any]:
     if detail is None:
         raise HTTPException(status_code=404, detail="SKU not found")
     return {"ok": True, **detail}
+
+
+@router.post("/inventory/skus/{sku_key}/hidden", dependencies=ADMIN_ONLY)
+def api_set_amazon_sku_hidden(sku_key: str, payload: AmazonSkuHiddenRequest) -> dict[str, Any]:
+    set_amazon_sku_hidden(sku_key, hidden=payload.hidden)
+    return {"ok": True, "sku_key": sku_key, "hidden": payload.hidden}
 
 
 @router.get("/finance")

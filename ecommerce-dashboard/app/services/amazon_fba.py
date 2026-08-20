@@ -258,12 +258,35 @@ def get_amazon_inventory_summary() -> dict[str, Any]:
     }
 
 
-def list_amazon_sku_inventory() -> list[dict[str, Any]]:
+def set_amazon_sku_hidden(sku_key: str, *, hidden: bool) -> None:
+    """Persist an explicit user choice to hide (or unhide) a SKU from the
+    default 'Bestand' inventory listing, independent of the automatic
+    dormant-SKU filter."""
+    init_amazon_fba_db()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO amazon_sku_visibility(sku_key, hidden, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(sku_key) DO UPDATE SET hidden=excluded.hidden, updated_at=excluded.updated_at
+            """,
+            (sku_key, 1 if hidden else 0, _utc_now()),
+        )
+        connection.commit()
+
+
+def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: bool = False) -> list[dict[str, Any]]:
     """Aggregate sales, FIFO cost, and current stock per SKU for the
     'Bestand' inventory view. The canonical key is seller_sku (falling
     back to asin/fnsku when seller_sku is blank), matching how order
     items, FIFO lots, and inbound shipment items already reference SKUs.
-    Includes SKUs that only have current stock and no sales yet."""
+    Includes SKUs that only have current stock and no sales yet.
+
+    By default, excludes SKUs the operator explicitly hid (persisted via
+    set_amazon_sku_hidden) and 'dormant' SKUs with zero current stock AND
+    zero sales (e.g. a stale order-item row for a discontinued product) --
+    those carry no decision-relevant information. Pass include_hidden=True
+    and/or include_dormant=True to see everything."""
     init_amazon_fba_db()
     with _connect() as connection:
         latest_snapshot = connection.execute(
@@ -275,7 +298,8 @@ def list_amazon_sku_inventory() -> list[dict[str, Any]]:
             SELECT
                 COALESCE(NULLIF(seller_sku, ''), asin) AS sku_key,
                 MAX(seller_sku) AS seller_sku, MAX(asin) AS asin, MAX(title) AS title,
-                SUM(quantity_shipped) AS quantity_sold, SUM(item_price_cents) AS sales_cents
+                SUM(quantity_shipped) AS quantity_sold, SUM(item_price_cents) AS sales_cents,
+                MAX(NULLIF(image_url, '')) AS image_url
             FROM amazon_order_items
             WHERE COALESCE(NULLIF(seller_sku, ''), asin) <> ''
             GROUP BY sku_key
@@ -314,26 +338,46 @@ def list_amazon_sku_inventory() -> list[dict[str, Any]]:
             ).fetchall()
         stock_by_sku = {str(row["sku_key"]): dict(row) for row in stock_rows}
 
+        hidden_rows = connection.execute(
+            "SELECT sku_key FROM amazon_sku_visibility WHERE hidden = 1"
+        ).fetchall()
+        hidden_keys = {str(row["sku_key"]) for row in hidden_rows}
+
     items: list[dict[str, Any]] = []
     for sku_key in set(sales_by_sku) | set(stock_by_sku):
         sales = sales_by_sku.get(sku_key, {})
         stock = stock_by_sku.get(sku_key, {})
         sales_cents = int(sales.get("sales_cents") or 0)
         cogs_cents = cogs_by_sku.get(sku_key, 0)
+        fulfillable_quantity = int(stock.get("fulfillable_quantity") or 0)
+        inbound_working_quantity = int(stock.get("inbound_working_quantity") or 0)
+        inbound_shipped_quantity = int(stock.get("inbound_shipped_quantity") or 0)
+        quantity_sold = int(sales.get("quantity_sold") or 0)
+        is_hidden = sku_key in hidden_keys
+        is_dormant = (
+            quantity_sold == 0 and sales_cents == 0
+            and fulfillable_quantity == 0 and inbound_working_quantity == 0 and inbound_shipped_quantity == 0
+        )
+        if is_hidden and not include_hidden:
+            continue
+        if is_dormant and not include_dormant:
+            continue
         items.append({
             "sku_key": sku_key,
             "seller_sku": str(sales.get("seller_sku") or stock.get("seller_sku") or ""),
             "asin": str(sales.get("asin") or stock.get("asin") or ""),
             "title": str(sales.get("title") or stock.get("product_name") or ""),
-            "quantity_sold": int(sales.get("quantity_sold") or 0),
+            "image_url": str(sales.get("image_url") or ""),
+            "quantity_sold": quantity_sold,
             "sales_cents": sales_cents,
             "cogs_cents": cogs_cents,
             "margin_cents": sales_cents - cogs_cents,
             "margin_percent": round((sales_cents - cogs_cents) / sales_cents * 100, 1) if sales_cents else None,
-            "fulfillable_quantity": int(stock.get("fulfillable_quantity") or 0),
-            "inbound_working_quantity": int(stock.get("inbound_working_quantity") or 0),
-            "inbound_shipped_quantity": int(stock.get("inbound_shipped_quantity") or 0),
+            "fulfillable_quantity": fulfillable_quantity,
+            "inbound_working_quantity": inbound_working_quantity,
+            "inbound_shipped_quantity": inbound_shipped_quantity,
             "reserved_quantity": int(stock.get("reserved_quantity") or 0),
+            "hidden": is_hidden,
         })
     items.sort(key=lambda item: (item["title"] or item["sku_key"]).lower())
     return items
@@ -348,7 +392,7 @@ def get_amazon_sku_detail(sku_key: str) -> Optional[dict[str, Any]]:
     single SKU the fee attribution below is exact; for multi-SKU orders the
     order's total fees are split proportionally by each item's share of the
     order's item revenue (an approximation, not an exact per-item value)."""
-    base = next((item for item in list_amazon_sku_inventory() if item["sku_key"] == sku_key), None)
+    base = next((item for item in list_amazon_sku_inventory(include_hidden=True, include_dormant=True) if item["sku_key"] == sku_key), None)
     if base is None:
         return None
 

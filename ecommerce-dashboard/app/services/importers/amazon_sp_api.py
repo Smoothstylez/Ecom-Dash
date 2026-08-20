@@ -416,6 +416,12 @@ def init_amazon_fba_db() -> None:
                 last_throttle_error TEXT NOT NULL DEFAULT ''
             );
 
+            CREATE TABLE IF NOT EXISTS amazon_sku_visibility (
+                sku_key TEXT PRIMARY KEY,
+                hidden INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS amazon_orders (
                 amazon_order_id TEXT PRIMARY KEY,
                 seller_order_id TEXT NOT NULL DEFAULT '',
