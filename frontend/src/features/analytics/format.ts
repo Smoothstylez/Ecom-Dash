@@ -24,6 +24,45 @@ export function formatDateToken(value: string) {
   return parsed ? DATE_FORMATTER.format(parsed) : "-";
 }
 
+export function formatDateTime(value: string | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  return `${new Intl.DateTimeFormat("de-DE").format(date)} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
+export function formatRelativeTime(value: string | undefined) {
+  if (!value) {
+    return "-";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  const diffSeconds = Math.round((Date.now() - date.getTime()) / 1000);
+  if (diffSeconds < 60) {
+    return "gerade eben";
+  }
+  const diffMinutes = Math.round(diffSeconds / 60);
+  if (diffMinutes < 60) {
+    return `vor ${diffMinutes} Min.`;
+  }
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) {
+    return `vor ${diffHours} Std.`;
+  }
+  const diffDays = Math.round(diffHours / 24);
+  return `vor ${diffDays} Tag${diffDays === 1 ? "" : "en"}`;
+}
+
 export function parseDateToken(value: string) {
   const token = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(token)) {

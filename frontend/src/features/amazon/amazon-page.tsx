@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 
-import { formatMoneyFromCents } from "@/features/analytics/format";
+import { formatDateTime, formatMoneyFromCents, formatRelativeTime } from "@/features/analytics/format";
 import { fetchJson } from "@/shared/api/client";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { useDashboardShellState } from "@/app/dashboard-shell-state";
+import { useAmazonDetailModal } from "./use-amazon-detail-modal";
+import { AmazonInventoryPage } from "./amazon-inventory-page";
 
 type AmazonStatus = {
   configured?: boolean;
@@ -20,17 +23,13 @@ type AmazonStatus = {
     in_flight?: boolean;
     tasks?: Record<string, {
       last_status?: string;
+      last_finished_at?: string | null;
       last_success_at?: string | null;
       next_eligible_at?: string | null;
       backoff_seconds?: number;
       last_error?: string | null;
     }>;
   };
-};
-
-type InventorySummary = {
-  captured_at?: string | null;
-  totals?: Record<string, number>;
 };
 
 type FinanceEvent = {
@@ -84,25 +83,73 @@ type InboundCost = {
   status: string;
 };
 
+type InvoiceDraft = {
+  file: File;
+  supplier: string;
+  invoiceNumber: string;
+  gross: string;
+  net: string;
+  vat: string;
+  status: "idle" | "uploading" | "error";
+  error: string;
+};
+
+const SHIPMENT_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "not_sent", label: "Nicht versendet" },
+  { value: "in_transit", label: "Unterwegs" },
+  { value: "receiving", label: "Empfang läuft" },
+  { value: "received", label: "Empfangen" },
+];
+
+const FINANCE_EVENT_TYPE_LABELS: Record<string, string> = {
+  "ModernTransaction:Shipment": "Verkauf",
+  "ModernTransaction:Refund": "Rückerstattung",
+  "ModernTransaction:AdjustmentEvent": "Anpassung",
+  "ModernTransaction:ServiceFeeEvent": "Servicegebühr",
+  SettlementReportLine: "Abrechnung",
+};
+
+const FEE_COMPONENT_LABELS: Record<string, string> = {
+  FBAPerUnitFulfillmentFee: "FBA-Versandgebühr",
+  Commission: "Verkaufsprovision",
+  GiftWrapCommission: "Geschenkverpackung",
+  ShippingHB: "Versandkosten",
+  FBAStorageFee: "FBA-Lagergebühr",
+  FBAInboundTransportationFee: "FBA-Einlagerungstransport",
+};
+
+function financeEventTypeLabel(eventType: string) {
+  return FINANCE_EVENT_TYPE_LABELS[eventType] || eventType;
+}
+
+function feeComponentLabel(name: string) {
+  return FEE_COMPONENT_LABELS[name] || name;
+}
+
+function classNames(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
+}
+
 function count(value: number | undefined) {
   return new Intl.NumberFormat("de-DE").format(Number(value || 0));
 }
 
+function draftKey(file: File) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
 export function AmazonPage() {
   const { refreshRequestToken } = useDashboardShellState();
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory">("overview");
   const [status, setStatus] = useState<AmazonStatus | null>(null);
-  const [inventory, setInventory] = useState<InventorySummary | null>(null);
   const [finance, setFinance] = useState<FinanceOverview | null>(null);
   const [shipments, setShipments] = useState<InboundShipment[]>([]);
   const [inboundCosts, setInboundCosts] = useState<InboundCost[]>([]);
-  const [shipmentFilter, setShipmentFilter] = useState("all");
+  const [shipmentFilters, setShipmentFilters] = useState<Set<string>>(new Set());
+  const [shipmentFilterOpen, setShipmentFilterOpen] = useState(false);
   const [selectedShipment, setSelectedShipment] = useState<InboundShipmentDetail | null>(null);
   const [shipmentLoading, setShipmentLoading] = useState(false);
-  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
-  const [invoiceSupplier, setInvoiceSupplier] = useState("");
-  const [invoiceGross, setInvoiceGross] = useState("");
-  const [invoiceNet, setInvoiceNet] = useState("");
-  const [invoiceVat, setInvoiceVat] = useState("");
+  const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, InvoiceDraft>>({});
   const [invoiceLineNet, setInvoiceLineNet] = useState<Record<string, string>>({});
   const [invoiceMessage, setInvoiceMessage] = useState("");
   const [error, setError] = useState("");
@@ -111,15 +158,13 @@ export function AmazonPage() {
     const controller = signal ? null : new AbortController();
     const requestSignal = signal || controller?.signal;
     try {
-      const [nextStatus, nextInventory, nextFinance, nextShipments, nextCosts] = await Promise.all([
+      const [nextStatus, nextFinance, nextShipments, nextCosts] = await Promise.all([
         fetchJson<AmazonStatus>(buildDashboardApiUrl("/api/amazon/status"), { signal: requestSignal }),
-        fetchJson<InventorySummary>(buildDashboardApiUrl("/api/amazon/inventory"), { signal: requestSignal }),
         fetchJson<FinanceOverview>(buildDashboardApiUrl("/api/amazon/finance"), { signal: requestSignal }),
         fetchJson<{ items?: InboundShipment[] }>(buildDashboardApiUrl("/api/amazon/inbound/shipments"), { signal: requestSignal }),
         fetchJson<{ items?: InboundCost[] }>(buildDashboardApiUrl("/api/amazon/inbound/costs"), { signal: requestSignal }),
       ]);
       setStatus(nextStatus);
-      setInventory(nextInventory);
       setFinance(nextFinance);
       setShipments(nextShipments.items || []);
       setInboundCosts(nextCosts.items || []);
@@ -136,21 +181,48 @@ export function AmazonPage() {
     return () => controller.abort();
   }, [refreshRequestToken]);
 
+  const lastUpdatedText = useMemo(() => {
+    const tasks = Object.values(status?.auto_refresh?.tasks || {});
+    const timestamps = tasks
+      .map((task) => task.last_finished_at)
+      .filter((value): value is string => Boolean(value))
+      .sort()
+      .reverse();
+    if (!timestamps.length) {
+      return "Noch kein Sync";
+    }
+    return `Zuletzt aktualisiert ${formatRelativeTime(timestamps[0])}`;
+  }, [status]);
+
+  const isThrottled = useMemo(() => {
+    const tasks = Object.values(status?.auto_refresh?.tasks || {});
+    if (tasks.some((task) => Number(task.backoff_seconds || 0) > 0)) {
+      return true;
+    }
+    return Object.values(status?.rate_limits || {}).some((bucket) => Boolean(bucket.blocked_until));
+  }, [status]);
+
   const visibleShipments = shipments.filter((shipment) => {
-    if (shipmentFilter === "all") return true;
-    if (shipmentFilter === "not_sent") return shipment.status === "READY_TO_SHIP";
-    if (shipmentFilter === "in_transit") return ["SHIPPED", "IN_TRANSIT", "DELIVERED", "CHECKED_IN"].includes(shipment.status);
-    if (shipmentFilter === "receiving") return shipment.status === "RECEIVING";
-    if (shipmentFilter === "received") return shipment.status === "CLOSED";
-    return true;
+    if (shipmentFilters.size === 0) {
+      return true;
+    }
+    if (shipmentFilters.has("not_sent") && shipment.status === "READY_TO_SHIP") return true;
+    if (shipmentFilters.has("in_transit") && ["SHIPPED", "IN_TRANSIT", "DELIVERED", "CHECKED_IN"].includes(shipment.status)) return true;
+    if (shipmentFilters.has("receiving") && shipment.status === "RECEIVING") return true;
+    if (shipmentFilters.has("received") && shipment.status === "CLOSED") return true;
+    return false;
   });
-  const rateLimitedBuckets = Object.entries(status?.rate_limits || {})
-    .filter(([, bucket]) => bucket.blocked_until || bucket.last_throttle_at)
-    .map(([bucketKey]) => bucketKey);
+
+  const detailTitle = selectedShipment ? selectedShipment.shipment.shipment_id : "";
+  const detailPortalTarget = useAmazonDetailModal(Boolean(selectedShipment), detailTitle, () => {
+    setSelectedShipment(null);
+    setInvoiceDrafts({});
+  });
 
   async function openShipment(shipmentId: string) {
     setShipmentLoading(true);
     setInvoiceMessage("");
+    setInvoiceDrafts({});
     try {
       const detail = await fetchJson<InboundShipmentDetail>(buildDashboardApiUrl(`/api/amazon/inbound/shipments/${encodeURIComponent(shipmentId)}`));
       setSelectedShipment(detail);
@@ -161,32 +233,61 @@ export function AmazonPage() {
     }
   }
 
-  async function uploadInvoice() {
-    if (!selectedShipment || !invoiceFile || !invoiceSupplier.trim()) {
-      setInvoiceMessage("Bitte Lieferant und Datei angeben.");
+  function addInvoiceFiles(files: FileList | null) {
+    if (!files || !files.length) {
       return;
     }
+    setInvoiceDrafts((current) => {
+      const next = { ...current };
+      Array.from(files).forEach((file) => {
+        const key = draftKey(file);
+        if (!next[key]) {
+          next[key] = { file, supplier: "", invoiceNumber: "", gross: "", net: "", vat: "", status: "idle", error: "" };
+        }
+      });
+      return next;
+    });
+  }
+
+  function updateInvoiceDraft(key: string, patch: Partial<InvoiceDraft>) {
+    setInvoiceDrafts((current) => (current[key] ? { ...current, [key]: { ...current[key], ...patch } } : current));
+  }
+
+  function removeInvoiceDraft(key: string) {
+    setInvoiceDrafts((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  async function uploadInvoiceDraft(key: string) {
+    if (!selectedShipment) {
+      return;
+    }
+    const draft = invoiceDrafts[key];
+    if (!draft || !draft.supplier.trim()) {
+      updateInvoiceDraft(key, { status: "error", error: "Bitte Lieferant angeben." });
+      return;
+    }
+    updateInvoiceDraft(key, { status: "uploading", error: "" });
     const form = new FormData();
-    form.append("file", invoiceFile);
-    form.append("supplier_name", invoiceSupplier.trim());
-    form.append("gross_cents", String(Math.round(Number(invoiceGross.replace(",", ".") || 0) * 100)));
-    form.append("net_cents", String(Math.round(Number(invoiceNet.replace(",", ".") || 0) * 100)));
-    form.append("vat_cents", String(Math.round(Number(invoiceVat.replace(",", ".") || 0) * 100)));
+    form.append("file", draft.file);
+    form.append("supplier_name", draft.supplier.trim());
+    form.append("gross_cents", String(Math.round(Number(draft.gross.replace(",", ".") || 0) * 100)));
+    form.append("net_cents", String(Math.round(Number(draft.net.replace(",", ".") || 0) * 100)));
+    form.append("vat_cents", String(Math.round(Number(draft.vat.replace(",", ".") || 0) * 100)));
     try {
       await fetchJson(buildDashboardApiUrl(`/api/amazon/inbound/shipments/${encodeURIComponent(selectedShipment.shipment.shipment_id)}/invoices`), {
         method: "POST",
         body: form,
       });
-      setInvoiceFile(null);
-      setInvoiceSupplier("");
-      setInvoiceGross("");
-      setInvoiceNet("");
-      setInvoiceVat("");
+      removeInvoiceDraft(key);
       setInvoiceMessage("Rechnung gespeichert.");
       await openShipment(selectedShipment.shipment.shipment_id);
       setShipments((current) => current.map((shipment) => shipment.shipment_id === selectedShipment.shipment.shipment_id ? { ...shipment, invoice_count: shipment.invoice_count + 1 } : shipment));
     } catch (requestError) {
-      setInvoiceMessage(requestError instanceof Error ? requestError.message : "Rechnung konnte nicht gespeichert werden.");
+      updateInvoiceDraft(key, { status: "error", error: requestError instanceof Error ? requestError.message : "Rechnung konnte nicht gespeichert werden." });
     }
   }
 
@@ -245,161 +346,227 @@ export function AmazonPage() {
 
   return (
     <section className="page" aria-label="Amazon FBA">
-      <div className="page-header">
-        <div>
-          <p className="eyebrow">Amazon FBA</p>
-          <h1>Bestand, Beschaffung und Settlement-Pruefung</h1>
-          <p className="page-subtitle">Getrennte FBA-Quelle mit FIFO und nicht automatisch gebuchten Finanzvorschlaegen.</p>
-        </div>
-      </div>
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="kpi-grid">
-        <article className="kpi-card"><span>SP-API</span><strong>{status?.configured ? "Verbunden" : "Nicht konfiguriert"}</strong><small>{status?.last_sync?.status || "Noch kein Sync"}</small></article>
-        <article className="kpi-card"><span>FBA verfuegbar</span><strong>{count(inventory?.totals?.fulfillable)}</strong><small>dedupliziert je FNSKU</small></article>
-        <article className="kpi-card"><span>Inbound</span><strong>{count((inventory?.totals?.inbound_working || 0) + (inventory?.totals?.inbound_shipped || 0))}</strong><small>working + shipped</small></article>
-        <article className="kpi-card"><span>FBA-Sendungen</span><strong>{count(shipments.length)}</strong><small>inklusive nicht versendet</small></article>
         <article className="kpi-card"><span>Verkaufserloese (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.sales_cents || 0)}</strong><small>aus Amazon-Finanzereignissen</small></article>
         <article className="kpi-card"><span>Amazon-Gebuehren (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.fees_cents || 0)}</strong><small>inklusive FBA-Gebuehren</small></article>
       </div>
-      {status?.auto_refresh ? (
-        <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
-          <h2>Amazon-Aktualisierung</h2>
-          <p className="page-subtitle">{status.auto_refresh.in_flight ? "Sync läuft" : status.auto_refresh.enabled ? "Automatisch aktiv" : "Automatisch deaktiviert"}</p>
-          {status.pending_order_items ? <p className="page-subtitle">Ausstehende Artikelpositionen: {count(status.pending_order_items)}</p> : null}
-          {rateLimitedBuckets.length ? <p className="page-subtitle">Amazon-Limit aktiv: {rateLimitedBuckets.join(", ")}</p> : null}
-          <div className="table-wrap">
-            <table className="orders-table">
-              <thead><tr><th>Bereich</th><th>Letzter Erfolg</th><th>Nächste Ausführung</th><th>Status</th></tr></thead>
-              <tbody>{[["orders", "Orders"], ["finance", "Finance"], ["inventory_inbound", "Bestand/FBA"]].map(([key, label]) => {
-                const task = status.auto_refresh?.tasks?.[key];
-                return <tr key={key}><td>{label}</td><td>{task?.last_success_at || "-"}</td><td>{task?.next_eligible_at || "regulärer Intervall"}</td><td>{task?.backoff_seconds ? `Backoff ${Math.ceil(task.backoff_seconds / 60)} Min.` : task?.last_status || "wartet"}</td></tr>;
-              })}</tbody>
-            </table>
-          </div>
-        </section>
+      <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: "1rem" }}>
+        <button
+          className={classNames("segmented-btn", activeTab === "overview" && "active")}
+          type="button"
+          onClick={() => setActiveTab("overview")}
+        >
+          Übersicht
+        </button>
+        <button
+          className={classNames("segmented-btn", activeTab === "inventory" && "active")}
+          type="button"
+          onClick={() => setActiveTab("inventory")}
+        >
+          Bestand
+        </button>
+      </div>
+      {activeTab === "inventory" ? <AmazonInventoryPage /> : null}
+      {activeTab === "overview" ? (
+        <>
+          <section className="card table-card" style={{ marginTop: "1rem" }}>
+            <div className="table-head">
+              <h2 className="table-title">FBA-Sendungen</h2>
+              <div className="orders-head-actions">
+                <div className="orders-filter-wrap">
+                  <button
+                    className="orders-filter-btn"
+                    type="button"
+                    aria-expanded={shipmentFilterOpen ? "true" : "false"}
+                    title="Filter"
+                    onClick={() => setShipmentFilterOpen((current) => !current)}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M1.5 2.5h13l-5 6v4l-3 1.5V8.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    <span className="orders-filter-label">Filter</span>
+                    <span className="orders-filter-badge" hidden={shipmentFilters.size <= 0}>{shipmentFilters.size > 0 ? shipmentFilters.size : ""}</span>
+                  </button>
+                  <div className="orders-filter-dropdown" aria-hidden={shipmentFilterOpen ? "false" : "true"}>
+                    <div className="ofd-section">
+                      <div className="ofd-section-title">Status</div>
+                      <div className="ofd-chips">
+                        {SHIPMENT_FILTER_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            className={classNames("ofd-chip", shipmentFilters.has(option.value) && "active")}
+                            type="button"
+                            onClick={() => {
+                              setShipmentFilters((current) => {
+                                const next = new Set(current);
+                                if (next.has(option.value)) {
+                                  next.delete(option.value);
+                                } else {
+                                  next.add(option.value);
+                                }
+                                return next;
+                              });
+                            }}
+                          >
+                            {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="ofd-footer">
+                      <button className="ofd-clear-btn" type="button" onClick={() => setShipmentFilters(new Set())}>
+                        Alle Filter zuruecksetzen
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="table-meta" style={{ minWidth: 96, textAlign: "right" }}>
+                  {lastUpdatedText}
+                  {isThrottled ? <span title="Amazon-Limit aktiv" style={{ marginLeft: 6 }}>⚠</span> : null}
+                  {status?.pending_order_items ? <div className="cell-sub">{count(status.pending_order_items)} Bestellung(en) ohne Artikeldaten</div> : null}
+                </div>
+              </div>
+            </div>
+            <div className="table-wrap">
+              <table className="orders-table">
+                <thead><tr><th>Shipment</th><th>Status</th><th>Ziel</th><th>SKUs</th><th>Menge</th><th>Transportangebot</th><th>Belege</th></tr></thead>
+                <tbody>
+                  {visibleShipments.length ? visibleShipments.map((shipment) => (
+                    <tr key={shipment.shipment_id} onClick={() => void openShipment(shipment.shipment_id)} style={{ cursor: "pointer" }}>
+                      <td><strong>{shipment.shipment_id}</strong><br /><small>{shipment.shipment_name || "Amazon FBA"}</small></td>
+                      <td><span className="status-badge">{shipment.status_label}</span></td>
+                      <td>{shipment.destination_fulfillment_center_id || "-"}</td>
+                      <td>{count(shipment.sku_count)}</td>
+                      <td>{count(shipment.quantity_received)} / {count(shipment.quantity_shipped)}</td>
+                      <td>{shipment.transport_quote_cents == null ? "-" : formatMoneyFromCents(shipment.transport_quote_cents)}</td>
+                      <td>{count(shipment.invoice_count)}</td>
+                    </tr>
+                  )) : <tr><td colSpan={7}>Noch keine FBA-Sendungen synchronisiert.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          {inboundCosts.some((cost) => !cost.shipment_id) ? (
+            <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+              <h2>Amazon-Inbound-Kosten ohne Shipment-Zuordnung</h2>
+              <p className="page-subtitle">Diese Finance-Ereignisse sind echt, werden aber erst nach deiner Bestätigung den Einstandskosten zugerechnet.</p>
+              <div className="table-wrap">
+                <table className="orders-table">
+                  <thead><tr><th>Typ</th><th>Betrag</th><th>Status</th><th>Zuordnen</th></tr></thead>
+                  <tbody>{inboundCosts.filter((cost) => !cost.shipment_id).map((cost) => <tr key={cost.id}>
+                    <td>{cost.cost_type}</td>
+                    <td>{formatMoneyFromCents(cost.amount_cents)}</td>
+                    <td>{cost.status}</td>
+                    <td>{selectedShipment ? <button type="button" className="button" onClick={() => void confirmCost(cost.id, selectedShipment.shipment.shipment_id)}>Dem geöffneten Shipment zuordnen</button> : <span className="table-meta">Shipment öffnen</span>}</td>
+                  </tr>)}</tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+          <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+            <h2>Amazon-Einnahmen und Ausgaben</h2>
+            <p className="page-subtitle">Ereignisse sind noch nicht automatisch gebucht und muessen vor der Buchhaltung geprueft werden.</p>
+            <div className="table-wrap">
+              <table className="orders-table">
+                <thead><tr><th>Datum</th><th>Typ</th><th>Details</th><th>Erlos</th><th>Gebuehr</th><th>Saldo</th><th>Status</th></tr></thead>
+                <tbody>
+                  {finance?.events?.length ? finance.events.map((event) => (
+                    <tr key={event.id}>
+                      <td>{formatDateTime(event.posted_date)}</td>
+                      <td>{financeEventTypeLabel(event.event_type)}</td>
+                      <td>{event.components?.map((component) => feeComponentLabel(component.name || "")).filter(Boolean).join(", ") || "-"}</td>
+                      <td>{formatMoneyFromCents(event.sales_cents || 0)}</td>
+                      <td>{formatMoneyFromCents(event.fees_cents || 0)}</td>
+                      <td>{formatMoneyFromCents(event.net_cents || 0)}</td>
+                      <td>{event.financial_finality || "pending"}</td>
+                    </tr>
+                  )) : <tr><td colSpan={7}>Noch keine Amazon-Finanzereignisse importiert.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        </>
       ) : null}
-      <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: "1rem", alignItems: "center", flexWrap: "wrap" }}>
-          <div>
-            <h2>FBA-Sendungen</h2>
-            <p className="page-subtitle">Das Shipment ist die Beschaffungs- und Wareneingangsquelle. Nicht versendete Sendungen bleiben sichtbar.</p>
-          </div>
-          <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
-            {[['all', 'Alle'], ['not_sent', 'Nicht versendet'], ['in_transit', 'Unterwegs'], ['receiving', 'Empfang läuft'], ['received', 'Empfangen']].map(([value, label]) => (
-              <button key={value} type="button" className={shipmentFilter === value ? "button button-primary" : "button"} onClick={() => setShipmentFilter(value)}>{label}</button>
-            ))}
-          </div>
-        </div>
-        <div className="table-wrap">
-          <table className="orders-table">
-            <thead><tr><th>Shipment</th><th>Status</th><th>Ziel</th><th>SKUs</th><th>Menge</th><th>Transportangebot</th><th>Belege</th></tr></thead>
-            <tbody>
-              {visibleShipments.length ? visibleShipments.map((shipment) => (
-                <tr key={shipment.shipment_id} onClick={() => void openShipment(shipment.shipment_id)} style={{ cursor: "pointer" }}>
-                  <td><strong>{shipment.shipment_id}</strong><br /><small>{shipment.shipment_name || "Amazon FBA"}</small></td>
-                  <td><span className="status-badge">{shipment.status_label}</span></td>
-                  <td>{shipment.destination_fulfillment_center_id || "-"}</td>
-                  <td>{count(shipment.sku_count)}</td>
-                  <td>{count(shipment.quantity_received)} / {count(shipment.quantity_shipped)}</td>
-                  <td>{shipment.transport_quote_cents == null ? "-" : formatMoneyFromCents(shipment.transport_quote_cents)}</td>
-                  <td>{count(shipment.invoice_count)}</td>
-                </tr>
-              )) : <tr><td colSpan={7}>Noch keine FBA-Sendungen synchronisiert.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </section>
-      {inboundCosts.some((cost) => !cost.shipment_id) ? (
-        <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
-          <h2>Amazon-Inbound-Kosten ohne Shipment-Zuordnung</h2>
-          <p className="page-subtitle">Diese Finance-Ereignisse sind echt, werden aber erst nach deiner Bestätigung den Einstandskosten zugerechnet.</p>
-          <div className="table-wrap">
-            <table className="orders-table">
-              <thead><tr><th>Typ</th><th>Betrag</th><th>Status</th><th>Zuordnen</th></tr></thead>
-              <tbody>{inboundCosts.filter((cost) => !cost.shipment_id).map((cost) => <tr key={cost.id}>
-                <td>{cost.cost_type}</td>
-                <td>{formatMoneyFromCents(cost.amount_cents)}</td>
-                <td>{cost.status}</td>
-                <td>{selectedShipment ? <button type="button" className="button" onClick={() => void confirmCost(cost.id, selectedShipment.shipment.shipment_id)}>Dem geöffneten Shipment zuordnen</button> : <span className="table-meta">Shipment öffnen</span>}</td>
-              </tr>)}</tbody>
-            </table>
-          </div>
-        </section>
-      ) : null}
-      {selectedShipment ? (
-        <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "1rem" }}>
-            <div><h2>{selectedShipment.shipment.shipment_id}</h2><p className="page-subtitle">{selectedShipment.shipment.status_label} · {count(selectedShipment.shipment.quantity_received)} von {count(selectedShipment.shipment.quantity_shipped)} empfangen</p></div>
-            <button type="button" className="button" onClick={() => setSelectedShipment(null)}>Schließen</button>
-          </div>
+      {detailPortalTarget && selectedShipment ? createPortal(
+        <div>
           {shipmentLoading ? <p>Shipment wird geladen...</p> : null}
+          <p className="page-subtitle">{selectedShipment.shipment.status_label} · {count(selectedShipment.shipment.quantity_received)} von {count(selectedShipment.shipment.quantity_shipped)} empfangen</p>
           <div className="table-wrap">
             <table className="orders-table">
               <thead><tr><th>SKU</th><th>FNSKU</th><th>ASIN</th><th>Empfangen</th><th>Versendet</th></tr></thead>
               <tbody>{selectedShipment.items.map((item) => <tr key={`${item.seller_sku}:${item.fnsku}`}><td>{item.seller_sku}</td><td>{item.fnsku}</td><td>{item.asin || "-"}</td><td>{count(item.quantity_received)}</td><td>{count(item.quantity_shipped)}</td></tr>)}</tbody>
             </table>
           </div>
-          <h3>Rechnung für dieses Shipment</h3>
-          <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-            <input aria-label="Lieferant" placeholder="Lieferant" value={invoiceSupplier} onChange={(event) => setInvoiceSupplier(event.target.value)} />
-            <input aria-label="Brutto" placeholder="Brutto EUR" inputMode="decimal" value={invoiceGross} onChange={(event) => setInvoiceGross(event.target.value)} />
-            <input aria-label="Netto" placeholder="Netto EUR" inputMode="decimal" value={invoiceNet} onChange={(event) => setInvoiceNet(event.target.value)} />
-            <input aria-label="Umsatzsteuer" placeholder="USt EUR" inputMode="decimal" value={invoiceVat} onChange={(event) => setInvoiceVat(event.target.value)} />
-            <input aria-label="Rechnung" type="file" onChange={(event) => setInvoiceFile(event.target.files?.[0] || null)} />
-            <button type="button" className="button button-primary" onClick={() => void uploadInvoice()}>Rechnung hochladen</button>
-          </div>
+          <h3>Rechnungen für dieses Shipment</h3>
+          <label className="file-picker-label">
+            Dateien waehlen
+            <input
+              className="invoice-file-input"
+              type="file"
+              multiple
+              onChange={(event) => {
+                addInvoiceFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+          </label>
+          {Object.entries(invoiceDrafts).map(([key, draft]) => (
+            <div key={key} className="detail-card" style={{ marginTop: "0.75rem" }}>
+              <div className="table-meta">{draft.file.name}</div>
+              <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.4rem" }}>
+                <input aria-label="Lieferant" placeholder="Lieferant" value={draft.supplier} onChange={(event) => updateInvoiceDraft(key, { supplier: event.target.value })} />
+                <input aria-label="Rechnungsnummer" placeholder="Rechnungsnr." value={draft.invoiceNumber} onChange={(event) => updateInvoiceDraft(key, { invoiceNumber: event.target.value })} />
+                <input aria-label="Brutto" placeholder="Brutto EUR" inputMode="decimal" value={draft.gross} onChange={(event) => updateInvoiceDraft(key, { gross: event.target.value })} />
+                <input aria-label="Netto" placeholder="Netto EUR" inputMode="decimal" value={draft.net} onChange={(event) => updateInvoiceDraft(key, { net: event.target.value })} />
+                <input aria-label="Umsatzsteuer" placeholder="USt EUR" inputMode="decimal" value={draft.vat} onChange={(event) => updateInvoiceDraft(key, { vat: event.target.value })} />
+                <button type="button" className="button button-primary" disabled={draft.status === "uploading"} onClick={() => void uploadInvoiceDraft(key)}>
+                  {draft.status === "uploading" ? "Lädt..." : "Hochladen"}
+                </button>
+                <button type="button" className="button" onClick={() => removeInvoiceDraft(key)}>Entfernen</button>
+              </div>
+              {draft.error ? <p className="table-meta" style={{ color: "var(--danger, #c44)" }}>{draft.error}</p> : null}
+            </div>
+          ))}
           {invoiceMessage ? <p className="table-meta">{invoiceMessage}</p> : null}
-           {selectedShipment.invoices.length ? <p className="table-meta">{selectedShipment.invoices.length} Beleg(e) gespeichert.</p> : null}
-           <h3>Rechnungspositionen und SKU-Kosten</h3>
-           <div className="table-wrap">
-             <table className="orders-table">
-               <thead><tr><th>SKU</th><th>FNSKU</th><th>Empfangen</th><th>Netto</th><th>Aktion</th></tr></thead>
-               <tbody>{selectedShipment.items.map((item) => {
-                 const key = `${item.seller_sku}:${item.fnsku}`;
-                 const existing = selectedShipment.invoice_lines.find((line) => line.seller_sku === item.seller_sku && line.fnsku === item.fnsku);
-                 return <tr key={`cost:${key}`}>
-                   <td>{item.seller_sku}</td>
-                   <td>{item.fnsku}</td>
-                   <td>{count(item.quantity_received)}</td>
-                   <td>
-                     <input
-                       aria-label={`Netto ${item.seller_sku}`}
-                       placeholder="Netto EUR"
-                       inputMode="decimal"
-                       value={existing ? String(existing.net_cents / 100).replace(".", ",") : invoiceLineNet[key] || ""}
-                       disabled={Boolean(existing)}
-                       onChange={(event) => setInvoiceLineNet((current) => ({ ...current, [key]: event.target.value }))}
-                     />
-                   </td>
-                   <td>{existing ? <span className="table-meta">gespeichert</span> : <button type="button" className="button" onClick={() => void addInvoiceLine(item)}>Position speichern</button>}</td>
-                 </tr>;
-               })}</tbody>
-             </table>
-           </div>
-           {selectedShipment.cost_allocations.length ? <p className="table-meta">Produktkosten bereits bestaetigt; FIFO-Lots sind erzeugt.</p> : (
-             <button
-               type="button"
-               className="button button-primary"
-               disabled={!selectedShipment.invoices.length || selectedShipment.invoice_lines.length !== selectedShipment.items.length || !["RECEIVING", "CLOSED", "DELIVERED"].includes(selectedShipment.shipment.status)}
-               onClick={() => void confirmProductCosts()}
-             >
-               Kosten bestaetigen und FIFO-Lots erzeugen
-             </button>
-           )}
-        </section>
+          {selectedShipment.invoices.length ? <p className="table-meta">{selectedShipment.invoices.length} Beleg(e) gespeichert.</p> : null}
+          <h3>Rechnungspositionen und SKU-Kosten</h3>
+          <div className="table-wrap">
+            <table className="orders-table">
+              <thead><tr><th>SKU</th><th>FNSKU</th><th>Empfangen</th><th>Netto</th><th>Aktion</th></tr></thead>
+              <tbody>{selectedShipment.items.map((item) => {
+                const key = `${item.seller_sku}:${item.fnsku}`;
+                const existing = selectedShipment.invoice_lines.find((line) => line.seller_sku === item.seller_sku && line.fnsku === item.fnsku);
+                return <tr key={`cost:${key}`}>
+                  <td>{item.seller_sku}</td>
+                  <td>{item.fnsku}</td>
+                  <td>{count(item.quantity_received)}</td>
+                  <td>
+                    <input
+                      aria-label={`Netto ${item.seller_sku}`}
+                      placeholder="Netto EUR"
+                      inputMode="decimal"
+                      value={existing ? String(existing.net_cents / 100).replace(".", ",") : invoiceLineNet[key] || ""}
+                      disabled={Boolean(existing)}
+                      onChange={(event) => setInvoiceLineNet((current) => ({ ...current, [key]: event.target.value }))}
+                    />
+                  </td>
+                  <td>{existing ? <span className="table-meta">gespeichert</span> : <button type="button" className="button" onClick={() => void addInvoiceLine(item)}>Position speichern</button>}</td>
+                </tr>;
+              })}</tbody>
+            </table>
+          </div>
+          {selectedShipment.cost_allocations.length ? <p className="table-meta">Produktkosten bereits bestaetigt; FIFO-Lots sind erzeugt.</p> : (
+            <button
+              type="button"
+              className="button button-primary"
+              disabled={!selectedShipment.invoices.length || selectedShipment.invoice_lines.length !== selectedShipment.items.length || !["RECEIVING", "CLOSED", "DELIVERED"].includes(selectedShipment.shipment.status)}
+              onClick={() => void confirmProductCosts()}
+            >
+              Kosten bestaetigen und FIFO-Lots erzeugen
+            </button>
+          )}
+        </div>,
+        detailPortalTarget,
       ) : null}
-      <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
-        <h2>Amazon-Einnahmen und Ausgaben</h2>
-        <p className="page-subtitle">Ereignisse sind noch nicht automatisch gebucht und muessen vor der Buchhaltung geprueft werden.</p>
-        <div className="table-wrap">
-          <table className="orders-table">
-            <thead><tr><th>Datum</th><th>Typ</th><th>Details</th><th>Erlos</th><th>Gebuehr</th><th>Saldo</th><th>Status</th></tr></thead>
-            <tbody>
-              {finance?.events?.length ? finance.events.map((event) => <tr key={event.id}><td>{event.posted_date || "-"}</td><td>{event.event_type}</td><td>{event.components?.map((component) => component.name).filter(Boolean).join(", ") || "-"}</td><td>{formatMoneyFromCents(event.sales_cents || 0)}</td><td>{formatMoneyFromCents(event.fees_cents || 0)}</td><td>{formatMoneyFromCents(event.net_cents || 0)}</td><td>{event.financial_finality || "pending"}</td></tr>) : <tr><td colSpan={7}>Noch keine Amazon-Finanzereignisse importiert.</td></tr>}
-            </tbody>
-          </table>
-        </div>
-      </section>
     </section>
   );
 }

@@ -33,6 +33,11 @@ export type BookingsDetailsApi = {
   getMode: () => "" | "booking-transaction" | "monthly-invoice";
 };
 
+export type AmazonDetailsApi = {
+  close: () => void;
+  isOpen: () => boolean;
+};
+
 export type BookingsUiState = {
   bookingClass: string;
   category: string;
@@ -54,6 +59,8 @@ type DashboardRuntimeContextValue = {
   registerOrderDetailsApi: (api: OrderDetailsApi | null) => void;
   bookingsDetailsApi: BookingsDetailsApi | null;
   registerBookingsDetailsApi: (api: BookingsDetailsApi | null) => void;
+  amazonDetailsApi: AmazonDetailsApi | null;
+  registerAmazonDetailsApi: (api: AmazonDetailsApi | null) => void;
   bookingsUiState: BookingsUiState;
   setBookingsUiState: (next: BookingsUiState) => void;
   bookingsRefreshRequestToken: number;
@@ -74,6 +81,7 @@ export function DashboardRuntimeProvider({ children }: PropsWithChildren) {
   const [previewModalApi, setPreviewModalApi] = useState<PreviewModalApi | null>(null);
   const [orderDetailsApi, setOrderDetailsApi] = useState<OrderDetailsApi | null>(null);
   const [bookingsDetailsApi, setBookingsDetailsApi] = useState<BookingsDetailsApi | null>(null);
+  const [amazonDetailsApi, setAmazonDetailsApi] = useState<AmazonDetailsApi | null>(null);
   const [bookingsUiState, setBookingsUiStateState] = useState<BookingsUiState>(EMPTY_BOOKINGS_UI_STATE);
   const [bookingsRefreshRequestToken, setBookingsRefreshRequestToken] = useState(0);
   const [bookingsRefreshDetail, setBookingsRefreshDetail] = useState<BookingsRefreshDetail>({});
@@ -95,6 +103,10 @@ export function DashboardRuntimeProvider({ children }: PropsWithChildren) {
 
   const registerBookingsDetailsApi = useCallback((api: BookingsDetailsApi | null) => {
     setBookingsDetailsApi((current) => (current === api ? current : api));
+  }, []);
+
+  const registerAmazonDetailsApi = useCallback((api: AmazonDetailsApi | null) => {
+    setAmazonDetailsApi((current) => (current === api ? current : api));
   }, []);
 
   const setBookingsUiState = useCallback((next: BookingsUiState) => {
@@ -130,13 +142,15 @@ export function DashboardRuntimeProvider({ children }: PropsWithChildren) {
       registerOrderDetailsApi,
       bookingsDetailsApi,
       registerBookingsDetailsApi,
+      amazonDetailsApi,
+      registerAmazonDetailsApi,
       bookingsUiState,
       setBookingsUiState,
       bookingsRefreshRequestToken,
       bookingsRefreshDetail,
       requestBookingsRefresh,
     };
-  }, [bookingsDetailsApi, bookingsRefreshDetail, bookingsRefreshRequestToken, bookingsUiState, detailsModalApi, orderDetailsApi, previewModalApi, registerBookingsDetailsApi, registerDetailsModalApi, registerOrderDetailsApi, registerPreviewModalApi, requestBookingsRefresh, setBookingsUiState]);
+  }, [amazonDetailsApi, bookingsDetailsApi, bookingsRefreshDetail, bookingsRefreshRequestToken, bookingsUiState, detailsModalApi, orderDetailsApi, previewModalApi, registerAmazonDetailsApi, registerBookingsDetailsApi, registerDetailsModalApi, registerOrderDetailsApi, registerPreviewModalApi, requestBookingsRefresh, setBookingsUiState]);
 
   return (
     <DashboardRuntimeContext.Provider value={value}>

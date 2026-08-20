@@ -1,6 +1,6 @@
 import { useDashboardShellState } from "@/app/dashboard-shell-state";
 import { useDashboardRuntime } from "@/app/dashboard-runtime";
-import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
+import { formatDateTime, formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
 import { isAmazonFba, marketplaceLabel } from "@/shared/marketplace";
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 
@@ -80,18 +80,6 @@ function centsToInputValue(cents: number | undefined) {
   return Number.isFinite(value) ? value.toFixed(2) : "";
 }
 
-function formatDateTime(value: string | undefined) {
-  if (!value) {
-    return "-";
-  }
-
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return String(value);
-  }
-
-  return `${new Intl.DateTimeFormat("de-DE").format(date)} ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-}
 
 function renderFeeSourceLabel(source: string | undefined): ReactNode {
   if (!source || source === "api" || source === "amazon_finance") {

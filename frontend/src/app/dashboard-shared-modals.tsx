@@ -95,6 +95,7 @@ function setStatusBoxMessage(message: string, level: "info" | "ok" | "error" = "
 
 export function DashboardSharedModals() {
   const {
+    amazonDetailsApi,
     bookingsDetailsApi,
     orderDetailsApi,
     registerDetailsModalApi,
@@ -158,8 +159,13 @@ export function DashboardSharedModals() {
       return;
     }
 
+    if (amazonDetailsApi?.isOpen()) {
+      amazonDetailsApi.close();
+      return;
+    }
+
     closeDetailsModal();
-  }, [bookingsDetailsApi, closeDetailsModal, orderDetailsApi]);
+  }, [amazonDetailsApi, bookingsDetailsApi, closeDetailsModal, orderDetailsApi]);
 
   const closePreview = useCallback(() => {
     setPreview(defaultPreviewState());
