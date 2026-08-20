@@ -131,6 +131,7 @@ class InboundInvoiceLineRequest(BaseModel):
     asin: str = ""
     title: str = ""
     quantity: int = Field(ge=1)
+    gross_cents: int = Field(ge=0)
     net_cents: int = Field(ge=0)
     vat_cents: int = Field(default=0, ge=0)
 

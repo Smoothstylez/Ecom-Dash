@@ -321,6 +321,7 @@ export function AmazonPage() {
           asin: item.asin,
           title: "",
           quantity: item.quantity_received,
+          gross_cents: netCents,
           net_cents: netCents,
           vat_cents: 0,
         }),

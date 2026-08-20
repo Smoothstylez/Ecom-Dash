@@ -299,6 +299,45 @@ def test_invoice_line_rejects_gross_not_equal_to_net_plus_vat(monkeypatch, tmp_p
         )
 
 
+def test_invoice_line_endpoint_persists_gross_cents(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "test-token")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-API-LINE", "ShipmentStatus": "CLOSED"},
+            items=[{"SellerSKU": "SKU-1", "FulfillmentNetworkSKU": "FNSKU-1", "QuantityShipped": 1, "QuantityReceived": 1}],
+        )
+    invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-API-LINE", supplier_name="Supplier", invoice_number="INV-API-LINE",
+        invoice_date="2026-08-20", currency="EUR", gross_cents=1190,
+        net_cents=1000, vat_cents=190, document_path="api-line.pdf",
+    )
+
+    response = TestClient(main_module.app).post(
+        f"/api/amazon/inbound/invoices/{invoice['id']}/lines",
+        json={
+            "seller_sku": "SKU-1",
+            "fnsku": "FNSKU-1",
+            "quantity": 1,
+            "gross_cents": 1190,
+            "net_cents": 1000,
+            "vat_cents": 190,
+        },
+        headers={"X-Admin-Token": "test-token"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["line"]["gross_cents"] == 1190
+
+
 def test_invoice_lines_allocate_exact_single_sku_cost(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer
