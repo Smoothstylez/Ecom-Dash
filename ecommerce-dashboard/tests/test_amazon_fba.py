@@ -794,6 +794,108 @@ def test_amazon_status_reports_pending_items_and_rate_limits(monkeypatch, tmp_pa
     assert "order_items" in status["rate_limits"]
 
 
+def test_sync_starts_rate_limited_marketplace_request_outside_database_transaction(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(
+        importer,
+        "load_amazon_sp_api_config",
+        lambda: (importer.AmazonSpApiConfig("client", "secret", "refresh"), []),
+    )
+    monkeypatch.setattr(AmazonSpApiClient, "_lwa_access_token", lambda self: "token")
+
+    def marketplace_response(request, timeout):
+        assert request.full_url.endswith("/sellers/v1/marketplaceParticipations")
+        return _FakeJsonResponse({
+            "payload": [{
+                "marketplace": {"id": "DE", "name": "Amazon.de", "countryCode": "DE"},
+                "participation": {"isParticipating": True},
+            }],
+        })
+
+    monkeypatch.setattr(importer, "urlopen", marketplace_response)
+
+    result = importer.sync_amazon_fba(
+        include_orders=False,
+        include_inventory=False,
+        include_finances=False,
+        include_inbound=False,
+        include_settlement_reports=False,
+    )
+
+    assert result["status"] == "success"
+    assert result["marketplaces"] == 1
+
+
+def test_sync_amazon_fba_end_to_end_never_locks_database_across_full_pipeline(monkeypatch, tmp_path) -> None:
+    """Exercises marketplaces + orders + order_items + catalog_images through the
+    real AmazonSpApiClient.request_json() pacing path (not mocked at the method
+    level), on a real file-backed SQLite database, so any future regression that
+    re-introduces "network call while holding an open write transaction" fails
+    with 'database is locked' instead of silently passing."""
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(
+        importer,
+        "load_amazon_sp_api_config",
+        lambda: (importer.AmazonSpApiConfig("client", "secret", "refresh"), []),
+    )
+    monkeypatch.setattr(AmazonSpApiClient, "_lwa_access_token", lambda self: "token")
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if url.endswith("/sellers/v1/marketplaceParticipations"):
+            return _FakeJsonResponse({
+                "payload": [{
+                    "marketplace": {"id": "DE", "name": "Amazon.de", "countryCode": "DE"},
+                    "participation": {"isParticipating": True},
+                }],
+            })
+        if "/orders/v0/orders/" in url and url.endswith("/orderItems"):
+            return _FakeJsonResponse({"payload": {"OrderItems": [{"ASIN": "B0TEST", "SellerSKU": "SKU-1"}]}})
+        if url.startswith("https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?"):
+            return _FakeJsonResponse({"payload": {"Orders": [
+                {"AmazonOrderId": "ORDER-1", "MarketplaceId": "DE", "PurchaseDate": "2026-08-19T00:00:00Z"},
+                {"AmazonOrderId": "ORDER-2", "MarketplaceId": "DE", "PurchaseDate": "2026-08-18T00:00:00Z"},
+            ]}})
+        if url.startswith("https://sellingpartnerapi-eu.amazon.com/catalog/2022-04-01/items/"):
+            return _FakeJsonResponse({"images": []})
+        raise AssertionError(f"unexpected URL in test: {url}")
+
+    monkeypatch.setattr(importer, "urlopen", fake_urlopen)
+
+    result = importer.sync_amazon_fba(
+        include_orders=True,
+        include_inventory=False,
+        include_finances=False,
+        include_inbound=False,
+        include_settlement_reports=False,
+        include_catalog_images=True,
+        lookback_days=30,
+    )
+
+    assert result["status"] == "success"
+    assert result["orders"] == 2
+
+    status = importer.build_amazon_fba_status()
+    assert status["pending_order_items"] == 0
+
+
+def test_connect_sets_a_generous_busy_timeout_for_brief_writer_contention(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+
+    with importer._connect() as connection:
+        busy_timeout_ms = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+
+    assert busy_timeout_ms >= 10000
+
+
 class _FakeJsonResponse:
     def __init__(self, payload: dict, headers: dict[str, str] | None = None) -> None:
         self._payload = payload

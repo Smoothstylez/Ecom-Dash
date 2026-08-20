@@ -344,7 +344,7 @@ def _component_total(items: Any) -> int:
 def _connect() -> sqlite3.Connection:
     ensure_runtime_dirs()
     AMAZON_FBA_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(AMAZON_FBA_DB_PATH)
+    connection = sqlite3.connect(AMAZON_FBA_DB_PATH, timeout=30.0)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     return connection
@@ -2425,7 +2425,10 @@ def sync_amazon_fba(
     try:
         with _connect() as connection:
             connection.execute("INSERT INTO sync_runs(id, started_at, status, requested_scopes_json) VALUES (?, ?, 'running', ?)", (sync_run_id, _utc_now(), _json_dumps(scopes)))
-            participations = client.marketplace_participations()
+            connection.commit()
+
+        participations = client.marketplace_participations()
+        with _connect() as connection:
             _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="marketplace_participations", payload=participations)
             all_marketplaces = _upsert_marketplaces(connection, participations, active_only=False)
             if include_all_marketplaces:
