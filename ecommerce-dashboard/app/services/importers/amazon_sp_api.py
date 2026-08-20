@@ -2354,9 +2354,20 @@ def build_amazon_fba_status() -> dict[str, Any]:
                 "inbound_shipments": int(connection.execute("SELECT COUNT(*) FROM amazon_inbound_shipments").fetchone()[0]),
                 "procurement_batches": int(connection.execute("SELECT COUNT(*) FROM procurement_batches").fetchone()[0]),
             }
+            payload["pending_order_items"] = int(
+                connection.execute(
+                    """
+                    SELECT COUNT(*) FROM amazon_orders o
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id
+                    )
+                    """
+                ).fetchone()[0]
+            )
             row = connection.execute("SELECT completed_at, status, summary_json, error_message FROM sync_runs ORDER BY started_at DESC LIMIT 1").fetchone()
             if row:
                 payload["last_sync"] = dict(row)
+        payload["rate_limits"] = get_amazon_api_rate_limit_status()
     except sqlite3.Error as exc:
         payload["database_error"] = str(exc)
     return payload

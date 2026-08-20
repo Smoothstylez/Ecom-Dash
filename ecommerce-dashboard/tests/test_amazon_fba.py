@@ -773,6 +773,27 @@ def test_sync_amazon_fba_fetches_only_missing_order_items_newest_first(monkeypat
     assert requested == ["NEW", "OLD"]
 
 
+def test_amazon_status_reports_pending_items_and_rate_limits(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_order(connection, {"AmazonOrderId": "MISSING", "MarketplaceId": "DE"})
+        importer._upsert_order(connection, {"AmazonOrderId": "COMPLETE", "MarketplaceId": "DE"})
+        importer._upsert_order_items(
+            connection,
+            "COMPLETE",
+            [{"ASIN": "B0COMPLETE", "SellerSKU": "SKU-C"}],
+        )
+        connection.commit()
+
+    status = importer.build_amazon_fba_status()
+
+    assert status["pending_order_items"] == 1
+    assert "order_items" in status["rate_limits"]
+
+
 class _FakeJsonResponse:
     def __init__(self, payload: dict, headers: dict[str, str] | None = None) -> None:
         self._payload = payload

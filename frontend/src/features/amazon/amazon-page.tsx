@@ -10,6 +10,11 @@ type AmazonStatus = {
   missing?: string[];
   counts?: Record<string, number>;
   last_sync?: { completed_at?: string; status?: string; error_message?: string };
+  pending_order_items?: number;
+  rate_limits?: Record<string, {
+    blocked_until?: string | null;
+    last_throttle_at?: string | null;
+  }>;
   auto_refresh?: {
     enabled?: boolean;
     in_flight?: boolean;
@@ -139,6 +144,9 @@ export function AmazonPage() {
     if (shipmentFilter === "received") return shipment.status === "CLOSED";
     return true;
   });
+  const rateLimitedBuckets = Object.entries(status?.rate_limits || {})
+    .filter(([, bucket]) => bucket.blocked_until || bucket.last_throttle_at)
+    .map(([bucketKey]) => bucketKey);
 
   async function openShipment(shipmentId: string) {
     setShipmentLoading(true);
@@ -257,6 +265,8 @@ export function AmazonPage() {
         <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
           <h2>Amazon-Aktualisierung</h2>
           <p className="page-subtitle">{status.auto_refresh.in_flight ? "Sync läuft" : status.auto_refresh.enabled ? "Automatisch aktiv" : "Automatisch deaktiviert"}</p>
+          {status.pending_order_items ? <p className="page-subtitle">Ausstehende Artikelpositionen: {count(status.pending_order_items)}</p> : null}
+          {rateLimitedBuckets.length ? <p className="page-subtitle">Amazon-Limit aktiv: {rateLimitedBuckets.join(", ")}</p> : null}
           <div className="table-wrap">
             <table className="orders-table">
               <thead><tr><th>Bereich</th><th>Letzter Erfolg</th><th>Nächste Ausführung</th><th>Status</th></tr></thead>
