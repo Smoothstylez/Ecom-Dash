@@ -24,6 +24,7 @@ SP_API_EU_ENDPOINT = "https://sellingpartnerapi-eu.amazon.com"
 LWA_TOKEN_ENDPOINT = "https://api.amazon.com/auth/o2/token"
 DEFAULT_ORDER_LOOKBACK_DAYS = 30
 PRIMARY_EU_FBA_MARKETPLACE_ID = "A1PA6795UKMFR9"
+MAX_ORDER_ITEMS_BACKFILL_PER_SYNC = 200
 _AMAZON_API_BUCKETS = {
     "orders": (0.0167, 20.0),
     "order_items": (0.5, 30.0),
@@ -1665,28 +1666,43 @@ def _upsert_order_items(
 
 
 def _orders_missing_items(connection: sqlite3.Connection, orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return every locally stored Amazon order still missing item rows,
+    regardless of whether `orders` (the just-fetched delta batch) contains
+    it. A short delta window (e.g. the auto-refresh 'orders' task's 20
+    minute LastUpdatedAfter filter) may never return a given order again
+    once its LastUpdateDate ages out, so relying solely on the delta batch
+    would leave that order's items permanently unfetched. Orders present in
+    `orders` contribute their freshly returned payload (used for
+    MarketplaceId when scheduling catalog image lookups); orders known only
+    from the local database fall back to their stored MarketplaceId."""
     orders_by_id = {
         _text(order.get("AmazonOrderId")): order
         for order in orders
         if _text(order.get("AmazonOrderId"))
     }
-    if not orders_by_id:
-        return []
-    placeholders = ", ".join("?" for _ in orders_by_id)
     rows = connection.execute(
-        f"""
-        SELECT o.amazon_order_id
+        """
+        SELECT o.amazon_order_id, o.marketplace_id, o.last_update_date, o.purchase_date
         FROM amazon_orders o
-        WHERE o.amazon_order_id IN ({placeholders})
-          AND NOT EXISTS (
-              SELECT 1 FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id
-          )
+        WHERE NOT EXISTS (
+            SELECT 1 FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id
+        )
+        ORDER BY COALESCE(NULLIF(o.last_update_date, ''), o.purchase_date, '') DESC
+        LIMIT ?
         """,
-        list(orders_by_id),
+        (MAX_ORDER_ITEMS_BACKFILL_PER_SYNC,),
     ).fetchall()
-    missing_ids = {str(row["amazon_order_id"]) for row in rows}
+    candidates: list[dict[str, Any]] = []
+    for row in rows:
+        order_id = str(row["amazon_order_id"])
+        candidates.append(orders_by_id.get(order_id) or {
+            "AmazonOrderId": order_id,
+            "MarketplaceId": str(row["marketplace_id"] or ""),
+            "LastUpdateDate": str(row["last_update_date"] or ""),
+            "PurchaseDate": str(row["purchase_date"] or ""),
+        })
     return sorted(
-        (order for order_id, order in orders_by_id.items() if order_id in missing_ids),
+        candidates,
         key=lambda order: (_text(order.get("LastUpdateDate")), _text(order.get("PurchaseDate"))),
         reverse=True,
     )

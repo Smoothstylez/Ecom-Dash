@@ -773,6 +773,89 @@ def test_sync_amazon_fba_fetches_only_missing_order_items_newest_first(monkeypat
     assert requested == ["NEW", "OLD"]
 
 
+def test_sync_amazon_fba_backfills_stale_local_orders_outside_delta_window(monkeypatch, tmp_path) -> None:
+    """Regression: an order whose header is already stored locally but whose
+    items never got fetched (e.g. an earlier quota error) must still be
+    repaired by a later delta sync, even when Amazon's Orders API no longer
+    returns that order because its LastUpdateDate has aged out of the
+    delta's lookback window (e.g. the auto-refresh 'orders' task's 20
+    minute LastUpdatedAfter filter)."""
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(
+        importer,
+        "load_amazon_sp_api_config",
+        lambda: (importer.AmazonSpApiConfig("c", "s", "r"), []),
+    )
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        # Simulates an order fetched days ago whose item fetch previously
+        # failed; its LastUpdateDate is now well outside any short delta
+        # window, so the Orders API delta call below will not return it.
+        importer._upsert_order(
+            connection,
+            {
+                "AmazonOrderId": "STALE",
+                "MarketplaceId": "DE",
+                "PurchaseDate": "2026-08-16T08:00:00Z",
+                "LastUpdateDate": "2026-08-16T08:00:00Z",
+            },
+        )
+        connection.commit()
+
+    monkeypatch.setattr(
+        AmazonSpApiClient,
+        "marketplace_participations",
+        lambda self: {"payload": [{"marketplace": {"id": "DE"}, "participation": {"isParticipating": True}}]},
+    )
+    # The delta call finds nothing new -- mirrors the auto-refresh "orders"
+    # task's narrow 20-minute LastUpdatedAfter window.
+    monkeypatch.setattr(AmazonSpApiClient, "orders", lambda self, *args, **kwargs: ([], []))
+    requested: list[str] = []
+    monkeypatch.setattr(AmazonSpApiClient, "order_items", lambda self, order_id: requested.append(order_id) or [])
+
+    importer.sync_amazon_fba(
+        include_orders=True,
+        include_inventory=False,
+        include_finances=False,
+        include_inbound=False,
+        include_settlement_reports=False,
+        lookback_minutes=20,
+    )
+
+    assert requested == ["STALE"]
+
+
+def test_orders_missing_items_caps_backlog_per_sync_to_avoid_unbounded_bursts(monkeypatch, tmp_path) -> None:
+    """A large historical backlog (e.g. first install) must not schedule an
+    unbounded number of order_items requests in a single sync pass -- each
+    call is paced at 0.5 req/s, so hundreds of missing orders would otherwise
+    turn one sync into a multi-hour blocking call. Cap the backlog processed
+    per call and let the newest-first ordering + repeated sync cycles work
+    through the rest over time."""
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        for index in range(importer.MAX_ORDER_ITEMS_BACKFILL_PER_SYNC + 10):
+            importer._upsert_order(
+                connection,
+                {
+                    "AmazonOrderId": f"ORDER-{index:04d}",
+                    "MarketplaceId": "DE",
+                    "PurchaseDate": f"2026-08-{(index % 27) + 1:02d}T08:00:00Z",
+                    "LastUpdateDate": f"2026-08-{(index % 27) + 1:02d}T08:00:00Z",
+                },
+            )
+        connection.commit()
+        missing = importer._orders_missing_items(connection, [])
+
+    assert len(missing) == importer.MAX_ORDER_ITEMS_BACKFILL_PER_SYNC
+
+
 def test_amazon_status_reports_pending_items_and_rate_limits(monkeypatch, tmp_path) -> None:
     import app.services.importers.amazon_sp_api as importer
 
