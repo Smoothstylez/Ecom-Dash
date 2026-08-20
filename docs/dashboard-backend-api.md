@@ -936,22 +936,28 @@ The scheduler uses short delta windows and per-task backoff on Amazon `429`/`503
 
 - `GET /api/amazon/inventory/skus?include_hidden=false` — no auth. Returns
   `{"ok": true, "items": [...]}`, one entry per SKU (`sku_key`, `seller_sku`,
-  `asin`, `title`, `image_url`, `quantity_sold`, `sales_cents`, `cogs_cents`,
-  `margin_cents`, `margin_percent`, `fulfillable_quantity`,
-  `inbound_working_quantity`, `inbound_shipped_quantity`, `reserved_quantity`,
-  `hidden`). Includes SKUs with stock but no sales yet. By default, excludes
-  SKUs the operator explicitly hid and "dormant" SKUs with zero stock AND
-  zero sales (e.g. a stale order-item row for a discontinued product); pass
-  `include_hidden=true` to see everything (dormant SKUs are always included
-  once a SKU has any stock or sales history — the dormant filter only ever
-  hides fully-zero-activity rows and has no separate toggle).
+  `asin`, `title`, `image_url`, `quantity_sold`, `sales_cents` (gross item
+  price), `tax_cents`, `sales_net_cents` (`sales_cents` minus `tax_cents`),
+  `fees_cents` (allocated Amazon fees — see below), `cogs_cents`,
+  `margin_cents` (real profit: `sales_net_cents - cogs_cents - fees_cents`,
+  not just revenue minus purchase cost), `margin_percent` (relative to
+  `sales_net_cents`), `fulfillable_quantity`, `inbound_working_quantity`,
+  `inbound_shipped_quantity`, `reserved_quantity`, `hidden`). Includes SKUs
+  with stock but no sales yet. Amazon reports fees per order, not per line
+  item, so each order's fees are split across its items proportionally by
+  item revenue share — exact for single-SKU orders, an approximation for
+  multi-SKU orders. By default, excludes SKUs the operator explicitly hid
+  and "dormant" SKUs with zero stock AND zero sales (e.g. a stale order-item
+  row for a discontinued product); pass `include_hidden=true` to see
+  everything (dormant SKUs are always included once a SKU has any stock or
+  sales history — the dormant filter only ever hides fully-zero-activity
+  rows and has no separate toggle).
 - `GET /api/amazon/inventory/skus/{sku_key}` — no auth. Same fields plus
-  `fee_per_unit_cents` (approximate — Amazon reports fees per order, not per
-  line item; exact for single-SKU orders, proportional by revenue share for
-  multi-SKU orders), `quantity_sold_last_30_days`, `days_of_stock` (`null`
-  when there is no recent sales velocity), and `shipments` (associated inbound
-  shipments with quantity/status). Always resolves regardless of hidden or
-  dormant status. Returns `404` when `sku_key` is unknown.
+  `fee_per_unit_cents` (`fees_cents / quantity_sold`), `quantity_sold_last_30_days`,
+  `days_of_stock` (`null` when there is no recent sales velocity), and
+  `shipments` (associated inbound shipments with quantity/status). Always
+  resolves regardless of hidden or dormant status. Returns `404` when
+  `sku_key` is unknown.
 - `POST /api/amazon/inventory/skus/{sku_key}/hidden` — admin-only. Body
   `{"hidden": true|false}`. Persists an explicit show/hide preference for
   that SKU in the default listing.

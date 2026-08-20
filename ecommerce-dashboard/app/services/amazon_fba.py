@@ -282,12 +282,21 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
     items, FIFO lots, and inbound shipment items already reference SKUs.
     Includes SKUs that only have current stock and no sales yet.
 
+    'margin_cents' is real profit, not just revenue minus purchase cost:
+    it starts from sales_net_cents (item price minus the VAT it already
+    includes, since VAT collected is not the seller's money), then
+    subtracts both cogs_cents and fees_cents (Amazon's cut). Amazon
+    reports fees per order, not per line item, so each order's total fees
+    are split across its items proportionally by item revenue share --
+    exact for single-SKU orders, an approximation for multi-SKU orders.
+
     By default, excludes SKUs the operator explicitly hid (persisted via
     set_amazon_sku_hidden) and 'dormant' SKUs with zero current stock AND
     zero sales (e.g. a stale order-item row for a discontinued product) --
     those carry no decision-relevant information. Pass include_hidden=True
     and/or include_dormant=True to see everything."""
     init_amazon_fba_db()
+    canonical_event = _canonical_financial_event_predicate("e")
     with _connect() as connection:
         latest_snapshot = connection.execute(
             "SELECT MAX(captured_at) FROM amazon_inventory_snapshots"
@@ -299,6 +308,7 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
                 COALESCE(NULLIF(seller_sku, ''), asin) AS sku_key,
                 MAX(seller_sku) AS seller_sku, MAX(asin) AS asin, MAX(title) AS title,
                 SUM(quantity_shipped) AS quantity_sold, SUM(item_price_cents) AS sales_cents,
+                SUM(item_tax_cents) AS tax_cents,
                 MAX(NULLIF(image_url, '')) AS image_url
             FROM amazon_order_items
             WHERE COALESCE(NULLIF(seller_sku, ''), asin) <> ''
@@ -318,6 +328,37 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
             """
         ).fetchall()
         cogs_by_sku = {str(row["sku_key"]): int(row["cogs_cents"] or 0) for row in cogs_rows}
+
+        fee_rows = connection.execute(
+            f"""
+            SELECT
+                COALESCE(NULLIF(oi.seller_sku, ''), oi.asin) AS sku_key,
+                oi.item_price_cents AS item_revenue_cents,
+                order_totals.order_item_revenue_cents,
+                COALESCE(order_fees.order_fees_cents, 0) AS order_fees_cents
+            FROM amazon_order_items oi
+            JOIN (
+                SELECT amazon_order_id, SUM(item_price_cents) AS order_item_revenue_cents
+                FROM amazon_order_items
+                GROUP BY amazon_order_id
+            ) order_totals ON order_totals.amazon_order_id = oi.amazon_order_id
+            LEFT JOIN (
+                SELECT amazon_order_id, SUM(e.fees_cents) AS order_fees_cents
+                FROM amazon_financial_events e
+                WHERE {canonical_event}
+                GROUP BY amazon_order_id
+            ) order_fees ON order_fees.amazon_order_id = oi.amazon_order_id
+            WHERE COALESCE(NULLIF(oi.seller_sku, ''), oi.asin) <> ''
+            """
+        ).fetchall()
+        fees_by_sku: dict[str, float] = {}
+        for row in fee_rows:
+            sku_key = str(row["sku_key"])
+            order_revenue = int(row["order_item_revenue_cents"] or 0)
+            item_revenue = int(row["item_revenue_cents"] or 0)
+            order_fees = int(row["order_fees_cents"] or 0)
+            share = (item_revenue / order_revenue) if order_revenue else 0.0
+            fees_by_sku[sku_key] = fees_by_sku.get(sku_key, 0.0) + order_fees * share
 
         stock_rows: list[sqlite3.Row] = []
         if latest_snapshot:
@@ -348,7 +389,10 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
         sales = sales_by_sku.get(sku_key, {})
         stock = stock_by_sku.get(sku_key, {})
         sales_cents = int(sales.get("sales_cents") or 0)
+        tax_cents = min(max(int(sales.get("tax_cents") or 0), 0), sales_cents)
+        sales_net_cents = sales_cents - tax_cents
         cogs_cents = cogs_by_sku.get(sku_key, 0)
+        fees_cents = round(fees_by_sku.get(sku_key, 0.0))
         fulfillable_quantity = int(stock.get("fulfillable_quantity") or 0)
         inbound_working_quantity = int(stock.get("inbound_working_quantity") or 0)
         inbound_shipped_quantity = int(stock.get("inbound_shipped_quantity") or 0)
@@ -362,6 +406,7 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
             continue
         if is_dormant and not include_dormant:
             continue
+        margin_cents = sales_net_cents - cogs_cents - fees_cents
         items.append({
             "sku_key": sku_key,
             "seller_sku": str(sales.get("seller_sku") or stock.get("seller_sku") or ""),
@@ -370,9 +415,12 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
             "image_url": str(sales.get("image_url") or ""),
             "quantity_sold": quantity_sold,
             "sales_cents": sales_cents,
+            "tax_cents": tax_cents,
+            "sales_net_cents": sales_net_cents,
+            "fees_cents": fees_cents,
             "cogs_cents": cogs_cents,
-            "margin_cents": sales_cents - cogs_cents,
-            "margin_percent": round((sales_cents - cogs_cents) / sales_cents * 100, 1) if sales_cents else None,
+            "margin_cents": margin_cents,
+            "margin_percent": round(margin_cents / sales_net_cents * 100, 1) if sales_net_cents else None,
             "fulfillable_quantity": fulfillable_quantity,
             "inbound_working_quantity": inbound_working_quantity,
             "inbound_shipped_quantity": inbound_shipped_quantity,
@@ -384,32 +432,17 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
 
 
 def get_amazon_sku_detail(sku_key: str) -> Optional[dict[str, Any]]:
-    """Per-SKU drill-down: everything from list_amazon_sku_inventory(), plus
-    the average Amazon fee per unit, estimated days of stock remaining, and
-    associated inbound shipments.
-
-    Amazon reports fees per order, not per line item. When an order has a
-    single SKU the fee attribution below is exact; for multi-SKU orders the
-    order's total fees are split proportionally by each item's share of the
-    order's item revenue (an approximation, not an exact per-item value)."""
+    """Per-SKU drill-down: everything from list_amazon_sku_inventory()
+    (including its tax/fee-aware margin_cents), plus the average Amazon fee
+    per unit, estimated days of stock remaining, and associated inbound
+    shipments."""
     base = next((item for item in list_amazon_sku_inventory(include_hidden=True, include_dormant=True) if item["sku_key"] == sku_key), None)
     if base is None:
         return None
 
     init_amazon_fba_db()
-    canonical_event = _canonical_financial_event_predicate("e")
     thirty_days_ago = (datetime.now(timezone.utc) - timedelta(days=30)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     with _connect() as connection:
-        order_rows = connection.execute(
-            f"""
-            SELECT oi.item_price_cents,
-                   COALESCE((SELECT SUM(oi2.item_price_cents) FROM amazon_order_items oi2 WHERE oi2.amazon_order_id = oi.amazon_order_id), 0) AS order_item_revenue_cents,
-                   COALESCE((SELECT SUM(e.fees_cents) FROM amazon_financial_events e WHERE e.amazon_order_id = oi.amazon_order_id AND {canonical_event}), 0) AS order_fees_cents
-            FROM amazon_order_items oi
-            WHERE COALESCE(NULLIF(oi.seller_sku, ''), oi.asin) = ?
-            """,
-            (sku_key,),
-        ).fetchall()
         recent_quantity = connection.execute(
             """
             SELECT COALESCE(SUM(oi.quantity_shipped), 0)
@@ -430,14 +463,7 @@ def get_amazon_sku_detail(sku_key: str) -> Optional[dict[str, Any]]:
             (sku_key,),
         ).fetchall()
 
-    total_fees_cents = 0.0
-    for row in order_rows:
-        order_revenue = int(row["order_item_revenue_cents"] or 0)
-        item_revenue = int(row["item_price_cents"] or 0)
-        order_fees = int(row["order_fees_cents"] or 0)
-        share = (item_revenue / order_revenue) if order_revenue else 0.0
-        total_fees_cents += order_fees * share
-    fee_per_unit_cents = round(total_fees_cents / base["quantity_sold"]) if base["quantity_sold"] else None
+    fee_per_unit_cents = round(base["fees_cents"] / base["quantity_sold"]) if base["quantity_sold"] else None
 
     current_stock = base["fulfillable_quantity"] + base["inbound_working_quantity"] + base["inbound_shipped_quantity"]
     daily_velocity = int(recent_quantity or 0) / 30.0

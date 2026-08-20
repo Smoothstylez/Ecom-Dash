@@ -1902,10 +1902,49 @@ def test_list_amazon_sku_inventory_aggregates_sales_cogs_and_stock(monkeypatch, 
     assert item["title"] == "HIBREW H10B"
     assert item["quantity_sold"] == 2
     assert item["sales_cents"] == 30000
+    assert item["tax_cents"] == 4790
+    assert item["sales_net_cents"] == 25210
+    assert item["fees_cents"] == 0
     assert item["cogs_cents"] == 20000
-    assert item["margin_cents"] == 10000
-    assert item["margin_percent"] == pytest.approx(33.3, abs=0.1)
+    assert item["margin_cents"] == 5210
+    assert item["margin_percent"] == pytest.approx(20.7, abs=0.1)
     assert item["fulfillable_quantity"] == 3
+
+
+def test_list_amazon_sku_inventory_profit_subtracts_allocated_amazon_fees(monkeypatch, tmp_path) -> None:
+    """Profit ('Marge') must account for Amazon fees, not just revenue minus
+    purchase cost -- otherwise it massively overstates real profitability
+    (FBA fees + commission routinely run 20-30% of revenue)."""
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, seller_order_id, purchase_date, order_status, fulfillment_channel, currency, order_total_cents, raw_json, updated_at) "
+            "VALUES ('ORDER-FEES-1', 'ORDER-FEES-1', '2026-07-15T00:00:00Z', 'Shipped', 'AFN', 'EUR', 10000, '{}', '2026-07-15T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, asin, title, quantity_ordered, quantity_shipped, currency, item_price_cents, item_tax_cents) "
+            "VALUES ('ITEM-FEES-1', 'ORDER-FEES-1', 'FEESKU', 'B0FEES', 'Fee Test Product', 1, 1, 'EUR', 10000, 2000)"
+        )
+        connection.execute(
+            "INSERT INTO amazon_financial_events(id, event_type, amazon_order_id, settlement_id, posted_date, financial_finality, currency, sales_cents, fees_cents, net_cents, raw_json) "
+            "VALUES ('EVT-FEES-1', 'ModernTransaction:Shipment', 'ORDER-FEES-1', NULL, '2026-07-15T00:00:00Z', 'deferred', 'EUR', 10000, 1500, 8500, '{}')"
+        )
+        connection.commit()
+
+    items = amazon_fba.list_amazon_sku_inventory()
+    assert len(items) == 1
+    item = items[0]
+    assert item["sales_cents"] == 10000
+    assert item["tax_cents"] == 2000
+    assert item["sales_net_cents"] == 8000
+    assert item["fees_cents"] == 1500
+    assert item["cogs_cents"] == 0
+    assert item["margin_cents"] == 6500
+    assert item["margin_percent"] == pytest.approx(81.25, abs=0.1)
 
 
 def test_list_amazon_sku_inventory_includes_unsold_stock_without_sales(monkeypatch, tmp_path) -> None:

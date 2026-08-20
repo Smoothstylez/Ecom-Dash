@@ -3307,6 +3307,30 @@ tbody tr:nth-child(even) {
 .orders-table thead th:nth-child(10) { width: 180px; }
 .orders-table thead th:nth-child(11) { width: 120px; }
 
+/* SKU inventory list (Amazon "Bestand" tab): 6 columns, dominated by a
+   wide title/image cell followed by narrow numeric columns. Uses its own
+   widths instead of .orders-table's 11-column layout, which forced the
+   title column too narrow and the numeric columns unnecessarily wide. */
+.inventory-table {
+  width: 100%;
+  min-width: 640px;
+  table-layout: fixed;
+}
+
+.inventory-table thead th:nth-child(1) { width: auto; }
+.inventory-table thead th:nth-child(2) { width: 90px; }
+.inventory-table thead th:nth-child(3) { width: 90px; }
+.inventory-table thead th:nth-child(4) { width: 90px; }
+.inventory-table thead th:nth-child(5) { width: 110px; }
+.inventory-table thead th:nth-child(6) { width: 130px; }
+
+@media (max-width: 680px) {
+  .inventory-table {
+    min-width: 0;
+    table-layout: auto;
+  }
+}
+
 .orders-pagination-row {
   display: flex;
   align-items: center;

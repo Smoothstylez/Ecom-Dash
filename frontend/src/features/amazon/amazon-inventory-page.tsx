@@ -14,6 +14,9 @@ type SkuSummary = {
   image_url: string;
   quantity_sold: number;
   sales_cents: number;
+  tax_cents: number;
+  sales_net_cents: number;
+  fees_cents: number;
   cogs_cents: number;
   margin_cents: number;
   margin_percent: number | null;
@@ -126,7 +129,7 @@ export function AmazonInventoryPage() {
       </div>
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="table-wrap">
-        <table className="orders-table">
+        <table className="inventory-table">
           <thead><tr><th>SKU</th><th>Verfügbar</th><th>Inbound</th><th>Verkauft</th><th>Umsatz</th><th>Marge</th></tr></thead>
           <tbody>
             {items.length ? items.map((item) => (
@@ -177,7 +180,9 @@ export function AmazonInventoryPage() {
               <h3>Verkauf</h3>
               <div className="detail-kv">
                 <div className="detail-row"><span>Verkaufte Menge</span><strong>{count(selectedSku.quantity_sold)}</strong></div>
-                <div className="detail-row"><span>Umsatz</span><strong>{formatMoneyFromCents(selectedSku.sales_cents)}</strong></div>
+                <div className="detail-row"><span>Umsatz (brutto)</span><strong>{formatMoneyFromCents(selectedSku.sales_cents)}</strong></div>
+                <div className="detail-row"><span>Enthaltene MwSt.</span><strong>{formatMoneyFromCents(selectedSku.tax_cents)}</strong></div>
+                <div className="detail-row"><span>Umsatz (netto)</span><strong>{formatMoneyFromCents(selectedSku.sales_net_cents)}</strong></div>
                 <div className="detail-row"><span>Verkauft (30 Tage)</span><strong>{count(selectedSku.quantity_sold_last_30_days)}</strong></div>
               </div>
             </article>
@@ -185,9 +190,10 @@ export function AmazonInventoryPage() {
               <h3>Einkauf &amp; Marge</h3>
               <div className="detail-kv">
                 <div className="detail-row"><span>Einkaufskosten (FIFO)</span><strong>{formatMoneyFromCents(selectedSku.cogs_cents)}</strong></div>
-                <div className="detail-row"><span>Marge</span><strong>{formatMoneyFromCents(selectedSku.margin_cents)}</strong></div>
-                <div className="detail-row"><span>Marge %</span><strong>{selectedSku.margin_percent != null ? formatPercent(selectedSku.margin_percent, 1) : "-"}</strong></div>
+                <div className="detail-row"><span>Amazon-Gebühren</span><strong>{formatMoneyFromCents(selectedSku.fees_cents)}</strong></div>
                 <div className="detail-row"><span>Amazon-Gebühr / Stück</span><strong>{selectedSku.fee_per_unit_cents != null ? formatMoneyFromCents(selectedSku.fee_per_unit_cents) : "-"}</strong></div>
+                <div className="detail-row"><span>Marge (netto)</span><strong>{formatMoneyFromCents(selectedSku.margin_cents)}</strong></div>
+                <div className="detail-row"><span>Marge %</span><strong>{selectedSku.margin_percent != null ? formatPercent(selectedSku.margin_percent, 1) : "-"}</strong></div>
               </div>
             </article>
             <article className="detail-card">
@@ -202,8 +208,8 @@ export function AmazonInventoryPage() {
             </article>
           </div>
           <h3>Zugehörige Sendungen</h3>
-          <div className="table-wrap">
-            <table className="orders-table">
+          <div className="detail-table-wrap">
+            <table>
               <thead><tr><th>Shipment</th><th>Status</th><th>Versendet</th><th>Empfangen</th></tr></thead>
               <tbody>
                 {selectedSku.shipments.length ? selectedSku.shipments.map((shipment) => (

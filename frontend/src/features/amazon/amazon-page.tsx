@@ -214,7 +214,7 @@ export function AmazonPage() {
   });
 
   const detailTitle = selectedShipment ? selectedShipment.shipment.shipment_id : "";
-  const detailPortalTarget = useAmazonDetailModal(Boolean(selectedShipment), detailTitle, () => {
+  const detailPortalTarget = useAmazonDetailModal(activeTab === "overview" && Boolean(selectedShipment), detailTitle, () => {
     setSelectedShipment(null);
     setInvoiceDrafts({});
   });
@@ -362,7 +362,10 @@ export function AmazonPage() {
         <button
           className={classNames("segmented-btn", activeTab === "inventory" && "active")}
           type="button"
-          onClick={() => setActiveTab("inventory")}
+          onClick={() => {
+            setActiveTab("inventory");
+            setSelectedShipment(null);
+          }}
         >
           Bestand
         </button>
@@ -486,7 +489,7 @@ export function AmazonPage() {
           </section>
         </>
       ) : null}
-      {detailPortalTarget && selectedShipment ? createPortal(
+      {activeTab === "overview" && detailPortalTarget && selectedShipment ? createPortal(
         <div>
           {shipmentLoading ? <p>Shipment wird geladen...</p> : null}
           <p className="page-subtitle">{selectedShipment.shipment.status_label} · {count(selectedShipment.shipment.quantity_received)} von {count(selectedShipment.shipment.quantity_shipped)} empfangen</p>
