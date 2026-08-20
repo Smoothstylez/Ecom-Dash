@@ -338,6 +338,77 @@ def test_invoice_line_endpoint_persists_gross_cents(monkeypatch, tmp_path) -> No
     assert response.json()["line"]["gross_cents"] == 1190
 
 
+def _fba_services(monkeypatch, tmp_path):
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    return amazon_fba, importer
+
+
+def _closed_two_sku_shipment(importer, shipment_id: str) -> None:
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": shipment_id, "ShipmentStatus": "CLOSED"},
+            items=[
+                {"SellerSKU": "SKU-1", "FulfillmentNetworkSKU": "FNSKU-1", "QuantityShipped": 1, "QuantityReceived": 1},
+                {"SellerSKU": "SKU-2", "FulfillmentNetworkSKU": "FNSKU-2", "QuantityShipped": 1, "QuantityReceived": 1},
+            ],
+        )
+
+
+def _invoice(amazon_fba, shipment_id: str, number: str, gross: int, net: int, vat: int):
+    return amazon_fba.add_inbound_invoice(
+        shipment_id=shipment_id, supplier_name="Supplier", invoice_number=number,
+        invoice_date="2026-08-20", currency="EUR", gross_cents=gross,
+        net_cents=net, vat_cents=vat, document_path=f"{number}.pdf",
+    )
+
+
+def _line(amazon_fba, invoice_id: str, sku: str, fnsku: str, gross: int, net: int, vat: int) -> None:
+    amazon_fba.add_inbound_invoice_line(
+        invoice_id=invoice_id, seller_sku=sku, fnsku=fnsku, asin="", title=sku,
+        quantity=1, gross_cents=gross, net_cents=net, vat_cents=vat,
+    )
+
+
+def test_confirm_inbound_product_costs_accepts_one_combined_invoice(monkeypatch, tmp_path) -> None:
+    amazon_fba, importer = _fba_services(monkeypatch, tmp_path)
+    _closed_two_sku_shipment(importer, "FBA-COMBINED")
+    invoice = _invoice(amazon_fba, "FBA-COMBINED", "INV-C", gross=3570, net=3000, vat=570)
+    _line(amazon_fba, invoice["id"], "SKU-1", "FNSKU-1", gross=1190, net=1000, vat=190)
+    _line(amazon_fba, invoice["id"], "SKU-2", "FNSKU-2", gross=2380, net=2000, vat=380)
+
+    result = amazon_fba.confirm_inbound_product_costs("FBA-COMBINED")
+
+    assert {lot["seller_sku"]: lot["unit_cost_cents"] for lot in result["lots"]} == {"SKU-1": 1000, "SKU-2": 2000}
+
+
+def test_confirm_inbound_product_costs_accepts_one_invoice_per_sku(monkeypatch, tmp_path) -> None:
+    amazon_fba, importer = _fba_services(monkeypatch, tmp_path)
+    _closed_two_sku_shipment(importer, "FBA-SEPARATE")
+    invoice_one = _invoice(amazon_fba, "FBA-SEPARATE", "INV-1", gross=1190, net=1000, vat=190)
+    invoice_two = _invoice(amazon_fba, "FBA-SEPARATE", "INV-2", gross=2380, net=2000, vat=380)
+    _line(amazon_fba, invoice_one["id"], "SKU-1", "FNSKU-1", gross=1190, net=1000, vat=190)
+    _line(amazon_fba, invoice_two["id"], "SKU-2", "FNSKU-2", gross=2380, net=2000, vat=380)
+
+    result = amazon_fba.confirm_inbound_product_costs("FBA-SEPARATE")
+
+    assert len(result["lots"]) == 2
+
+
+def test_confirm_inbound_product_costs_rejects_invoice_header_line_total_mismatch(monkeypatch, tmp_path) -> None:
+    amazon_fba, importer = _fba_services(monkeypatch, tmp_path)
+    _closed_two_sku_shipment(importer, "FBA-MISMATCH")
+    invoice = _invoice(amazon_fba, "FBA-MISMATCH", "INV-M", gross=1190, net=1000, vat=190)
+    _line(amazon_fba, invoice["id"], "SKU-1", "FNSKU-1", gross=1189, net=1000, vat=189)
+
+    with pytest.raises(ValueError, match="invoice line gross total must match invoice gross total"):
+        amazon_fba.confirm_inbound_product_costs("FBA-MISMATCH")
+
+
 def test_invoice_lines_allocate_exact_single_sku_cost(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

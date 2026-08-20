@@ -770,27 +770,46 @@ def confirm_inbound_product_costs(shipment_id: str) -> dict[str, Any]:
         ).fetchall()
         if not invoices:
             raise ValueError("supplier invoice is required")
-        if len(invoices) != 1:
-            raise ValueError("exactly one supplier invoice is required")
-        invoice = invoices[0]
         lines = connection.execute(
-            "SELECT * FROM amazon_inbound_invoice_lines WHERE invoice_id = ? ORDER BY seller_sku, fnsku",
-            (invoice["id"],),
+            """
+            SELECT l.*, i.shipment_id, i.currency, i.gross_cents AS invoice_gross_cents,
+                   i.net_cents AS invoice_net_cents, i.vat_cents AS invoice_vat_cents
+            FROM amazon_inbound_invoice_lines l
+            JOIN amazon_inbound_invoices i ON i.id = l.invoice_id
+            WHERE i.shipment_id = ?
+            ORDER BY l.invoice_id, l.seller_sku, l.fnsku
+            """,
+            (shipment_id,),
         ).fetchall()
         if not lines:
             raise ValueError("invoice lines are required")
+
+        lines_by_invoice: dict[str, list[sqlite3.Row]] = {}
+        for line in lines:
+            lines_by_invoice.setdefault(str(line["invoice_id"]), []).append(line)
+        for invoice in invoices:
+            invoice_lines = lines_by_invoice.get(str(invoice["id"]), [])
+            if sum(int(line["gross_cents"]) for line in invoice_lines) != int(invoice["gross_cents"]):
+                raise ValueError("invoice line gross total must match invoice gross total")
+            if sum(int(line["net_cents"]) for line in invoice_lines) != int(invoice["net_cents"]):
+                raise ValueError("invoice line net total must match invoice net total")
+            if sum(int(line["vat_cents"]) for line in invoice_lines) != int(invoice["vat_cents"]):
+                raise ValueError("invoice line VAT total must match invoice VAT total")
 
         items_by_key = {
             (str(item["seller_sku"] or ""), str(item["fnsku"] or "")): item
             for item in items
         }
-        line_keys = {(str(line["seller_sku"] or ""), str(line["fnsku"] or "")) for line in lines}
-        item_keys = set(items_by_key)
-        if line_keys != item_keys:
-            raise ValueError("invoice lines must cover every shipment SKU")
-        if sum(int(line["net_cents"] or 0) for line in lines) != int(invoice["net_cents"] or 0):
-            raise ValueError("invoice line net total must match invoice net total")
+        lines_by_sku: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for line in lines:
+            key = (str(line["seller_sku"] or ""), str(line["fnsku"] or ""))
+            lines_by_sku.setdefault(key, []).append(line)
+        if set(lines_by_sku) != set(items_by_key):
+            raise ValueError("invoice lines must cover every shipment SKU")
+        if any(len(sku_lines) != 1 for sku_lines in lines_by_sku.values()):
+            raise ValueError("each shipment SKU requires exactly one invoice line")
+        for sku_lines in lines_by_sku.values():
+            line = sku_lines[0]
             key = (str(line["seller_sku"] or ""), str(line["fnsku"] or ""))
             item = items_by_key[key]
             if int(line["quantity"] or 0) != int(item["quantity_received"] or 0):
@@ -823,14 +842,14 @@ def confirm_inbound_product_costs(shipment_id: str) -> dict[str, Any]:
             lot_id = _stable_id("amazon-inbound-inventory-lot", f"{shipment_id}:{key[0]}:{key[1]}")
             allocation = {
                 "id": allocation_id,
-                "invoice_id": str(invoice["id"]),
+                "invoice_id": str(line["invoice_id"]),
                 "invoice_line_id": str(line["id"]),
                 "shipment_id": shipment_id,
                 "seller_sku": key[0],
                 "fnsku": key[1],
                 "quantity": quantity,
                 "net_cents": net_cents,
-                "currency": str(invoice["currency"] or "EUR"),
+                "currency": str(line["currency"] or "EUR"),
                 "allocation_method": "invoice_line",
                 "created_at": _utc_now(),
             }
