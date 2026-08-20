@@ -932,6 +932,29 @@ Payload:
 
 The scheduler uses short delta windows and per-task backoff on Amazon `429`/`503` responses. It never runs the historical 730-day import automatically.
 
+### Amazon FBA Inbound Shipments and Supplier Invoices
+
+- `GET /api/amazon/inbound/shipments` — no auth. Returns
+  `{"ok": true, "items": [...]}`. The default listing excludes shipments with
+  Amazon status `CANCELLED`; use `?status=CANCELLED` to retrieve them explicitly.
+  Each item includes the normalized shipment status plus `invoice_count`,
+  `allocation_count`, and `cost_status`: `missing` when no invoice is recorded,
+  `entered` when at least one invoice exists but no product-cost allocation has
+  been confirmed, and `confirmed` when allocations exist for the shipment.
+- `GET /api/amazon/inbound/shipments/{shipment_id}` — no auth. Returns the
+  shipment, items, boxes, transport options, costs, cost allocations, invoice
+  headers, and invoice lines. Every invoice header includes `supplier_name`,
+  `invoice_number`, `invoice_date`, `currency`, `gross_cents`, `net_cents`,
+  `vat_cents`, `document_path`, and `notes`. Every invoice line includes its
+  `invoice_id`, SKU/FNSKU identity, quantity, and `gross_cents`, `net_cents`,
+  and `vat_cents`.
+- `POST /api/amazon/inbound/invoices/{invoice_id}/lines` — admin-only. Upserts
+  the line identified by its invoice and SKU/FNSKU. The JSON body requires
+  `quantity` (at least 1), `gross_cents`, `net_cents`, and `vat_cents` (all
+  non-negative); optional fields are `seller_sku`, `fnsku`, `asin`, and `title`.
+  `gross_cents` must equal `net_cents + vat_cents`, otherwise the endpoint
+  returns `400`.
+
 ### Amazon FBA SKU Inventory
 
 - `GET /api/amazon/inventory/skus?include_hidden=false` — no auth. Returns

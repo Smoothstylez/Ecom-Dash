@@ -338,6 +338,207 @@ def test_invoice_line_endpoint_persists_gross_cents(monkeypatch, tmp_path) -> No
     assert response.json()["line"]["gross_cents"] == 1190
 
 
+def test_invoice_line_endpoint_requires_gross_net_vat_consistency(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "test-token")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-API-VALIDATION", "ShipmentStatus": "CLOSED"},
+            items=[{
+                "SellerSKU": "SKU-1",
+                "FulfillmentNetworkSKU": "FNSKU-1",
+                "QuantityShipped": 1,
+                "QuantityReceived": 1,
+            }],
+        )
+    invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-API-VALIDATION", supplier_name="Supplier",
+        invoice_number="INV-API-VALIDATION", invoice_date="2026-08-20",
+        currency="EUR", gross_cents=950, net_cents=800, vat_cents=150,
+        document_path="api-validation.pdf",
+    )
+
+    response = TestClient(main_module.app).post(
+        f"/api/amazon/inbound/invoices/{invoice['id']}/lines",
+        json={
+            "seller_sku": "SKU-1",
+            "fnsku": "FNSKU-1",
+            "quantity": 1,
+            "gross_cents": 1000,
+            "net_cents": 900,
+            "vat_cents": 50,
+        },
+        headers={"X-Admin-Token": "test-token"},
+    )
+
+    assert response.status_code == 400
+    assert "gross_cents" in response.json()["detail"]
+
+
+def test_invoice_line_endpoint_requires_vat_cents(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setenv("APP_ADMIN_TOKEN", "test-token")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-API-REQUIRED", "ShipmentStatus": "CLOSED"},
+            items=[{
+                "SellerSKU": "SKU-1",
+                "FulfillmentNetworkSKU": "FNSKU-1",
+                "QuantityShipped": 1,
+                "QuantityReceived": 1,
+            }],
+        )
+    invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-API-REQUIRED", supplier_name="Supplier",
+        invoice_number="INV-API-REQUIRED", invoice_date="2026-08-20",
+        currency="EUR", gross_cents=1000, net_cents=1000, vat_cents=0,
+        document_path="api-required.pdf",
+    )
+
+    response = TestClient(main_module.app).post(
+        f"/api/amazon/inbound/invoices/{invoice['id']}/lines",
+        json={
+            "seller_sku": "SKU-1",
+            "fnsku": "FNSKU-1",
+            "quantity": 1,
+            "gross_cents": 1000,
+            "net_cents": 1000,
+        },
+        headers={"X-Admin-Token": "test-token"},
+    )
+
+    assert response.status_code == 422
+    assert any(error["loc"][-1] == "vat_cents" for error in response.json()["detail"])
+
+
+def test_inbound_shipment_detail_projects_invoice_and_line_amounts(monkeypatch, tmp_path) -> None:
+    from fastapi.testclient import TestClient
+
+    import app.main as main_module
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-DETAIL", "ShipmentStatus": "CLOSED"},
+            items=[{
+                "SellerSKU": "SKU-1",
+                "FulfillmentNetworkSKU": "FNSKU-1",
+                "QuantityShipped": 1,
+                "QuantityReceived": 1,
+            }],
+        )
+    invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-DETAIL", supplier_name="Supplier", invoice_number="INV-DETAIL",
+        invoice_date="2026-08-20", currency="EUR", gross_cents=1190,
+        net_cents=1000, vat_cents=190, document_path="detail.pdf", notes="Invoice note",
+    )
+    amazon_fba.add_inbound_invoice_line(
+        invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
+        title="Product", quantity=1, gross_cents=1190, net_cents=1000, vat_cents=190,
+    )
+
+    response = TestClient(main_module.app).get("/api/amazon/inbound/shipments/FBA-DETAIL")
+
+    assert response.status_code == 200
+    detail = response.json()
+    invoice_header = detail["invoices"][0]
+    assert {key: invoice_header[key] for key in (
+        "supplier_name", "invoice_number", "invoice_date", "currency", "gross_cents",
+        "net_cents", "vat_cents", "document_path", "notes",
+    )} == {
+        "supplier_name": "Supplier",
+        "invoice_number": "INV-DETAIL",
+        "invoice_date": "2026-08-20",
+        "currency": "EUR",
+        "gross_cents": 1190,
+        "net_cents": 1000,
+        "vat_cents": 190,
+        "document_path": "detail.pdf",
+        "notes": "Invoice note",
+    }
+    invoice_line = detail["invoice_lines"][0]
+    assert {key: invoice_line[key] for key in ("gross_cents", "net_cents", "vat_cents")} == {
+        "gross_cents": 1190,
+        "net_cents": 1000,
+        "vat_cents": 190,
+    }
+
+
+def test_list_inbound_shipments_hides_cancelled_and_projects_cost_status(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        for shipment_id, shipment_status in (
+            ("FBA-CANCELLED", "CANCELLED"),
+            ("FBA-MISSING", "CLOSED"),
+            ("FBA-ENTERED", "CLOSED"),
+            ("FBA-CONFIRMED", "CLOSED"),
+        ):
+            importer._upsert_inbound_shipment(
+                connection,
+                shipment={"ShipmentId": shipment_id, "ShipmentStatus": shipment_status},
+                items=[{
+                    "SellerSKU": "SKU-1",
+                    "FulfillmentNetworkSKU": "FNSKU-1",
+                    "QuantityShipped": 1,
+                    "QuantityReceived": 1,
+                }],
+            )
+    amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-ENTERED", supplier_name="Supplier", invoice_number="INV-E",
+        invoice_date="2026-08-20", currency="EUR", gross_cents=1190,
+        net_cents=1000, vat_cents=190, document_path="entered.pdf",
+    )
+    confirmed_invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-CONFIRMED", supplier_name="Supplier", invoice_number="INV-C",
+        invoice_date="2026-08-20", currency="EUR", gross_cents=1190,
+        net_cents=1000, vat_cents=190, document_path="confirmed.pdf",
+    )
+    amazon_fba.add_inbound_invoice_line(
+        invoice_id=confirmed_invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1",
+        asin="", title="Product", quantity=1, gross_cents=1190, net_cents=1000,
+        vat_cents=190,
+    )
+    amazon_fba.confirm_inbound_product_costs("FBA-CONFIRMED")
+
+    shipments = amazon_fba.list_inbound_shipments()
+
+    assert {shipment["shipment_id"] for shipment in shipments} == {
+        "FBA-MISSING", "FBA-ENTERED", "FBA-CONFIRMED",
+    }
+    assert {shipment["shipment_id"]: shipment["cost_status"] for shipment in shipments} == {
+        "FBA-MISSING": "missing",
+        "FBA-ENTERED": "entered",
+        "FBA-CONFIRMED": "confirmed",
+    }
+    assert [shipment["shipment_id"] for shipment in amazon_fba.list_inbound_shipments("CANCELLED")] == [
+        "FBA-CANCELLED"
+    ]
+
+
 def _fba_services(monkeypatch, tmp_path):
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

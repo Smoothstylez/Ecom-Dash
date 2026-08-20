@@ -493,7 +493,7 @@ def list_inbound_shipments(status: Optional[str] = None) -> list[dict[str, Any]]
     init_amazon_fba_db()
     with _connect() as connection:
         params: list[Any] = []
-        where = ""
+        where = "WHERE s.status <> 'CANCELLED'"
         if status:
             where = "WHERE s.status = ?"
             params.append(status.upper())
@@ -506,6 +506,7 @@ def list_inbound_shipments(status: Optional[str] = None) -> list[dict[str, Any]]
                 COALESCE((SELECT SUM(i.quantity_received) FROM amazon_inbound_shipment_items i WHERE i.shipment_id = s.shipment_id), 0) AS quantity_received,
                 COALESCE((SELECT COUNT(*) FROM amazon_inbound_shipment_items i WHERE i.shipment_id = s.shipment_id), 0) AS sku_count,
                 (SELECT COUNT(*) FROM amazon_inbound_invoices inv WHERE inv.shipment_id = s.shipment_id) AS invoice_count,
+                (SELECT COUNT(*) FROM amazon_inbound_cost_allocations allocation WHERE allocation.shipment_id = s.shipment_id) AS allocation_count,
                 COALESCE((SELECT SUM(c.amount_cents) FROM amazon_inbound_costs c WHERE c.shipment_id = s.shipment_id), 0) AS assigned_cost_cents,
                 (SELECT currency FROM amazon_inbound_transport_options t WHERE t.shipment_id = s.shipment_id AND t.selected = 1 LIMIT 1) AS transport_currency,
                 (SELECT quote_cents FROM amazon_inbound_transport_options t WHERE t.shipment_id = s.shipment_id AND t.selected = 1 LIMIT 1) AS transport_quote_cents
@@ -521,6 +522,12 @@ def list_inbound_shipments(status: Optional[str] = None) -> list[dict[str, Any]]
         status_info = normalize_fba_status(str(item.get("status") or ""))
         item.update(status_info)
         item["status_label"] = status_info["label"]
+        if item["allocation_count"]:
+            item["cost_status"] = "confirmed"
+        elif item["invoice_count"]:
+            item["cost_status"] = "entered"
+        else:
+            item["cost_status"] = "missing"
         result.append(item)
     return result
 
