@@ -1088,6 +1088,12 @@ class AmazonSpApiClient:
         method: str = "GET",
         body: Optional[dict[str, Any]] = None,
     ) -> dict[str, Any]:
+        bucket_key = amazon_api_bucket_key(path)
+        while True:
+            wait_seconds = reserve_amazon_api_token(bucket_key)
+            if wait_seconds <= 0:
+                break
+            time.sleep(wait_seconds)
         query = urlencode(params or {}, doseq=True)
         url = f"{SP_API_EU_ENDPOINT}{path}"
         if query:
@@ -1103,10 +1109,25 @@ class AmazonSpApiClient:
                 rate_limit = response.headers.get("x-amzn-RateLimit-Limit")
                 if rate_limit:
                     self._rate_limits[path] = rate_limit
+                    try:
+                        update_amazon_api_rate_limit(bucket_key, float(rate_limit))
+                    except ValueError:
+                        pass
                 return _as_dict(json.loads(response.read().decode("utf-8")))
         except HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")[:500]
-            raise AmazonSpApiError(f"SP-API {exc.code} for {path}: {body}") from exc
+            error = f"SP-API {exc.code} for {path}: {body}"
+            if exc.code in {429, 503}:
+                try:
+                    retry_after_seconds = float(exc.headers.get("Retry-After", ""))
+                except (TypeError, ValueError):
+                    retry_after_seconds = None
+                record_amazon_api_throttle(
+                    bucket_key,
+                    retry_after_seconds=retry_after_seconds,
+                    error=error,
+                )
+            raise AmazonSpApiError(error) from exc
         except (URLError, OSError, json.JSONDecodeError) as exc:
             raise AmazonSpApiError(f"SP-API request failed for {path}: {exc}") from exc
 

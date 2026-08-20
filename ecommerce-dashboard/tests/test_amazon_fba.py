@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 import json
+import io
+from urllib.error import HTTPError
 
 import pytest
 
@@ -718,6 +720,72 @@ def test_amazon_api_bucket_reservation_refills_and_calculates_wait(monkeypatch, 
     assert importer.reserve_amazon_api_token("catalog", now=start) == 0.0
     assert importer.reserve_amazon_api_token("catalog", now=start) == 0.5
     assert importer.reserve_amazon_api_token("catalog", now=start + timedelta(seconds=0.5)) == 0.0
+
+
+class _FakeJsonResponse:
+    def __init__(self, payload: dict, headers: dict[str, str] | None = None) -> None:
+        self._payload = payload
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+
+def _quota_error(code: int, headers: dict[str, str]) -> HTTPError:
+    return HTTPError(
+        "https://sellingpartnerapi-eu.amazon.com/test",
+        code,
+        "quota exceeded",
+        headers,
+        io.BytesIO(b'{"errors":[{"code":"QuotaExceeded"}]}'),
+    )
+
+
+def test_request_json_waits_for_bucket_before_opening_request(monkeypatch) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiConfig
+
+    client = AmazonSpApiClient(AmazonSpApiConfig("client", "secret", "refresh"))
+    waits: list[float] = []
+    monkeypatch.setattr(client, "_lwa_access_token", lambda: "token")
+    monkeypatch.setattr(importer, "reserve_amazon_api_token", lambda bucket: 2.0 if not waits else 0.0)
+    monkeypatch.setattr(importer.time, "sleep", lambda seconds: waits.append(seconds))
+    monkeypatch.setattr(importer, "urlopen", lambda request, timeout: _FakeJsonResponse({"payload": {}}))
+
+    assert client.request_json("/orders/v0/orders/ORDER-1/orderItems") == {"payload": {}}
+    assert waits == [2.0]
+
+
+def test_request_json_records_retry_after_on_quota_error(monkeypatch) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient, AmazonSpApiConfig, AmazonSpApiError
+
+    client = AmazonSpApiClient(AmazonSpApiConfig("client", "secret", "refresh"))
+    recorded: list[tuple[str, float | None, str]] = []
+    monkeypatch.setattr(client, "_lwa_access_token", lambda: "token")
+    monkeypatch.setattr(importer, "reserve_amazon_api_token", lambda bucket: 0.0)
+    monkeypatch.setattr(
+        importer,
+        "record_amazon_api_throttle",
+        lambda bucket, *, retry_after_seconds, error: recorded.append((bucket, retry_after_seconds, error)),
+    )
+
+    def urlopen_quota_error(request, timeout):
+        raise _quota_error(429, {"Retry-After": "7"})
+
+    monkeypatch.setattr(importer, "urlopen", urlopen_quota_error)
+
+    with pytest.raises(AmazonSpApiError):
+        client.request_json("/orders/v0/orders/ORDER-1/orderItems")
+
+    assert recorded[0][0] == "order_items"
+    assert recorded[0][1] == 7.0
 
 
 def test_settlement_report_line_imports_order_sales_and_fees(monkeypatch, tmp_path) -> None:
