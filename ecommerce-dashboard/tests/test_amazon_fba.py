@@ -259,6 +259,46 @@ def test_amazon_detail_projects_catalog_image_variants(monkeypatch, tmp_path) ->
     ]
 
 
+def test_invoice_line_migration_backfills_gross_from_net_and_vat(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    db_path = tmp_path / "amazon.sqlite3"
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE amazon_inbound_invoice_lines "
+            "(id TEXT PRIMARY KEY, invoice_id TEXT, seller_sku TEXT, fnsku TEXT, "
+            "asin TEXT, title TEXT, quantity INTEGER, net_cents INTEGER, vat_cents INTEGER, raw_json TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO amazon_inbound_invoice_lines VALUES "
+            "('LINE-1', 'INV-1', 'SKU-1', 'FNSKU-1', '', '', 1, 1000, 190, '{}')"
+        )
+
+    importer.init_amazon_fba_db()
+
+    with importer._connect() as connection:
+        row = connection.execute(
+            "SELECT gross_cents FROM amazon_inbound_invoice_lines WHERE id = 'LINE-1'"
+        ).fetchone()
+
+    assert row["gross_cents"] == 1190
+
+
+def test_invoice_line_rejects_gross_not_equal_to_net_plus_vat(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+
+    with pytest.raises(ValueError, match="gross_cents must equal net_cents plus vat_cents"):
+        amazon_fba.add_inbound_invoice_line(
+            invoice_id="INV-1", seller_sku="SKU-1", fnsku="FNSKU-1", asin="",
+            title="Product", quantity=1, gross_cents=1200, net_cents=1000, vat_cents=190,
+        )
+
+
 def test_invoice_lines_allocate_exact_single_sku_cost(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer
@@ -278,7 +318,7 @@ def test_invoice_lines_allocate_exact_single_sku_cost(monkeypatch, tmp_path) -> 
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=11, net_cents=11000, vat_cents=1100,
+        title="Product", quantity=11, gross_cents=12100, net_cents=11000, vat_cents=1100,
     )
 
     result = amazon_fba.confirm_inbound_product_costs("FBA-COST-1")
@@ -332,7 +372,7 @@ def test_unreceived_shipment_cannot_create_product_lot(monkeypatch, tmp_path) ->
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=11, net_cents=10000, vat_cents=1000,
+        title="Product", quantity=11, gross_cents=11000, net_cents=10000, vat_cents=1000,
     )
 
     with pytest.raises(ValueError, match="received"):
@@ -365,7 +405,7 @@ def test_confirmed_fba_lot_is_consumed_by_amazon_order_fifo(monkeypatch, tmp_pat
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=11, net_cents=11000, vat_cents=1100,
+        title="Product", quantity=11, gross_cents=12100, net_cents=11000, vat_cents=1100,
     )
     amazon_fba.confirm_inbound_product_costs("FBA-FIFO-1")
 
@@ -531,7 +571,7 @@ def test_delivered_shipment_cannot_create_fifo_lot(monkeypatch, tmp_path) -> Non
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=1, net_cents=1000, vat_cents=100,
+        title="Product", quantity=1, gross_cents=1100, net_cents=1000, vat_cents=100,
     )
 
     with pytest.raises(ValueError, match="received"):
@@ -564,7 +604,7 @@ def test_fifo_preserves_invoice_remainder_cents(monkeypatch, tmp_path) -> None:
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=3, net_cents=1001, vat_cents=100,
+        title="Product", quantity=3, gross_cents=1101, net_cents=1001, vat_cents=100,
     )
     amazon_fba.confirm_inbound_product_costs("FBA-ROUNDING-1")
 
@@ -592,14 +632,14 @@ def test_confirmed_invoice_lines_are_locked(monkeypatch, tmp_path) -> None:
     )
     amazon_fba.add_inbound_invoice_line(
         invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-        title="Product", quantity=1, net_cents=1000, vat_cents=100,
+        title="Product", quantity=1, gross_cents=1100, net_cents=1000, vat_cents=100,
     )
     amazon_fba.confirm_inbound_product_costs("FBA-LOCK-1")
 
     with pytest.raises(ValueError, match="confirmed"):
         amazon_fba.add_inbound_invoice_line(
             invoice_id=invoice["id"], seller_sku="SKU-1", fnsku="FNSKU-1", asin="ASIN-1",
-            title="Changed", quantity=1, net_cents=1200, vat_cents=120,
+            title="Changed", quantity=1, gross_cents=1320, net_cents=1200, vat_cents=120,
         )
 
 

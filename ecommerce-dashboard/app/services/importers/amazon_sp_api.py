@@ -658,6 +658,7 @@ def init_amazon_fba_db() -> None:
                 quantity INTEGER NOT NULL,
                 net_cents INTEGER NOT NULL DEFAULT 0,
                 vat_cents INTEGER NOT NULL DEFAULT 0,
+                gross_cents INTEGER NOT NULL DEFAULT 0,
                 raw_json TEXT NOT NULL DEFAULT '{}',
                 UNIQUE(invoice_id, seller_sku, fnsku),
                 FOREIGN KEY (invoice_id) REFERENCES amazon_inbound_invoices(id) ON DELETE CASCADE
@@ -874,6 +875,20 @@ def init_amazon_fba_db() -> None:
         if "allocated_cost_cents" not in allocation_columns:
             connection.execute("ALTER TABLE fifo_allocations ADD COLUMN allocated_cost_cents INTEGER NOT NULL DEFAULT 0")
             connection.execute("UPDATE fifo_allocations SET allocated_cost_cents = quantity * unit_cost_cents WHERE allocated_cost_cents = 0")
+        invoice_line_columns = {
+            str(row[1]) for row in connection.execute(
+                "PRAGMA table_info(amazon_inbound_invoice_lines)"
+            ).fetchall()
+        }
+        if "gross_cents" not in invoice_line_columns:
+            connection.execute(
+                "ALTER TABLE amazon_inbound_invoice_lines "
+                "ADD COLUMN gross_cents INTEGER NOT NULL DEFAULT 0"
+            )
+            connection.execute(
+                "UPDATE amazon_inbound_invoice_lines "
+                "SET gross_cents = net_cents + vat_cents"
+            )
         for bucket_key, (rate_per_second, burst_capacity) in _AMAZON_API_BUCKETS.items():
             connection.execute(
                 """

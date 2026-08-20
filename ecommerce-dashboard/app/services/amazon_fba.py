@@ -695,6 +695,7 @@ def add_inbound_invoice_line(
     asin: str,
     title: str,
     quantity: int,
+    gross_cents: int,
     net_cents: int,
     vat_cents: int,
 ) -> dict[str, Any]:
@@ -702,6 +703,8 @@ def add_inbound_invoice_line(
         raise ValueError("invoice line quantity must be positive")
     if net_cents < 0 or vat_cents < 0:
         raise ValueError("invoice line amounts must be non-negative")
+    if gross_cents != net_cents + vat_cents:
+        raise ValueError("gross_cents must equal net_cents plus vat_cents")
     if not seller_sku.strip() and not fnsku.strip():
         raise ValueError("invoice line requires seller SKU or FNSKU")
     init_amazon_fba_db()
@@ -720,15 +723,16 @@ def add_inbound_invoice_line(
             """
             INSERT INTO amazon_inbound_invoice_lines(
                 id, invoice_id, seller_sku, fnsku, asin, title, quantity,
-                net_cents, vat_cents, raw_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
+                gross_cents, net_cents, vat_cents, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '{}')
             ON CONFLICT(invoice_id, seller_sku, fnsku) DO UPDATE SET
                 asin=excluded.asin, title=excluded.title, quantity=excluded.quantity,
-                net_cents=excluded.net_cents, vat_cents=excluded.vat_cents
+                gross_cents=excluded.gross_cents, net_cents=excluded.net_cents,
+                vat_cents=excluded.vat_cents
             """,
             (
                 line_id, invoice_id, seller_sku.strip(), fnsku.strip(), asin.strip(),
-                title.strip(), quantity, net_cents, vat_cents,
+                title.strip(), quantity, gross_cents, net_cents, vat_cents,
             ),
         )
         connection.commit()
