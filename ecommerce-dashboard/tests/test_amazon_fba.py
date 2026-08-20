@@ -722,6 +722,57 @@ def test_amazon_api_bucket_reservation_refills_and_calculates_wait(monkeypatch, 
     assert importer.reserve_amazon_api_token("catalog", now=start + timedelta(seconds=0.5)) == 0.0
 
 
+def test_sync_amazon_fba_fetches_only_missing_order_items_newest_first(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+    from app.services.importers.amazon_sp_api import AmazonSpApiClient
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    monkeypatch.setattr(
+        importer,
+        "load_amazon_sp_api_config",
+        lambda: (importer.AmazonSpApiConfig("c", "s", "r"), []),
+    )
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_order(
+            connection,
+            {"AmazonOrderId": "COMPLETE", "MarketplaceId": "DE", "PurchaseDate": "2026-08-18T10:00:00Z"},
+        )
+        importer._upsert_order_items(
+            connection,
+            "COMPLETE",
+            [{"ASIN": "B0COMPLETE", "SellerSKU": "SKU-C"}],
+        )
+        connection.commit()
+
+    monkeypatch.setattr(
+        AmazonSpApiClient,
+        "marketplace_participations",
+        lambda self: {"payload": [{"marketplace": {"id": "DE"}, "participation": {"isParticipating": True}}]},
+    )
+    monkeypatch.setattr(
+        AmazonSpApiClient,
+        "orders",
+        lambda self, *args, **kwargs: ([
+            {"AmazonOrderId": "OLD", "MarketplaceId": "DE", "LastUpdateDate": "2026-08-18T10:00:00Z"},
+            {"AmazonOrderId": "NEW", "MarketplaceId": "DE", "LastUpdateDate": "2026-08-19T10:00:00Z"},
+            {"AmazonOrderId": "COMPLETE", "MarketplaceId": "DE", "LastUpdateDate": "2026-08-20T10:00:00Z"},
+        ], []),
+    )
+    requested: list[str] = []
+    monkeypatch.setattr(AmazonSpApiClient, "order_items", lambda self, order_id: requested.append(order_id) or [])
+
+    importer.sync_amazon_fba(
+        include_orders=True,
+        include_inventory=False,
+        include_finances=False,
+        include_inbound=False,
+        include_settlement_reports=False,
+    )
+
+    assert requested == ["NEW", "OLD"]
+
+
 class _FakeJsonResponse:
     def __init__(self, payload: dict, headers: dict[str, str] | None = None) -> None:
         self._payload = payload

@@ -1664,6 +1664,34 @@ def _upsert_order_items(
         )
 
 
+def _orders_missing_items(connection: sqlite3.Connection, orders: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    orders_by_id = {
+        _text(order.get("AmazonOrderId")): order
+        for order in orders
+        if _text(order.get("AmazonOrderId"))
+    }
+    if not orders_by_id:
+        return []
+    placeholders = ", ".join("?" for _ in orders_by_id)
+    rows = connection.execute(
+        f"""
+        SELECT o.amazon_order_id
+        FROM amazon_orders o
+        WHERE o.amazon_order_id IN ({placeholders})
+          AND NOT EXISTS (
+              SELECT 1 FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id
+          )
+        """,
+        list(orders_by_id),
+    ).fetchall()
+    missing_ids = {str(row["amazon_order_id"]) for row in rows}
+    return sorted(
+        (order for order_id, order in orders_by_id.items() if order_id in missing_ids),
+        key=lambda order: (_text(order.get("LastUpdateDate")), _text(order.get("PurchaseDate"))),
+        reverse=True,
+    )
+
+
 def _upsert_inventory_snapshot(connection: sqlite3.Connection, *, marketplace_id: str, item: dict[str, Any]) -> None:
     details = _as_dict(item.get("inventoryDetails"))
     reserved = details.get("reservedQuantity")
@@ -2409,7 +2437,8 @@ def sync_amazon_fba(
                     _save_raw_record(connection, sync_run_id=sync_run_id, resource_type="order", payload=order, external_id=_text(order.get("AmazonOrderId")))
                     _upsert_order(connection, order)
                 connection.commit()
-            for order in orders:
+                orders_needing_items = _orders_missing_items(connection, orders)
+            for order in orders_needing_items:
                 order_id = _text(order.get("AmazonOrderId"))
                 if not order_id:
                     continue
