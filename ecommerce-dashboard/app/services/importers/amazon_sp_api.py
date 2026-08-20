@@ -24,6 +24,12 @@ SP_API_EU_ENDPOINT = "https://sellingpartnerapi-eu.amazon.com"
 LWA_TOKEN_ENDPOINT = "https://api.amazon.com/auth/o2/token"
 DEFAULT_ORDER_LOOKBACK_DAYS = 30
 PRIMARY_EU_FBA_MARKETPLACE_ID = "A1PA6795UKMFR9"
+_AMAZON_API_BUCKETS = {
+    "orders": (0.0167, 20.0),
+    "order_items": (0.5, 30.0),
+    "catalog": (2.0, 2.0),
+    "default": (1.0, 1.0),
+}
 
 
 class AmazonSpApiError(RuntimeError):
@@ -39,6 +45,13 @@ class AmazonSpApiConfig:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _parse_utc(value: Any) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).astimezone(timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 def _stable_id(prefix: str, value: str) -> str:
@@ -389,6 +402,17 @@ def init_amazon_fba_db() -> None:
                 marketplace_mode TEXT NOT NULL DEFAULT 'auto',
                 selected_marketplace_ids TEXT NOT NULL DEFAULT '[]',
                 updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS amazon_api_rate_limits (
+                bucket_key TEXT PRIMARY KEY,
+                rate_per_second REAL NOT NULL,
+                burst_capacity REAL NOT NULL,
+                tokens REAL NOT NULL,
+                updated_at TEXT NOT NULL,
+                blocked_until TEXT,
+                last_throttle_at TEXT,
+                last_throttle_error TEXT NOT NULL DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS amazon_orders (
@@ -843,6 +867,15 @@ def init_amazon_fba_db() -> None:
         if "allocated_cost_cents" not in allocation_columns:
             connection.execute("ALTER TABLE fifo_allocations ADD COLUMN allocated_cost_cents INTEGER NOT NULL DEFAULT 0")
             connection.execute("UPDATE fifo_allocations SET allocated_cost_cents = quantity * unit_cost_cents WHERE allocated_cost_cents = 0")
+        for bucket_key, (rate_per_second, burst_capacity) in _AMAZON_API_BUCKETS.items():
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO amazon_api_rate_limits(
+                    bucket_key, rate_per_second, burst_capacity, tokens, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (bucket_key, rate_per_second, burst_capacity, burst_capacity, _utc_now()),
+            )
         connection.commit()
 
 
@@ -872,6 +905,143 @@ def load_amazon_sp_api_config() -> tuple[Optional[AmazonSpApiConfig], list[str]]
     if missing:
         return None, missing
     return AmazonSpApiConfig(client_id=client_id, client_secret=client_secret, refresh_token=refresh_token), []
+
+
+def amazon_api_bucket_key(path: str) -> str:
+    if path == "/orders/v0/orders":
+        return "orders"
+    if path.startswith("/orders/v0/orders/") and path.endswith("/orderItems"):
+        return "order_items"
+    if path.startswith("/catalog/"):
+        return "catalog"
+    return "default"
+
+
+def _bucket_now(now: Optional[datetime] = None) -> datetime:
+    return (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
+
+
+def _refilled_bucket_tokens(row: sqlite3.Row, current: datetime) -> float:
+    updated_at = _parse_utc(row["updated_at"])
+    elapsed = max((current - updated_at).total_seconds(), 0.0) if updated_at else 0.0
+    return min(
+        float(row["burst_capacity"]),
+        float(row["tokens"]) + elapsed * float(row["rate_per_second"]),
+    )
+
+
+def reserve_amazon_api_token(bucket_key: str, *, now: Optional[datetime] = None) -> float:
+    if bucket_key not in _AMAZON_API_BUCKETS:
+        bucket_key = "default"
+    init_amazon_fba_db()
+    current = _bucket_now(now)
+    current_iso = current.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT * FROM amazon_api_rate_limits WHERE bucket_key = ?", (bucket_key,)
+        ).fetchone()
+        if row is None:
+            rate_per_second, burst_capacity = _AMAZON_API_BUCKETS[bucket_key]
+            connection.execute(
+                """
+                INSERT INTO amazon_api_rate_limits(
+                    bucket_key, rate_per_second, burst_capacity, tokens, updated_at
+                ) VALUES (?, ?, ?, ?, ?)
+                """,
+                (bucket_key, rate_per_second, burst_capacity, burst_capacity, current_iso),
+            )
+            row = connection.execute(
+                "SELECT * FROM amazon_api_rate_limits WHERE bucket_key = ?", (bucket_key,)
+            ).fetchone()
+        blocked_until = _parse_utc(row["blocked_until"])
+        if blocked_until is not None and blocked_until > current:
+            connection.commit()
+            return (blocked_until - current).total_seconds()
+        tokens = _refilled_bucket_tokens(row, current)
+        if tokens >= 1.0:
+            connection.execute(
+                "UPDATE amazon_api_rate_limits SET tokens = ?, updated_at = ? WHERE bucket_key = ?",
+                (tokens - 1.0, current_iso, bucket_key),
+            )
+            connection.commit()
+            return 0.0
+        rate_per_second = float(row["rate_per_second"])
+        connection.execute(
+            "UPDATE amazon_api_rate_limits SET tokens = ?, updated_at = ? WHERE bucket_key = ?",
+            (tokens, current_iso, bucket_key),
+        )
+        connection.commit()
+    return (1.0 - tokens) / rate_per_second if rate_per_second > 0 else 60.0
+
+
+def update_amazon_api_rate_limit(bucket_key: str, rate_per_second: float) -> None:
+    if bucket_key not in _AMAZON_API_BUCKETS or rate_per_second <= 0:
+        return
+    init_amazon_fba_db()
+    with _connect() as connection:
+        connection.execute(
+            "UPDATE amazon_api_rate_limits SET rate_per_second = ? WHERE bucket_key = ?",
+            (rate_per_second, bucket_key),
+        )
+        connection.commit()
+
+
+def record_amazon_api_throttle(
+    bucket_key: str,
+    *,
+    retry_after_seconds: Optional[float],
+    error: str,
+    now: Optional[datetime] = None,
+) -> None:
+    if bucket_key not in _AMAZON_API_BUCKETS:
+        bucket_key = "default"
+    init_amazon_fba_db()
+    current = _bucket_now(now)
+    current_iso = current.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    with _connect() as connection:
+        connection.execute("BEGIN IMMEDIATE")
+        row = connection.execute(
+            "SELECT blocked_until FROM amazon_api_rate_limits WHERE bucket_key = ?", (bucket_key,)
+        ).fetchone()
+        blocked_until = _parse_utc(row["blocked_until"] if row else None)
+        existing_delay = max((blocked_until - current).total_seconds(), 0.0) if blocked_until else 0.0
+        delay = retry_after_seconds if retry_after_seconds and retry_after_seconds > 0 else min(
+            max(1.5, existing_delay * 2), 60.0
+        )
+        next_allowed = current + timedelta(seconds=delay)
+        connection.execute(
+            """
+            UPDATE amazon_api_rate_limits
+            SET tokens = 0, updated_at = ?, blocked_until = ?, last_throttle_at = ?, last_throttle_error = ?
+            WHERE bucket_key = ?
+            """,
+            (
+                current_iso,
+                next_allowed.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                current_iso,
+                error[:500],
+                bucket_key,
+            ),
+        )
+        connection.commit()
+
+
+def get_amazon_api_rate_limit_status(*, now: Optional[datetime] = None) -> dict[str, dict[str, Any]]:
+    init_amazon_fba_db()
+    current = _bucket_now(now)
+    with _connect() as connection:
+        rows = connection.execute("SELECT * FROM amazon_api_rate_limits ORDER BY bucket_key").fetchall()
+    return {
+        str(row["bucket_key"]): {
+            "rate_per_second": float(row["rate_per_second"]),
+            "available_tokens": round(_refilled_bucket_tokens(row, current), 3),
+            "blocked_until": str(row["blocked_until"]) if row["blocked_until"] else None,
+            "last_throttle_at": str(row["last_throttle_at"]) if row["last_throttle_at"] else None,
+            "last_throttle_error": str(row["last_throttle_error"] or ""),
+        }
+        for row in rows
+    }
 
 
 class AmazonSpApiClient:

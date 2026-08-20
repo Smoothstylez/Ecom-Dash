@@ -695,6 +695,31 @@ def test_catalog_item_images_retries_quota_exceeded(monkeypatch) -> None:
     assert sleeps == [1.5]
 
 
+def test_amazon_api_bucket_key_groups_dynamic_order_item_paths() -> None:
+    from app.services.importers.amazon_sp_api import amazon_api_bucket_key
+
+    assert amazon_api_bucket_key("/orders/v0/orders/111-222/orderItems") == "order_items"
+    assert amazon_api_bucket_key("/orders/v0/orders/333-444/orderItems") == "order_items"
+    assert amazon_api_bucket_key("/orders/v0/orders") == "orders"
+    assert amazon_api_bucket_key("/catalog/2022-04-01/items/B0TEST") == "catalog"
+    assert amazon_api_bucket_key("/fba/inventory/v1/summaries") == "default"
+
+
+def test_amazon_api_bucket_reservation_refills_and_calculates_wait(monkeypatch, tmp_path) -> None:
+    from datetime import datetime, timedelta, timezone
+
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    start = datetime(2026, 8, 20, tzinfo=timezone.utc)
+
+    assert importer.reserve_amazon_api_token("catalog", now=start) == 0.0
+    assert importer.reserve_amazon_api_token("catalog", now=start) == 0.0
+    assert importer.reserve_amazon_api_token("catalog", now=start) == 0.5
+    assert importer.reserve_amazon_api_token("catalog", now=start + timedelta(seconds=0.5)) == 0.0
+
+
 def test_settlement_report_line_imports_order_sales_and_fees(monkeypatch, tmp_path) -> None:
     import app.services.importers.amazon_sp_api as importer
 
