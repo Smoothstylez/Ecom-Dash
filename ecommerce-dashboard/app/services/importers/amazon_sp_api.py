@@ -140,7 +140,14 @@ def extract_modern_financial_breakdown(transaction: dict[str, Any]) -> dict[str,
                 tax_cents += abs(amount_cents)
             elif scope == "fees" and normalized_type not in ignored_fee_types:
                 if amount_cents:
-                    fees.append({"type": node_type, "amount_cents": abs(amount_cents)})
+                    fee = {"type": node_type, "amount_cents": abs(amount_cents)}
+                    children = [_as_dict(child) for child in _as_list(node.get("breakdowns"))]
+                    base = next((child for child in children if _text(child.get("breakdownType")).lower() == "base"), None)
+                    tax = next((child for child in children if _text(child.get("breakdownType")).lower() == "tax"), None)
+                    if base is not None and tax is not None:
+                        fee["net_cents"] = abs(_amount_cents(_as_dict(base.get("breakdownAmount")).get("currencyAmount")))
+                        fee["vat_cents"] = abs(_amount_cents(_as_dict(tax.get("breakdownAmount")).get("currencyAmount")))
+                    fees.append(fee)
             next_scope = scope
             if normalized_type == "sales":
                 sales_cents += amount_cents

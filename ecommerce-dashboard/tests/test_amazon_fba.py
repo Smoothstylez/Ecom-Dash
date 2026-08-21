@@ -270,8 +270,14 @@ def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> No
             ]},
             {"breakdownType": "Expenses", "breakdownAmount": {"currencyAmount": -33.00, "currencyCode": "EUR"}, "breakdowns": [
                 {"breakdownType": "AmazonFees", "breakdownAmount": {"currencyAmount": -33.00, "currencyCode": "EUR"}, "breakdowns": [
-                    {"breakdownType": "Commission", "breakdownAmount": {"currencyAmount": -26.59, "currencyCode": "EUR"}},
-                    {"breakdownType": "FBAPerUnitFulfillmentFee", "breakdownAmount": {"currencyAmount": -6.41, "currencyCode": "EUR"}},
+                    {"breakdownType": "Commission", "breakdownAmount": {"currencyAmount": -26.59, "currencyCode": "EUR"}, "breakdowns": [
+                        {"breakdownType": "Base", "breakdownAmount": {"currencyAmount": -22.34, "currencyCode": "EUR"}},
+                        {"breakdownType": "Tax", "breakdownAmount": {"currencyAmount": -4.25, "currencyCode": "EUR"}},
+                    ]},
+                    {"breakdownType": "FBAPerUnitFulfillmentFee", "breakdownAmount": {"currencyAmount": -6.41, "currencyCode": "EUR"}, "breakdowns": [
+                        {"breakdownType": "Base", "breakdownAmount": {"currencyAmount": -5.39, "currencyCode": "EUR"}},
+                        {"breakdownType": "Tax", "breakdownAmount": {"currencyAmount": -1.02, "currencyCode": "EUR"}},
+                    ]},
                 ]}
             ]},
         ],
@@ -285,8 +291,8 @@ def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> No
         "sales_cents": 14890,
         "tax_cents": 2377,
         "fees": [
-            {"type": "Commission", "amount_cents": 2659},
-            {"type": "FBAPerUnitFulfillmentFee", "amount_cents": 641},
+            {"type": "Commission", "amount_cents": 2659, "net_cents": 2234, "vat_cents": 425},
+            {"type": "FBAPerUnitFulfillmentFee", "amount_cents": 641, "net_cents": 539, "vat_cents": 102},
         ],
         "net_cents": 11590,
         "financial_finality": "deferred",
