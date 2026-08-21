@@ -152,10 +152,6 @@ function shipmentCostStatusLabel(costStatus: InboundShipment["cost_status"]) {
   return "Rechnung fehlt";
 }
 
-function draftKey(file: File) {
-  return `${file.name}:${file.size}:${file.lastModified}`;
-}
-
 function parseEuroCents(value: string) {
   const normalized = value.trim().replace(",", ".");
   if (!normalized) {
@@ -185,6 +181,7 @@ export function AmazonPage() {
   const [invoiceMessage, setInvoiceMessage] = useState("");
   const [error, setError] = useState("");
   const invoiceFileInputRef = useRef<HTMLInputElement>(null);
+  const invoiceDraftIdRef = useRef(0);
 
   async function refreshAmazonData(signal?: AbortSignal) {
     const controller = signal ? null : new AbortController();
@@ -252,11 +249,13 @@ export function AmazonPage() {
     setInvoiceLineDrafts({});
   });
 
-  async function openShipment(shipmentId: string) {
+  async function openShipment(shipmentId: string, preserveDrafts = false) {
     setShipmentLoading(true);
     setInvoiceMessage("");
-    setInvoiceDrafts({});
-    setInvoiceLineDrafts({});
+    if (!preserveDrafts) {
+      setInvoiceDrafts({});
+      setInvoiceLineDrafts({});
+    }
     try {
       const detail = await fetchJson<InboundShipmentDetail>(buildDashboardApiUrl(`/api/amazon/inbound/shipments/${encodeURIComponent(shipmentId)}`));
       setSelectedShipment(detail);
@@ -275,10 +274,8 @@ export function AmazonPage() {
     setInvoiceDrafts((current) => {
       const next = { ...current };
       selectedFiles.forEach((file) => {
-        const key = draftKey(file);
-        if (!next[key]) {
-          next[key] = { file, supplier: "", invoiceNumber: "", gross: "", net: "", vat: "", status: "idle", error: "" };
-        }
+        const key = `invoice-draft-${invoiceDraftIdRef.current++}`;
+        next[key] = { file, supplier: "", invoiceNumber: "", gross: "", net: "", vat: "", status: "idle", error: "" };
       });
       return next;
     });
@@ -336,6 +333,7 @@ export function AmazonPage() {
     const form = new FormData();
     form.append("file", draft.file);
     form.append("supplier_name", draft.supplier.trim());
+    form.append("invoice_number", draft.invoiceNumber.trim());
     form.append("gross_cents", String(grossCents));
     form.append("net_cents", String(netCents));
     form.append("vat_cents", String(vatCents));
@@ -346,7 +344,7 @@ export function AmazonPage() {
       });
       removeInvoiceDraft(key);
       setInvoiceMessage("Rechnung gespeichert.");
-      await openShipment(selectedShipment.shipment.shipment_id);
+      await openShipment(selectedShipment.shipment.shipment_id, true);
       setShipments((current) => current.map((shipment) => shipment.shipment_id === selectedShipment.shipment.shipment_id ? { ...shipment, invoice_count: shipment.invoice_count + 1 } : shipment));
     } catch (requestError) {
       updateInvoiceDraft(key, { status: "error", error: requestError instanceof Error ? requestError.message : "Rechnung konnte nicht gespeichert werden." });
