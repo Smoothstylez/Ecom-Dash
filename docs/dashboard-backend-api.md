@@ -953,7 +953,14 @@ The scheduler uses short delta windows and per-task backoff on Amazon `429`/`503
   `quantity` (at least 1), `gross_cents`, `net_cents`, and `vat_cents` (all
   non-negative); optional fields are `seller_sku`, `fnsku`, `asin`, and `title`.
   `gross_cents` must equal `net_cents + vat_cents`, otherwise the endpoint
-  returns `400`.
+  returns `400`. One line covers one shipment SKU/FNSKU, and all invoice lines
+  selected for an invoice must sum exactly to that invoice header's
+  `gross_cents`, `net_cents`, and `vat_cents`.
+- Cost confirmation accepts either one combined supplier invoice covering the
+  shipment or multiple invoices that are specific to individual shipment SKUs.
+  Each invoice header and its selected lines must provide gross, net, and VAT
+  totals, and the selected lines' sums must match the corresponding header
+  before allocations can be confirmed.
 
 ### Amazon FBA SKU Inventory
 
