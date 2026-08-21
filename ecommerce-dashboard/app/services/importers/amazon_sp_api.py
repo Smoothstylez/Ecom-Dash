@@ -470,6 +470,10 @@ def init_amazon_fba_db() -> None:
                 settlement_id TEXT,
                 posted_date TEXT,
                 financial_finality TEXT NOT NULL DEFAULT 'pending',
+                transaction_id TEXT,
+                lifecycle_id TEXT,
+                deferral_reason TEXT,
+                maturity_date TEXT,
                 currency TEXT NOT NULL DEFAULT 'EUR',
                 sales_cents INTEGER NOT NULL DEFAULT 0,
                 fees_cents INTEGER NOT NULL DEFAULT 0,
@@ -803,6 +807,17 @@ def init_amazon_fba_db() -> None:
         }
         if "inventory_eligible_at" not in shipment_columns:
             connection.execute("ALTER TABLE amazon_inbound_shipments ADD COLUMN inventory_eligible_at TEXT")
+        finance_columns = {
+            str(row[1]) for row in connection.execute("PRAGMA table_info(amazon_financial_events)").fetchall()
+        }
+        for column, definition in (
+            ("transaction_id", "TEXT"),
+            ("lifecycle_id", "TEXT"),
+            ("deferral_reason", "TEXT"),
+            ("maturity_date", "TEXT"),
+        ):
+            if column not in finance_columns:
+                connection.execute(f"ALTER TABLE amazon_financial_events ADD COLUMN {column} {definition}")
         connection.execute(
             "UPDATE amazon_inbound_shipments SET inventory_eligible_at = updated_at WHERE inventory_eligible_at IS NULL AND status IN ('RECEIVING', 'CLOSED')"
         )
@@ -2063,6 +2078,12 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
             order_id = identifiers.get("ORDER_ID", "")
             if not order_id:
                 continue
+            deferred_context = next(
+                (context for context in (_as_dict(value) for value in _as_list(payload.get("contexts")))
+                if _text(context.get("contextType")) == "DeferredContext"),
+                {},
+            )
+            lifecycle_id = identifiers.get("DEFERRED_TRANSACTION_ID") or transaction_id
             if connection.execute(
                 "SELECT 1 FROM amazon_orders WHERE amazon_order_id = ?", (order_id,)
             ).fetchone() is None:
@@ -2097,12 +2118,15 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                 """
                 INSERT INTO amazon_financial_events(
                     id, event_type, amazon_order_id, settlement_id, posted_date,
-                    financial_finality, currency, sales_cents, fees_cents, net_cents, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    financial_finality, transaction_id, lifecycle_id, deferral_reason, maturity_date,
+                    currency, sales_cents, fees_cents, net_cents, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     event_type=excluded.event_type, amazon_order_id=excluded.amazon_order_id,
                     settlement_id=excluded.settlement_id, posted_date=excluded.posted_date,
-                    financial_finality=excluded.financial_finality, currency=excluded.currency,
+                    financial_finality=excluded.financial_finality, transaction_id=excluded.transaction_id,
+                    lifecycle_id=excluded.lifecycle_id, deferral_reason=excluded.deferral_reason,
+                    maturity_date=excluded.maturity_date, currency=excluded.currency,
                     sales_cents=excluded.sales_cents, fees_cents=excluded.fees_cents,
                     net_cents=excluded.net_cents, raw_json=excluded.raw_json
                 """,
@@ -2113,6 +2137,10 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                     identifiers.get("SETTLEMENT_ID") or None,
                     _text(payload.get("postedDate")) or None,
                     finality,
+                    transaction_id,
+                    lifecycle_id,
+                    _text(deferred_context.get("deferralReason")) or None,
+                    _text(deferred_context.get("maturityDate")) or None,
                     currency,
                     sales_cents,
                     expense_cents,

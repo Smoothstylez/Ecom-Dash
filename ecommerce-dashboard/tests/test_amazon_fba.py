@@ -197,6 +197,51 @@ def test_deferred_released_finance_transaction_is_released(monkeypatch, tmp_path
     assert finality == "released"
 
 
+def test_modern_finance_persists_shared_deferred_lifecycle_metadata(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    common = {
+        "transactionType": "Shipment",
+        "totalAmount": {"currencyAmount": 10, "currencyCode": "EUR"},
+        "relatedIdentifiers": [{"relatedIdentifierName": "ORDER_ID", "relatedIdentifierValue": "ORDER-LIFECYCLE-1"}],
+        "breakdowns": [],
+    }
+    importer.sync_modern_financial_transactions([
+        {
+            **common,
+            "transactionId": "TX-DEFERRED",
+            "transactionStatus": "DEFERRED_RELEASED",
+            "postedDate": "2026-08-20T10:00:00Z",
+            "contexts": [{"contextType": "DeferredContext", "deferralReason": "DD7", "maturityDate": "2026-08-27T10:00:00Z"}],
+            "relatedIdentifiers": [
+                {"relatedIdentifierName": "ORDER_ID", "relatedIdentifierValue": "ORDER-LIFECYCLE-1"},
+                {"relatedIdentifierName": "RELEASE_TRANSACTION_ID", "relatedIdentifierValue": "TX-RELEASE"},
+            ],
+        },
+        {
+            **common,
+            "transactionId": "TX-RELEASE",
+            "transactionStatus": "RELEASED",
+            "postedDate": "2026-08-27T10:00:00Z",
+            "relatedIdentifiers": [
+                {"relatedIdentifierName": "ORDER_ID", "relatedIdentifierValue": "ORDER-LIFECYCLE-1"},
+                {"relatedIdentifierName": "DEFERRED_TRANSACTION_ID", "relatedIdentifierValue": "TX-DEFERRED"},
+            ],
+        },
+    ])
+
+    with importer._connect() as connection:
+        rows = connection.execute(
+            "SELECT transaction_id, lifecycle_id, deferral_reason, maturity_date FROM amazon_financial_events ORDER BY posted_date"
+        ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("TX-DEFERRED", "TX-DEFERRED", "DD7", "2026-08-27T10:00:00Z"),
+        ("TX-RELEASE", "TX-DEFERRED", None, None),
+    ]
+
+
 def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer
