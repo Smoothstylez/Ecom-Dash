@@ -659,7 +659,7 @@ export function AmazonPage() {
             <button
               type="button"
               className="button button-primary"
-              disabled={!selectedShipment.invoices.length || selectedShipment.invoice_lines.length !== selectedShipment.items.length || !["RECEIVING", "CLOSED", "DELIVERED"].includes(selectedShipment.shipment.status)}
+              disabled={!selectedShipment.invoices.length || selectedShipment.invoice_lines.length !== selectedShipment.items.filter((item) => item.quantity_received > 0).length || !["RECEIVING", "CLOSED"].includes(selectedShipment.shipment.status)}
               onClick={() => void confirmProductCosts()}
             >
               Kosten bestaetigen und FIFO-Lots erzeugen

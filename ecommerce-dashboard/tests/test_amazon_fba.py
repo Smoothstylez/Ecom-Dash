@@ -889,6 +889,58 @@ def test_delivered_shipment_cannot_create_fifo_lot(monkeypatch, tmp_path) -> Non
         amazon_fba.confirm_inbound_product_costs("FBA-DELIVERED-1")
 
 
+def test_partially_received_shipment_confirms_only_received_sku_costs(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-PARTIAL-1", "ShipmentStatus": "RECEIVING"},
+            items=[
+                {"SellerSKU": "SKU-RECEIVED", "FulfillmentNetworkSKU": "FNSKU-RECEIVED", "QuantityShipped": 2, "QuantityReceived": 2},
+                {"SellerSKU": "SKU-PENDING", "FulfillmentNetworkSKU": "FNSKU-PENDING", "QuantityShipped": 3, "QuantityReceived": 0},
+            ],
+        )
+    invoice = amazon_fba.add_inbound_invoice(
+        shipment_id="FBA-PARTIAL-1", supplier_name="Supplier", invoice_number="INV-PARTIAL",
+        invoice_date="2026-08-21", currency="EUR", gross_cents=1190, net_cents=1000,
+        vat_cents=190, document_path="partial.pdf",
+    )
+    amazon_fba.add_inbound_invoice_line(
+        invoice_id=invoice["id"], seller_sku="SKU-RECEIVED", fnsku="FNSKU-RECEIVED", asin="",
+        title="Received", quantity=2, gross_cents=1190, net_cents=1000, vat_cents=190,
+    )
+
+    result = amazon_fba.confirm_inbound_product_costs("FBA-PARTIAL-1")
+
+    assert [lot["seller_sku"] for lot in result["lots"]] == ["SKU-RECEIVED"]
+    assert result["lots"][0]["available_quantity"] == 2
+
+
+def test_inbound_invoice_rejects_mismatched_gross_net_and_vat(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-HEADER-1", "ShipmentStatus": "CLOSED"},
+            items=[],
+        )
+
+    with pytest.raises(ValueError, match="gross_cents must equal net_cents plus vat_cents"):
+        amazon_fba.add_inbound_invoice(
+            shipment_id="FBA-HEADER-1", supplier_name="Supplier", invoice_number="INV-HEADER",
+            invoice_date="2026-08-21", currency="EUR", gross_cents=1000, net_cents=900,
+            vat_cents=50, document_path="header.pdf",
+        )
+
+
 def test_fifo_preserves_invoice_remainder_cents(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

@@ -666,6 +666,10 @@ def add_inbound_invoice(
 ) -> dict[str, Any]:
     if not supplier_name.strip():
         raise ValueError("supplier_name is required")
+    if gross_cents < 0 or net_cents < 0 or vat_cents < 0:
+        raise ValueError("invoice amounts must be non-negative")
+    if gross_cents != net_cents + vat_cents:
+        raise ValueError("gross_cents must equal net_cents plus vat_cents")
     init_amazon_fba_db()
     invoice_id = str(uuid.uuid4())
     with _connect() as connection:
@@ -803,9 +807,10 @@ def confirm_inbound_product_costs(shipment_id: str) -> dict[str, Any]:
             if sum(int(line["vat_cents"]) for line in invoice_lines) != int(invoice["vat_cents"]):
                 raise ValueError("invoice line VAT total must match invoice VAT total")
 
+        received_items = [item for item in items if int(item["quantity_received"] or 0) > 0]
         items_by_key = {
             (str(item["seller_sku"] or ""), str(item["fnsku"] or "")): item
-            for item in items
+            for item in received_items
         }
         lines_by_sku: dict[tuple[str, str], list[sqlite3.Row]] = {}
         for line in lines:
