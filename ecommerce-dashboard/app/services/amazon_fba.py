@@ -1045,6 +1045,8 @@ def get_amazon_finance_overview() -> dict[str, Any]:
 
     events: list[dict[str, Any]] = []
     totals_by_currency: dict[str, dict[str, int]] = {}
+    operational_totals_by_currency: dict[str, dict[str, int]] = {}
+    released_totals_by_currency: dict[str, dict[str, int]] = {}
     for event_row in event_rows:
         event = dict(event_row)
         event["components"] = components_by_event.get(str(event["id"]), [])
@@ -1055,6 +1057,20 @@ def get_amazon_finance_overview() -> dict[str, Any]:
                 for fee in breakdown["fees"]
             ]
         currency = str(event["currency"] or "EUR").upper()
+        breakdown = extract_modern_financial_breakdown(_raw_json(event.get("raw_json"))) if str(event.get("event_type") or "").startswith("ModernTransaction:") else None
+        sales_net_cents = (int(breakdown["sales_cents"]) - int(breakdown["tax_cents"])) if breakdown else int(event["sales_cents"] or 0)
+        fees_net_cents = sum(int(fee.get("net_cents") or 0) for fee in (breakdown or {}).get("fees", []))
+        fees_vat_cents = sum(int(fee.get("vat_cents") or 0) for fee in (breakdown or {}).get("fees", []))
+        event["sales_net_cents"] = sales_net_cents
+        event["fees_net_cents"] = fees_net_cents
+        event["fees_vat_cents"] = fees_vat_cents
+        for aggregate in (operational_totals_by_currency, released_totals_by_currency if event["financial_finality"] == "released" else None):
+            if aggregate is None:
+                continue
+            finance_totals = aggregate.setdefault(currency, {"sales_net_cents": 0, "fees_net_cents": 0, "fees_vat_cents": 0})
+            finance_totals["sales_net_cents"] += sales_net_cents
+            finance_totals["fees_net_cents"] += fees_net_cents
+            finance_totals["fees_vat_cents"] += fees_vat_cents
         totals = totals_by_currency.setdefault(currency, {"sales_cents": 0, "fees_cents": 0, "adjustments_cents": 0})
         totals["sales_cents"] += int(event["sales_cents"] or 0)
         totals["fees_cents"] += int(event["fees_cents"] or 0)
@@ -1065,6 +1081,8 @@ def get_amazon_finance_overview() -> dict[str, Any]:
         totals["net_cents"] = totals["sales_cents"] - totals["fees_cents"] + totals["adjustments_cents"]
     return {
         "totals_by_currency": totals_by_currency,
+        "operational_totals_by_currency": operational_totals_by_currency,
+        "released_totals_by_currency": released_totals_by_currency,
         "fba_inbound_transport_cents": fba_inbound_transport_cents,
         "events": events,
     }

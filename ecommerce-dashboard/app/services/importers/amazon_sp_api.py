@@ -825,6 +825,27 @@ def init_amazon_fba_db() -> None:
         ):
             if column not in finance_columns:
                 connection.execute(f"ALTER TABLE amazon_financial_events ADD COLUMN {column} {definition}")
+        legacy_finance_rows = connection.execute(
+            "SELECT id, raw_json FROM amazon_financial_events "
+            "WHERE event_type LIKE 'ModernTransaction:%' AND lifecycle_id IS NULL"
+        ).fetchall()
+        for row in legacy_finance_rows:
+            payload = _as_dict(json.loads(str(row["raw_json"] or "{}")))
+            transaction_id = _text(payload.get("transactionId"))
+            identifiers = {
+                _text(_as_dict(identifier).get("relatedIdentifierName")): _text(_as_dict(identifier).get("relatedIdentifierValue"))
+                for identifier in _as_list(payload.get("relatedIdentifiers"))
+            }
+            deferred_context = next(
+                (context for context in (_as_dict(value) for value in _as_list(payload.get("contexts")))
+                if _text(context.get("contextType")) == "DeferredContext"),
+                {},
+            )
+            connection.execute(
+                "UPDATE amazon_financial_events SET transaction_id = ?, lifecycle_id = ?, deferral_reason = ?, maturity_date = ? WHERE id = ?",
+                (transaction_id or None, identifiers.get("DEFERRED_TRANSACTION_ID") or transaction_id or str(row["id"]),
+                 _text(deferred_context.get("deferralReason")) or None, _text(deferred_context.get("maturityDate")) or None, row["id"]),
+            )
         connection.execute(
             "UPDATE amazon_inbound_shipments SET inventory_eligible_at = updated_at WHERE inventory_eligible_at IS NULL AND status IN ('RECEIVING', 'CLOSED')"
         )

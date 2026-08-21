@@ -246,6 +246,31 @@ def test_modern_finance_persists_shared_deferred_lifecycle_metadata(monkeypatch,
     assert overview["events"][0]["financial_finality"] == "released"
 
 
+def test_finance_overview_separates_operational_and_released_totals(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    transactions = []
+    for transaction_id, status in (("TX-OPERATIONAL", "DEFERRED"), ("TX-RELEASED", "RELEASED")):
+        transactions.append({
+            "transactionType": "Shipment", "transactionId": transaction_id, "transactionStatus": status,
+            "postedDate": "2026-08-21T10:00:00Z", "totalAmount": {"currencyAmount": 90, "currencyCode": "EUR"},
+            "relatedIdentifiers": [{"relatedIdentifierName": "ORDER_ID", "relatedIdentifierValue": f"ORDER-{transaction_id}"}],
+            "breakdowns": [
+                {"breakdownType": "Sales", "breakdownAmount": {"currencyAmount": 119, "currencyCode": "EUR"}, "breakdowns": [{"breakdownType": "Tax", "breakdownAmount": {"currencyAmount": 19, "currencyCode": "EUR"}}]},
+                {"breakdownType": "Expenses", "breakdownAmount": {"currencyAmount": -29, "currencyCode": "EUR"}, "breakdowns": [{"breakdownType": "AmazonFees", "breakdowns": [{"breakdownType": "Commission", "breakdownAmount": {"currencyAmount": -29, "currencyCode": "EUR"}, "breakdowns": [{"breakdownType": "Base", "breakdownAmount": {"currencyAmount": -24.37, "currencyCode": "EUR"}}, {"breakdownType": "Tax", "breakdownAmount": {"currencyAmount": -4.63, "currencyCode": "EUR"}}]}]}]},
+            ],
+        })
+    importer.sync_modern_financial_transactions(transactions)
+
+    overview = amazon_fba.get_amazon_finance_overview()
+
+    assert overview["operational_totals_by_currency"]["EUR"] == {"sales_net_cents": 20000, "fees_net_cents": 4874, "fees_vat_cents": 926}
+    assert overview["released_totals_by_currency"]["EUR"] == {"sales_net_cents": 10000, "fees_net_cents": 2437, "fees_vat_cents": 463}
+
+
 def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

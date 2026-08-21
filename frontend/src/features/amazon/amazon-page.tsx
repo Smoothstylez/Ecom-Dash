@@ -46,6 +46,8 @@ type FinanceEvent = {
 
 type FinanceOverview = {
   totals_by_currency?: Record<string, Record<string, number>>;
+  operational_totals_by_currency?: Record<string, { sales_net_cents: number; fees_net_cents: number; fees_vat_cents: number }>;
+  released_totals_by_currency?: Record<string, { sales_net_cents: number; fees_net_cents: number; fees_vat_cents: number }>;
   events?: FinanceEvent[];
 };
 
@@ -421,8 +423,10 @@ export function AmazonPage() {
     <section className="page" aria-label="Amazon FBA">
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="kpi-grid">
-        <article className="kpi-card"><span>Verkaufserloese (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.sales_cents || 0)}</strong><small>aus Amazon-Finanzereignissen</small></article>
-        <article className="kpi-card"><span>Amazon-Gebuehren (EUR)</span><strong>{formatMoneyFromCents(finance?.totals_by_currency?.EUR?.fees_cents || 0)}</strong><small>inklusive FBA-Gebuehren</small></article>
+        <article className="kpi-card"><span>Operativer Netto-Umsatz (EUR)</span><strong>{formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.sales_net_cents || 0)}</strong><small>inklusive vorläufiger Deferred-Verkäufe</small></article>
+        <article className="kpi-card"><span>Operative Amazon-Gebühren netto</span><strong>{formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.fees_net_cents || 0)}</strong><small>Gebühren-USt. separat: {formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.fees_vat_cents || 0)}</small></article>
+        <article className="kpi-card"><span>Freigegebener Netto-Umsatz (EUR)</span><strong>{formatMoneyFromCents(finance?.released_totals_by_currency?.EUR?.sales_net_cents || 0)}</strong><small>RELEASED und DEFERRED_RELEASED</small></article>
+        <article className="kpi-card"><span>Freigegebene Gebühren netto</span><strong>{formatMoneyFromCents(finance?.released_totals_by_currency?.EUR?.fees_net_cents || 0)}</strong><small>für Settlement verfügbar, nicht zwingend Bankeingang</small></article>
       </div>
       <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: "1rem" }}>
         <button
