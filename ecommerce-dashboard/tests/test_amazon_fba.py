@@ -177,6 +177,26 @@ def test_modern_finance_transaction_projects_order_sales_and_fees(monkeypatch, t
     assert tuple(event) == ("ORDER-FINANCE-1", "deferred", 14890, 3300, 11590)
 
 
+def test_deferred_released_finance_transaction_is_released(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    importer.sync_modern_financial_transactions([{
+        "transactionType": "Shipment",
+        "transactionId": "TX-DEFERRED-1",
+        "transactionStatus": "DEFERRED_RELEASED",
+        "postedDate": "2026-08-21T10:00:00Z",
+        "totalAmount": {"currencyAmount": 10, "currencyCode": "EUR"},
+        "relatedIdentifiers": [{"relatedIdentifierName": "ORDER_ID", "relatedIdentifierValue": "ORDER-DEFERRED-1"}],
+        "breakdowns": [],
+    }])
+
+    with importer._connect() as connection:
+        finality = connection.execute("SELECT financial_finality FROM amazon_financial_events").fetchone()[0]
+    assert finality == "released"
+
+
 def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

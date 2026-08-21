@@ -167,7 +167,7 @@ def extract_modern_financial_breakdown(transaction: dict[str, Any]) -> dict[str,
         "fees": fees,
         "net_cents": _amount_cents(_as_dict(transaction.get("totalAmount")).get("currencyAmount")),
         "financial_finality": (
-            "released" if _text(transaction.get("transactionStatus")).upper() == "RELEASED"
+            "released" if _text(transaction.get("transactionStatus")).upper() in {"RELEASED", "DEFERRED_RELEASED"}
             else "deferred" if _text(transaction.get("transactionStatus")).upper() == "DEFERRED"
             else "pending"
         ),
@@ -2091,7 +2091,7 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                 currency = _currency(amount.get("currencyCode"), currency)
 
             status = _text(payload.get("transactionStatus")).upper()
-            finality = "released" if status == "RELEASED" else "deferred" if status == "DEFERRED" else "pending"
+            finality = "released" if status in {"RELEASED", "DEFERRED_RELEASED"} else "deferred" if status == "DEFERRED" else "pending"
             event_id = _stable_id("amazon-modern-finance", transaction_id)
             connection.execute(
                 """
