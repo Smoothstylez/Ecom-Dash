@@ -314,7 +314,7 @@ export function DashboardSharedModals() {
                Schliessen
              </button>
           </div>
-          <div id="detailsContent" className="detail-content">-</div>
+          <div id="detailsContent" className="detail-content" />
         </div>
       </div>
 

@@ -3432,9 +3432,9 @@ tbody tr:nth-child(even) {
 }
 
 .modal-card {
-  width: min(1020px, 100%);
-  max-height: 86vh;
-  overflow: auto;
+  width: min(1280px, 100%);
+  max-height: 92vh;
+  overflow: hidden;
   border-radius: 14px;
   border: 1px solid var(--th-modal-border);
   background: var(--th-surface);
@@ -3442,6 +3442,7 @@ tbody tr:nth-child(even) {
   padding: 14px;
   display: grid;
   gap: 8px;
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .modal-head {
@@ -3848,6 +3849,28 @@ tbody tr:nth-child(even) {
 .detail-content {
   display: grid;
   gap: 10px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.amazon-shipment-modal {
+  display: grid;
+  gap: 12px;
+}
+
+.amazon-shipment-table {
+  min-width: 680px;
+  table-layout: fixed;
+}
+
+.amazon-shipment-table thead th:nth-child(1) { width: auto; }
+.amazon-shipment-table thead th:nth-child(2) { width: 130px; }
+.amazon-shipment-table thead th:nth-child(3) { width: 130px; }
+.amazon-shipment-table thead th:nth-child(4) { width: 150px; }
+
+.amazon-shipment-detail-table {
+  min-width: 680px;
+  table-layout: auto;
 }
 
 .detail-grid {

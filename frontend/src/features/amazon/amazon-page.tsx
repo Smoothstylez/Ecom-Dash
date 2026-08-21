@@ -62,6 +62,7 @@ type InboundShipment = {
   assigned_cost_cents: number;
   transport_currency?: string | null;
   transport_quote_cents?: number | null;
+  cost_status?: "missing" | "entered" | "confirmed";
 };
 
 type InboundShipmentDetail = {
@@ -132,6 +133,16 @@ function classNames(...parts: Array<string | false | null | undefined>) {
 
 function count(value: number | undefined) {
   return new Intl.NumberFormat("de-DE").format(Number(value || 0));
+}
+
+function shipmentCostStatusLabel(costStatus: InboundShipment["cost_status"]) {
+  if (costStatus === "confirmed") {
+    return "Kosten bestaetigt";
+  }
+  if (costStatus === "entered") {
+    return "Rechnung erfasst";
+  }
+  return "Rechnung fehlt";
 }
 
 function draftKey(file: File) {
@@ -435,20 +446,23 @@ export function AmazonPage() {
               </div>
             </div>
             <div className="table-wrap">
-              <table className="orders-table">
-                <thead><tr><th>Shipment</th><th>Status</th><th>Ziel</th><th>SKUs</th><th>Menge</th><th>Transportangebot</th><th>Belege</th></tr></thead>
+              <table className="amazon-shipment-table">
+                <thead><tr><th>Shipment</th><th>Status</th><th>Menge</th><th>Kosten</th></tr></thead>
                 <tbody>
                   {visibleShipments.length ? visibleShipments.map((shipment) => (
                     <tr key={shipment.shipment_id} onClick={() => void openShipment(shipment.shipment_id)} style={{ cursor: "pointer" }}>
-                      <td><strong>{shipment.shipment_id}</strong><br /><small>{shipment.shipment_name || "Amazon FBA"}</small></td>
+                      <td>
+                        <strong>{shipment.shipment_id}</strong>
+                        <div className="cell-sub">{shipment.shipment_name || "Amazon FBA"}</div>
+                        <div className="cell-sub">
+                          Ziel: {shipment.destination_fulfillment_center_id || "-"} · Angebot: {shipment.transport_quote_cents == null ? "-" : formatMoneyFromCents(shipment.transport_quote_cents)}
+                        </div>
+                      </td>
                       <td><span className="status-badge">{shipment.status_label}</span></td>
-                      <td>{shipment.destination_fulfillment_center_id || "-"}</td>
-                      <td>{count(shipment.sku_count)}</td>
                       <td>{count(shipment.quantity_received)} / {count(shipment.quantity_shipped)}</td>
-                      <td>{shipment.transport_quote_cents == null ? "-" : formatMoneyFromCents(shipment.transport_quote_cents)}</td>
-                      <td>{count(shipment.invoice_count)}</td>
+                      <td><span className="status-badge">{shipmentCostStatusLabel(shipment.cost_status)}</span></td>
                     </tr>
-                  )) : <tr><td colSpan={7}>Noch keine FBA-Sendungen synchronisiert.</td></tr>}
+                  )) : <tr><td colSpan={4}>Noch keine FBA-Sendungen synchronisiert.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -495,11 +509,11 @@ export function AmazonPage() {
         </>
       ) : null}
       {activeTab === "overview" && detailPortalTarget && selectedShipment ? createPortal(
-        <div>
+        <div className="amazon-shipment-modal">
           {shipmentLoading ? <p>Shipment wird geladen...</p> : null}
           <p className="page-subtitle">{selectedShipment.shipment.status_label} · {count(selectedShipment.shipment.quantity_received)} von {count(selectedShipment.shipment.quantity_shipped)} empfangen</p>
-          <div className="table-wrap">
-            <table className="orders-table">
+          <div className="detail-table-wrap">
+            <table className="amazon-shipment-detail-table">
               <thead><tr><th>SKU</th><th>FNSKU</th><th>ASIN</th><th>Empfangen</th><th>Versendet</th></tr></thead>
               <tbody>{selectedShipment.items.map((item) => <tr key={`${item.seller_sku}:${item.fnsku}`}><td>{item.seller_sku}</td><td>{item.fnsku}</td><td>{item.asin || "-"}</td><td>{count(item.quantity_received)}</td><td>{count(item.quantity_shipped)}</td></tr>)}</tbody>
             </table>
@@ -537,8 +551,8 @@ export function AmazonPage() {
           {invoiceMessage ? <p className="table-meta">{invoiceMessage}</p> : null}
           {selectedShipment.invoices.length ? <p className="table-meta">{selectedShipment.invoices.length} Beleg(e) gespeichert.</p> : null}
           <h3>Rechnungspositionen und SKU-Kosten</h3>
-          <div className="table-wrap">
-            <table className="orders-table">
+          <div className="detail-table-wrap">
+            <table className="amazon-shipment-detail-table">
               <thead><tr><th>SKU</th><th>FNSKU</th><th>Empfangen</th><th>Netto</th><th>Aktion</th></tr></thead>
               <tbody>{selectedShipment.items.map((item) => {
                 const key = `${item.seller_sku}:${item.fnsku}`;
