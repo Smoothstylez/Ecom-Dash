@@ -961,7 +961,7 @@ def list_settlement_suggestions() -> list[dict[str, Any]]:
     with _connect() as connection:
         rows = connection.execute(
             """
-            SELECT e.id, e.event_type, e.amazon_order_id, e.settlement_id,
+            SELECT e.id, e.event_type, e.amazon_order_id, e.settlement_id, e.deferral_reason, e.maturity_date,
                    COALESCE(e.posted_date, s.fund_transfer_date) AS posted_date,
                    e.financial_finality, e.currency, e.sales_cents, e.fees_cents, e.net_cents, e.raw_json
             FROM amazon_financial_events e

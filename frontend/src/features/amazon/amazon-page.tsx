@@ -41,6 +41,11 @@ type FinanceEvent = {
   fees_cents: number;
   net_cents: number;
   financial_finality?: string;
+  deferral_reason?: string | null;
+  maturity_date?: string | null;
+  sales_net_cents?: number;
+  fees_net_cents?: number;
+  fees_vat_cents?: number;
   components?: Array<{ name?: string; amount_cents?: number }>;
 };
 
@@ -556,7 +561,11 @@ export function AmazonPage() {
                     <tr key={event.id}>
                       <td>{formatDateTime(event.posted_date)}</td>
                       <td>{financeEventTypeLabel(event.event_type)}</td>
-                      <td>{event.components?.map((component) => feeComponentLabel(component.name || "")).filter(Boolean).join(", ") || "-"}</td>
+                      <td>
+                        <div>{event.components?.map((component) => feeComponentLabel(component.name || "")).filter(Boolean).join(", ") || "-"}</div>
+                        <div className="cell-sub">Netto-Umsatz {formatMoneyFromCents(event.sales_net_cents || 0)} · Fee netto {formatMoneyFromCents(event.fees_net_cents || 0)} · Fee-USt. {formatMoneyFromCents(event.fees_vat_cents || 0)}</div>
+                        {event.financial_finality === "deferred" ? <div className="cell-sub">Vorläufig{event.deferral_reason ? ` · ${event.deferral_reason}` : ""}{event.maturity_date ? ` · geplant ${formatDateTime(event.maturity_date)}` : ""}</div> : null}
+                      </td>
                       <td>{formatMoneyFromCents(event.sales_cents || 0)}</td>
                       <td>{formatMoneyFromCents(event.fees_cents || 0)}</td>
                       <td>{formatMoneyFromCents(event.net_cents || 0)}</td>
