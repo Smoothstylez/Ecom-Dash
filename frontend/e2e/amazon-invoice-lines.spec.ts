@@ -55,8 +55,12 @@ test("Amazon FBA shipment list opens a wide desktop detail modal", async ({ page
   expect(modalWidth).toBeGreaterThanOrEqual(1100);
 });
 
-test("VAT-bearing invoice blocks the temporary net-only line submission", async ({ page }) => {
-  let lineSubmissionCount = 0;
+test("FBA invoice drafts upload amounts and allocate every unconfirmed SKU", async ({ page }) => {
+  let invoiceUploaded = false;
+  let lineSaved = false;
+  let costsConfirmed = false;
+  let invoiceUploadBody = "";
+  let linePayload: Record<string, unknown> | null = null;
 
   await page.route("**/api/amazon/status", (route) => route.fulfill({ json: {} }));
   await page.route("**/api/amazon/finance", (route) => route.fulfill({ json: {} }));
@@ -64,47 +68,92 @@ test("VAT-bearing invoice blocks the temporary net-only line submission", async 
   await page.route("**/api/amazon/inbound/shipments", (route) => route.fulfill({
     json: {
       items: [{
-        shipment_id: "FBA-VAT-1",
-        shipment_name: "VAT shipment",
+        shipment_id: "FBA-TEST-1",
+        shipment_name: "Invoice shipment",
         status: "CLOSED",
-        status_label: "Closed",
+        status_label: "Empfangen",
         quantity_shipped: 1,
         quantity_received: 1,
         sku_count: 1,
-        invoice_count: 1,
+        invoice_count: invoiceUploaded ? 1 : 0,
         assigned_cost_cents: 0,
       }],
     },
   }));
-  await page.route("**/api/amazon/inbound/shipments/FBA-VAT-1", (route) => route.fulfill({
+  await page.route("**/api/amazon/inbound/shipments/FBA-TEST-1", (route) => route.fulfill({
     json: {
       shipment: {
-        shipment_id: "FBA-VAT-1",
-        shipment_name: "VAT shipment",
+        shipment_id: "FBA-TEST-1",
+        shipment_name: "Invoice shipment",
         status: "CLOSED",
-        status_label: "Closed",
+        status_label: "Empfangen",
         quantity_shipped: 1,
         quantity_received: 1,
         sku_count: 1,
-        invoice_count: 1,
+        invoice_count: invoiceUploaded ? 1 : 0,
         assigned_cost_cents: 0,
       },
       items: [{ seller_sku: "SKU-1", fnsku: "FNSKU-1", asin: "ASIN-1", quantity_shipped: 1, quantity_received: 1 }],
       costs: [],
-      invoices: [{ id: "INV-VAT-1", supplier_name: "Supplier", invoice_number: "INV-1", gross_cents: 1190, vat_cents: 190, document_path: "invoice.pdf" }],
-      invoice_lines: [],
-      cost_allocations: [],
+      invoices: invoiceUploaded ? [{ id: "INV-1", supplier_name: "Supplier", invoice_number: "SUP-1", gross_cents: 1190, net_cents: 1000, vat_cents: 190, document_path: "supplier.pdf" }] : [],
+      invoice_lines: lineSaved ? [{ id: "LINE-1", invoice_id: "INV-1", seller_sku: "SKU-1", fnsku: "FNSKU-1", asin: "ASIN-1", title: "", quantity: 1, gross_cents: 1190, net_cents: 1000, vat_cents: 190 }] : [],
+      cost_allocations: costsConfirmed ? [{ id: "ALLOC-1", seller_sku: "SKU-1", fnsku: "FNSKU-1", quantity: 1, net_cents: 1000, currency: "EUR", allocation_method: "invoice" }] : [],
     },
   }));
-  await page.route("**/api/amazon/inbound/invoices/INV-VAT-1/lines", (route) => {
-    lineSubmissionCount += 1;
-    return route.fulfill({ status: 500 });
+  await page.route("**/api/amazon/inbound/shipments/FBA-TEST-1/invoices", async (route) => {
+    invoiceUploadBody = route.request().postData() || "";
+    invoiceUploaded = true;
+    await route.fulfill({ json: { id: "INV-1" } });
+  });
+  await page.route("**/api/amazon/inbound/invoices/INV-1/lines", async (route) => {
+    linePayload = JSON.parse(route.request().postData() || "{}");
+    lineSaved = true;
+    await route.fulfill({ json: { id: "LINE-1" } });
+  });
+  await page.route("**/api/amazon/inbound/shipments/FBA-TEST-1/cost-confirmation", async (route) => {
+    costsConfirmed = true;
+    await route.fulfill({ json: { ok: true } });
   });
 
   await page.goto("/amazon", { waitUntil: "networkidle" });
-  await page.getByText("FBA-VAT-1", { exact: true }).click();
+  await page.getByText("FBA-TEST-1", { exact: true }).click();
+  await expect(page.getByRole("button", { name: "Dateien waehlen" })).toBeVisible();
+  await page.locator(".invoice-file-input").setInputFiles({
+    name: "supplier.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("invoice"),
+  });
+
+  await expect(page.getByText("supplier.pdf", { exact: true })).toBeVisible();
+  await page.getByLabel("Lieferant supplier.pdf").fill("Supplier");
+  await page.getByLabel("Rechnungsnummer supplier.pdf").fill("SUP-1");
+  await page.getByLabel("Brutto supplier.pdf").fill("11,90");
+  await page.getByLabel("Netto supplier.pdf").fill("10,00");
+  await page.getByLabel("USt supplier.pdf").fill("1,90");
+  await page.getByRole("button", { name: "Hochladen" }).click();
+
+  await expect.poll(() => invoiceUploadBody).toContain("1190");
+  expect(invoiceUploadBody).toContain("1000");
+  expect(invoiceUploadBody).toContain("190");
+
+  await expect(page.getByLabel("Rechnung SKU-1")).toHaveValue("INV-1");
+  await page.getByLabel("Brutto SKU-1").fill("11,90");
+  await page.getByLabel("Netto SKU-1").fill("10,00");
+  await page.getByLabel("USt SKU-1").fill("1,90");
   await page.getByRole("button", { name: "Position speichern" }).click();
 
-  await expect(page.getByText("Brutto-/Netto-/USt-Positionen werden mit dem detaillierten Editor erfasst.")).toBeVisible();
-  expect(lineSubmissionCount).toBe(0);
+  await expect.poll(() => linePayload).toEqual({
+    seller_sku: "SKU-1",
+    fnsku: "FNSKU-1",
+    asin: "ASIN-1",
+    title: "",
+    quantity: 1,
+    gross_cents: 1190,
+    net_cents: 1000,
+    vat_cents: 190,
+  });
+  await expect(page.getByLabel("Rechnung SKU-1")).toBeDisabled();
+  await page.getByRole("button", { name: "Kosten bestaetigen und FIFO-Lots erzeugen" }).click();
+  await expect(page.getByText("Produktkosten bereits bestaetigt; FIFO-Lots sind erzeugt.")).toBeVisible();
+  await expect(page.getByLabel("Brutto SKU-1")).toHaveCount(0);
 });

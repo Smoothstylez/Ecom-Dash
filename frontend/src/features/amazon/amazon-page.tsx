@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { formatDateTime, formatMoneyFromCents, formatRelativeTime } from "@/features/analytics/format";
@@ -69,8 +69,8 @@ type InboundShipmentDetail = {
   shipment: InboundShipment & { plan_id?: string };
   items: Array<{ seller_sku: string; fnsku: string; asin: string; quantity_shipped: number; quantity_received: number }>;
   costs: Array<{ id: string; cost_type: string; amount_cents: number; currency: string; status: string }>;
-  invoices: Array<{ id: string; supplier_name: string; invoice_number: string; gross_cents: number; vat_cents: number; document_path: string }>;
-  invoice_lines: Array<{ id: string; invoice_id: string; seller_sku: string; fnsku: string; asin: string; title: string; quantity: number; net_cents: number; vat_cents: number }>;
+  invoices: Array<{ id: string; supplier_name: string; invoice_number: string; gross_cents: number; net_cents: number; vat_cents: number; document_path: string }>;
+  invoice_lines: Array<{ id: string; invoice_id: string; seller_sku: string; fnsku: string; asin: string; title: string; quantity: number; gross_cents: number; net_cents: number; vat_cents: number }>;
   cost_allocations: Array<{ id: string; seller_sku: string; fnsku: string; quantity: number; net_cents: number; currency: string; allocation_method: string }>;
 };
 
@@ -93,6 +93,13 @@ type InvoiceDraft = {
   vat: string;
   status: "idle" | "uploading" | "error";
   error: string;
+};
+
+type InvoiceLineDraft = {
+  invoiceId: string;
+  gross: string;
+  net: string;
+  vat: string;
 };
 
 const SHIPMENT_FILTER_OPTIONS: Array<{ value: string; label: string }> = [
@@ -149,6 +156,19 @@ function draftKey(file: File) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+function parseEuroCents(value: string) {
+  const normalized = value.trim().replace(",", ".");
+  if (!normalized) {
+    return null;
+  }
+  const amount = Number(normalized);
+  return Number.isFinite(amount) ? Math.round(amount * 100) : null;
+}
+
+function formatCentsInput(cents: number) {
+  return String(cents / 100).replace(".", ",");
+}
+
 export function AmazonPage() {
   const { refreshRequestToken } = useDashboardShellState();
   const [activeTab, setActiveTab] = useState<"overview" | "inventory">("overview");
@@ -161,9 +181,10 @@ export function AmazonPage() {
   const [selectedShipment, setSelectedShipment] = useState<InboundShipmentDetail | null>(null);
   const [shipmentLoading, setShipmentLoading] = useState(false);
   const [invoiceDrafts, setInvoiceDrafts] = useState<Record<string, InvoiceDraft>>({});
-  const [invoiceLineNet, setInvoiceLineNet] = useState<Record<string, string>>({});
+  const [invoiceLineDrafts, setInvoiceLineDrafts] = useState<Record<string, InvoiceLineDraft>>({});
   const [invoiceMessage, setInvoiceMessage] = useState("");
   const [error, setError] = useState("");
+  const invoiceFileInputRef = useRef<HTMLInputElement>(null);
 
   async function refreshAmazonData(signal?: AbortSignal) {
     const controller = signal ? null : new AbortController();
@@ -228,12 +249,14 @@ export function AmazonPage() {
   const detailPortalTarget = useAmazonDetailModal(activeTab === "overview" && Boolean(selectedShipment), detailTitle, () => {
     setSelectedShipment(null);
     setInvoiceDrafts({});
+    setInvoiceLineDrafts({});
   });
 
   async function openShipment(shipmentId: string) {
     setShipmentLoading(true);
     setInvoiceMessage("");
     setInvoiceDrafts({});
+    setInvoiceLineDrafts({});
     try {
       const detail = await fetchJson<InboundShipmentDetail>(buildDashboardApiUrl(`/api/amazon/inbound/shipments/${encodeURIComponent(shipmentId)}`));
       setSelectedShipment(detail);
@@ -245,12 +268,13 @@ export function AmazonPage() {
   }
 
   function addInvoiceFiles(files: FileList | null) {
-    if (!files || !files.length) {
+    const selectedFiles = files ? Array.from(files) : [];
+    if (!selectedFiles.length) {
       return;
     }
     setInvoiceDrafts((current) => {
       const next = { ...current };
-      Array.from(files).forEach((file) => {
+      selectedFiles.forEach((file) => {
         const key = draftKey(file);
         if (!next[key]) {
           next[key] = { file, supplier: "", invoiceNumber: "", gross: "", net: "", vat: "", status: "idle", error: "" };
@@ -258,6 +282,9 @@ export function AmazonPage() {
       });
       return next;
     });
+    if (invoiceFileInputRef.current) {
+      invoiceFileInputRef.current.value = "";
+    }
   }
 
   function updateInvoiceDraft(key: string, patch: Partial<InvoiceDraft>) {
@@ -272,6 +299,23 @@ export function AmazonPage() {
     });
   }
 
+  function updateInvoiceLineDraft(key: string, patch: Partial<InvoiceLineDraft>, existing?: InboundShipmentDetail["invoice_lines"][number]) {
+    setInvoiceLineDrafts((current) => {
+      const initial: InvoiceLineDraft = existing ? {
+        invoiceId: existing.invoice_id,
+        gross: formatCentsInput(existing.gross_cents),
+        net: formatCentsInput(existing.net_cents),
+        vat: formatCentsInput(existing.vat_cents),
+      } : {
+        invoiceId: selectedShipment?.invoices[0]?.id || "",
+        gross: "",
+        net: "",
+        vat: "",
+      };
+      return { ...current, [key]: { ...(current[key] || initial), ...patch } };
+    });
+  }
+
   async function uploadInvoiceDraft(key: string) {
     if (!selectedShipment) {
       return;
@@ -281,13 +325,20 @@ export function AmazonPage() {
       updateInvoiceDraft(key, { status: "error", error: "Bitte Lieferant angeben." });
       return;
     }
+    const grossCents = parseEuroCents(draft.gross);
+    const netCents = parseEuroCents(draft.net);
+    const vatCents = parseEuroCents(draft.vat);
+    if (grossCents === null || netCents === null || vatCents === null || grossCents < 0 || netCents < 0 || vatCents < 0 || grossCents !== netCents + vatCents) {
+      updateInvoiceDraft(key, { status: "error", error: "Brutto muss Netto plus USt entsprechen." });
+      return;
+    }
     updateInvoiceDraft(key, { status: "uploading", error: "" });
     const form = new FormData();
     form.append("file", draft.file);
     form.append("supplier_name", draft.supplier.trim());
-    form.append("gross_cents", String(Math.round(Number(draft.gross.replace(",", ".") || 0) * 100)));
-    form.append("net_cents", String(Math.round(Number(draft.net.replace(",", ".") || 0) * 100)));
-    form.append("vat_cents", String(Math.round(Number(draft.vat.replace(",", ".") || 0) * 100)));
+    form.append("gross_cents", String(grossCents));
+    form.append("net_cents", String(netCents));
+    form.append("vat_cents", String(vatCents));
     try {
       await fetchJson(buildDashboardApiUrl(`/api/amazon/inbound/shipments/${encodeURIComponent(selectedShipment.shipment.shipment_id)}/invoices`), {
         method: "POST",
@@ -312,23 +363,31 @@ export function AmazonPage() {
     }
   }
 
-  async function addInvoiceLine(item: InboundShipmentDetail["items"][number]) {
+  async function addInvoiceLine(item: InboundShipmentDetail["items"][number], existing?: InboundShipmentDetail["invoice_lines"][number]) {
     if (!selectedShipment) {
       return;
     }
-    const invoice = selectedShipment.invoices[0];
     const key = `${item.seller_sku}:${item.fnsku}`;
-    const netCents = Math.round(Number(String(invoiceLineNet[key] || "0").replace(",", ".")) * 100);
-    if (!invoice || netCents < 0 || item.quantity_received <= 0) {
-      setInvoiceMessage("Zuerst Rechnung speichern und einen gueltigen Nettobetrag eingeben.");
-      return;
-    }
-    if (invoice.vat_cents !== 0) {
-      setInvoiceMessage("Brutto-/Netto-/USt-Positionen werden mit dem detaillierten Editor erfasst.");
+    const draft = invoiceLineDrafts[key] || (existing ? {
+      invoiceId: existing.invoice_id,
+      gross: formatCentsInput(existing.gross_cents),
+      net: formatCentsInput(existing.net_cents),
+      vat: formatCentsInput(existing.vat_cents),
+    } : {
+      invoiceId: selectedShipment.invoices[0]?.id || "",
+      gross: "",
+      net: "",
+      vat: "",
+    });
+    const grossCents = parseEuroCents(draft.gross);
+    const netCents = parseEuroCents(draft.net);
+    const vatCents = parseEuroCents(draft.vat);
+    if (!draft.invoiceId || grossCents === null || netCents === null || vatCents === null || grossCents < 0 || netCents < 0 || vatCents < 0 || grossCents !== netCents + vatCents || item.quantity_received <= 0) {
+      setInvoiceMessage("Zuerst Rechnung waehlen und gueltige Brutto-, Netto- und USt-Betraege eingeben.");
       return;
     }
     try {
-      await fetchJson(buildDashboardApiUrl(`/api/amazon/inbound/invoices/${encodeURIComponent(invoice.id)}/lines`), {
+      await fetchJson(buildDashboardApiUrl(`/api/amazon/inbound/invoices/${encodeURIComponent(draft.invoiceId)}/lines`), {
         method: "POST",
         body: JSON.stringify({
           seller_sku: item.seller_sku,
@@ -336,9 +395,9 @@ export function AmazonPage() {
           asin: item.asin,
           title: "",
           quantity: item.quantity_received,
-          gross_cents: netCents,
+          gross_cents: grossCents,
           net_cents: netCents,
-          vat_cents: 0,
+          vat_cents: vatCents,
         }),
         headers: { "Content-Type": "application/json" },
       });
@@ -519,27 +578,24 @@ export function AmazonPage() {
             </table>
           </div>
           <h3>Rechnungen für dieses Shipment</h3>
-          <label className="file-picker-label">
-            Dateien waehlen
-            <input
-              className="invoice-file-input"
-              type="file"
-              multiple
-              onChange={(event) => {
-                addInvoiceFiles(event.target.files);
-                event.target.value = "";
-              }}
-            />
-          </label>
+          <button type="button" className="button" onClick={() => invoiceFileInputRef.current?.click()}>Dateien waehlen</button>
+          <input
+            ref={invoiceFileInputRef}
+            className="invoice-file-input"
+            type="file"
+            multiple
+            hidden
+            onChange={(event) => addInvoiceFiles(event.target.files)}
+          />
           {Object.entries(invoiceDrafts).map(([key, draft]) => (
             <div key={key} className="detail-card" style={{ marginTop: "0.75rem" }}>
               <div className="table-meta">{draft.file.name}</div>
               <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap", marginTop: "0.4rem" }}>
-                <input aria-label="Lieferant" placeholder="Lieferant" value={draft.supplier} onChange={(event) => updateInvoiceDraft(key, { supplier: event.target.value })} />
-                <input aria-label="Rechnungsnummer" placeholder="Rechnungsnr." value={draft.invoiceNumber} onChange={(event) => updateInvoiceDraft(key, { invoiceNumber: event.target.value })} />
-                <input aria-label="Brutto" placeholder="Brutto EUR" inputMode="decimal" value={draft.gross} onChange={(event) => updateInvoiceDraft(key, { gross: event.target.value })} />
-                <input aria-label="Netto" placeholder="Netto EUR" inputMode="decimal" value={draft.net} onChange={(event) => updateInvoiceDraft(key, { net: event.target.value })} />
-                <input aria-label="Umsatzsteuer" placeholder="USt EUR" inputMode="decimal" value={draft.vat} onChange={(event) => updateInvoiceDraft(key, { vat: event.target.value })} />
+                <input aria-label={`Lieferant ${draft.file.name}`} placeholder="Lieferant" value={draft.supplier} onChange={(event) => updateInvoiceDraft(key, { supplier: event.target.value })} />
+                <input aria-label={`Rechnungsnummer ${draft.file.name}`} placeholder="Rechnungsnr." value={draft.invoiceNumber} onChange={(event) => updateInvoiceDraft(key, { invoiceNumber: event.target.value })} />
+                <input aria-label={`Brutto ${draft.file.name}`} placeholder="Brutto EUR" inputMode="decimal" value={draft.gross} onChange={(event) => updateInvoiceDraft(key, { gross: event.target.value })} />
+                <input aria-label={`Netto ${draft.file.name}`} placeholder="Netto EUR" inputMode="decimal" value={draft.net} onChange={(event) => updateInvoiceDraft(key, { net: event.target.value })} />
+                <input aria-label={`USt ${draft.file.name}`} placeholder="USt EUR" inputMode="decimal" value={draft.vat} onChange={(event) => updateInvoiceDraft(key, { vat: event.target.value })} />
                 <button type="button" className="button button-primary" disabled={draft.status === "uploading"} onClick={() => void uploadInvoiceDraft(key)}>
                   {draft.status === "uploading" ? "Lädt..." : "Hochladen"}
                 </button>
@@ -553,25 +609,50 @@ export function AmazonPage() {
           <h3>Rechnungspositionen und SKU-Kosten</h3>
           <div className="detail-table-wrap">
             <table className="amazon-shipment-detail-table">
-              <thead><tr><th>SKU</th><th>FNSKU</th><th>Empfangen</th><th>Netto</th><th>Aktion</th></tr></thead>
+              <thead><tr><th>SKU</th><th>FNSKU</th><th>Empfangen</th><th>Rechnung</th><th>Brutto</th><th>Netto</th><th>USt</th><th>Aktion</th></tr></thead>
               <tbody>{selectedShipment.items.map((item) => {
                 const key = `${item.seller_sku}:${item.fnsku}`;
                 const existing = selectedShipment.invoice_lines.find((line) => line.seller_sku === item.seller_sku && line.fnsku === item.fnsku);
+                const lineDraft = invoiceLineDrafts[key] || (existing ? {
+                  invoiceId: existing.invoice_id,
+                  gross: formatCentsInput(existing.gross_cents),
+                  net: formatCentsInput(existing.net_cents),
+                  vat: formatCentsInput(existing.vat_cents),
+                } : {
+                  invoiceId: selectedShipment.invoices[0]?.id || "",
+                  gross: "",
+                  net: "",
+                  vat: "",
+                });
+                const confirmed = selectedShipment.cost_allocations.length > 0;
+                const invoice = selectedShipment.invoices.find((candidate) => candidate.id === lineDraft.invoiceId);
                 return <tr key={`cost:${key}`}>
                   <td>{item.seller_sku}</td>
                   <td>{item.fnsku}</td>
                   <td>{count(item.quantity_received)}</td>
-                  <td>
-                    <input
-                      aria-label={`Netto ${item.seller_sku}`}
-                      placeholder="Netto EUR"
-                      inputMode="decimal"
-                      value={existing ? String(existing.net_cents / 100).replace(".", ",") : invoiceLineNet[key] || ""}
-                      disabled={Boolean(existing)}
-                      onChange={(event) => setInvoiceLineNet((current) => ({ ...current, [key]: event.target.value }))}
-                    />
-                  </td>
-                  <td>{existing ? <span className="table-meta">gespeichert</span> : <button type="button" className="button" onClick={() => void addInvoiceLine(item)}>Position speichern</button>}</td>
+                  {confirmed ? <>
+                    <td>{invoice?.invoice_number || "-"}</td>
+                    <td>{formatMoneyFromCents(existing?.gross_cents || 0)}</td>
+                    <td>{formatMoneyFromCents(existing?.net_cents || 0)}</td>
+                    <td>{formatMoneyFromCents(existing?.vat_cents || 0)}</td>
+                    <td><span className="table-meta">bestaetigt</span></td>
+                  </> : <>
+                    <td>
+                      <select
+                        aria-label={`Rechnung ${item.seller_sku}`}
+                        value={lineDraft.invoiceId}
+                        disabled={Boolean(existing)}
+                        onChange={(event) => updateInvoiceLineDraft(key, { invoiceId: event.target.value }, existing)}
+                      >
+                        <option value="">Rechnung waehlen</option>
+                        {selectedShipment.invoices.map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.invoice_number || candidate.supplier_name || candidate.id}</option>)}
+                      </select>
+                    </td>
+                    <td><input aria-label={`Brutto ${item.seller_sku}`} placeholder="Brutto EUR" inputMode="decimal" value={lineDraft.gross} onChange={(event) => updateInvoiceLineDraft(key, { gross: event.target.value }, existing)} /></td>
+                    <td><input aria-label={`Netto ${item.seller_sku}`} placeholder="Netto EUR" inputMode="decimal" value={lineDraft.net} onChange={(event) => updateInvoiceLineDraft(key, { net: event.target.value }, existing)} /></td>
+                    <td><input aria-label={`USt ${item.seller_sku}`} placeholder="USt EUR" inputMode="decimal" value={lineDraft.vat} onChange={(event) => updateInvoiceLineDraft(key, { vat: event.target.value }, existing)} /></td>
+                    <td><button type="button" className="button" onClick={() => void addInvoiceLine(item, existing)}>{existing ? "Position aktualisieren" : "Position speichern"}</button></td>
+                  </>}
                 </tr>;
               })}</tbody>
             </table>
