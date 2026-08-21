@@ -20,6 +20,7 @@ from app.services.order_summaries import cents_to_eur
 
 
 def _canonical_financial_event_predicate(alias: str = "e") -> str:
+    lifecycle_key = f"COALESCE({alias}.lifecycle_id, {alias}.transaction_id, {alias}.id)"
     return f"""
     (
         ({alias}.amazon_order_id IS NULL AND {alias}.event_type = 'SettlementReportLine')
@@ -31,6 +32,38 @@ def _canonical_financial_event_predicate(alias: str = "e") -> str:
                   AND modern.event_type LIKE 'ModernTransaction:%'
             )
             AND {alias}.event_type LIKE 'ModernTransaction:%'
+            AND NOT EXISTS (
+                SELECT 1 FROM amazon_financial_events newer
+                WHERE newer.event_type LIKE 'ModernTransaction:%'
+                  AND COALESCE(newer.lifecycle_id, newer.transaction_id, newer.id) = {lifecycle_key}
+                  AND (
+                    CASE json_extract(newer.raw_json, '$.transactionStatus')
+                        WHEN 'RELEASED' THEN 3
+                        WHEN 'DEFERRED_RELEASED' THEN 2
+                        WHEN 'DEFERRED' THEN 1
+                        ELSE 0
+                    END > CASE json_extract({alias}.raw_json, '$.transactionStatus')
+                        WHEN 'RELEASED' THEN 3
+                        WHEN 'DEFERRED_RELEASED' THEN 2
+                        WHEN 'DEFERRED' THEN 1
+                        ELSE 0
+                    END
+                    OR (
+                        CASE json_extract(newer.raw_json, '$.transactionStatus')
+                            WHEN 'RELEASED' THEN 3
+                            WHEN 'DEFERRED_RELEASED' THEN 2
+                            WHEN 'DEFERRED' THEN 1
+                            ELSE 0
+                        END = CASE json_extract({alias}.raw_json, '$.transactionStatus')
+                            WHEN 'RELEASED' THEN 3
+                            WHEN 'DEFERRED_RELEASED' THEN 2
+                            WHEN 'DEFERRED' THEN 1
+                            ELSE 0
+                        END
+                        AND COALESCE(newer.posted_date, '') > COALESCE({alias}.posted_date, '')
+                    )
+                  )
+            )
         )
         OR (
             NOT EXISTS (

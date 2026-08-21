@@ -198,6 +198,7 @@ def test_deferred_released_finance_transaction_is_released(monkeypatch, tmp_path
 
 
 def test_modern_finance_persists_shared_deferred_lifecycle_metadata(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer
 
     monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
@@ -240,6 +241,9 @@ def test_modern_finance_persists_shared_deferred_lifecycle_metadata(monkeypatch,
         ("TX-DEFERRED", "TX-DEFERRED", "DD7", "2026-08-27T10:00:00Z"),
         ("TX-RELEASE", "TX-DEFERRED", None, None),
     ]
+    overview = amazon_fba.get_amazon_finance_overview()
+    assert len(overview["events"]) == 1
+    assert overview["events"][0]["financial_finality"] == "released"
 
 
 def test_modern_finance_event_exposes_fee_breakdown(monkeypatch, tmp_path) -> None:
