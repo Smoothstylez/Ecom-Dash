@@ -589,15 +589,16 @@ export function AmazonPage() {
             </table>
           </div>
           <h3>Rechnungen für dieses Shipment</h3>
-          <button type="button" className="button" onClick={() => invoiceFileInputRef.current?.click()}>Dateien waehlen</button>
-          <input
-            ref={invoiceFileInputRef}
-            className="invoice-file-input"
-            type="file"
-            multiple
-            hidden
-            onChange={(event) => addInvoiceFiles(event.target.files)}
-          />
+          <label className="file-picker-label">
+            Dateien waehlen
+            <input
+              ref={invoiceFileInputRef}
+              className="invoice-file-input"
+              type="file"
+              multiple
+              onChange={(event) => addInvoiceFiles(event.target.files)}
+            />
+          </label>
           {Object.entries(invoiceDrafts).map(([key, draft]) => (
             <div key={key} className="detail-card" style={{ marginTop: "0.75rem" }}>
               <div className="table-meta">{draft.file.name}</div>
