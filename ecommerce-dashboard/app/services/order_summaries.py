@@ -104,6 +104,28 @@ def to_kaufland_cents(value: Any) -> Optional[int]:
         return None
 
 
+def _cents_from_real_aggregate(value: Any) -> int:
+    """Convert a SQL REAL money aggregate that is already denominated in cents.
+
+    Kaufland summary rows are built from SQL aggregates like
+    ``SUM(price * vat / (100 + vat))`` whose results are cent amounts stored as
+    REAL. They must be converted deterministically (round half away from zero,
+    matching SQLite's ROUND) instead of being routed through the ambiguous
+    euro/cents heuristic in :func:`to_kaufland_cents`, which multiplies every
+    non-integer value by 100.
+    """
+    if value is None:
+        return 0
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(parsed):
+        return 0
+    rounded = math.floor(parsed + 0.5) if parsed >= 0 else math.ceil(parsed - 0.5)
+    return int(rounded)
+
+
 def normalize_name(*parts: Any) -> str:
     values: list[str] = []
     for part in parts:
@@ -262,6 +284,33 @@ def _scale_cents(value_cents: int, *, numerator: int, denominator: int) -> int:
     return max(int(round(int(value_cents) * (numerator / denominator))), 0)
 
 
+FULLY_RETURN_LIKE_STATUS_KEYWORDS = (
+    "cancel",
+    "cancelled",
+    "canceled",
+    "void",
+    "return",
+    "returned",
+    "refund",
+    "refunded",
+    "rma",
+    "revoked",
+    "returning",
+)
+
+
+def _is_fully_return_like_status(token: Any) -> bool:
+    """True for statuses that void the whole order economically.
+
+    Mirrors the return-like semantics used by bookings/analytics sync, but
+    explicitly excludes ``partially_refunded`` which keeps its reduced amount.
+    """
+    normalized = str(token or "").strip().lower()
+    if not normalized or "partial" in normalized:
+        return False
+    return any(keyword in normalized for keyword in FULLY_RETURN_LIKE_STATUS_KEYWORDS)
+
+
 def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = True) -> dict[str, Any]:
     order_payload = safe_json_load(row["raw_json"]) if include_raw_fallbacks else {}
 
@@ -335,6 +384,17 @@ def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = 
     created_iso = to_iso_utc(row["created_at"])
     shipping_cents = extract_shopify_shipping_cents(order_payload) if include_raw_fallbacks else 0
 
+    if _is_fully_return_like_status(financial_status_raw):
+        # Fully refunded/voided/cancelled orders carry no economic value and
+        # must not feed revenue, VAT, threshold, or bookkeeping mirrors.
+        total_cents = 0
+        sales_gross_cents = 0
+        sales_vat_cents = 0
+        sales_net_cents = 0
+        fee_cents = 0
+        after_fees_cents = 0
+        shipping_cents = 0
+
     try:
         line_items_count = int(row["line_items_count"])
     except (ValueError, TypeError, IndexError, KeyError):
@@ -368,16 +428,19 @@ def shopify_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = 
 
 def kaufland_summary_from_row(row: sqlite3.Row, *, include_raw_fallbacks: bool = True) -> dict[str, Any]:
     raw_payload = safe_json_load(row["raw_json"]) if include_raw_fallbacks else {}
-    total_cents = to_kaufland_cents(row["units_price_sum"]) or 0
-    after_fees_cents = to_kaufland_cents(row["revenue_gross_sum"]) or total_cents
+    total_cents = _cents_from_real_aggregate(row["units_price_sum"])
+    after_fees_cents = _cents_from_real_aggregate(row["revenue_gross_sum"]) or total_cents
     fees_cents = total_cents - after_fees_cents
     if fees_cents < 0:
         fees_cents = 0
 
-    shipping_cents = to_kaufland_cents(row["shipping_sum"]) or 0
+    shipping_cents = _cents_from_real_aggregate(row["shipping_sum"])
     gross_sales_cents = max(total_cents + shipping_cents, 0)
-    source_vat_cents = max((to_kaufland_cents(row["units_vat_sum"]) or 0) + (to_kaufland_cents(row["shipping_vat_sum"]) or 0), 0)
-    refund_cents = to_kaufland_cents(row["refund_amount_sum"]) or 0
+    source_vat_cents = max(
+        _cents_from_real_aggregate(row["units_vat_sum"]) + _cents_from_real_aggregate(row["shipping_vat_sum"]),
+        0,
+    )
+    refund_cents = _cents_from_real_aggregate(row["refund_amount_sum"])
     sales_gross_cents = max(gross_sales_cents - refund_cents, 0)
     sales_vat_cents = source_vat_cents
     if gross_sales_cents > 0 and refund_cents > 0:

@@ -142,8 +142,49 @@ def _load_manual_input_vat(month: str) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+RETURN_LIKE_STATUS_KEYWORDS = (
+    "cancel",
+    "cancelled",
+    "canceled",
+    "void",
+    "return",
+    "returned",
+    "refund",
+    "refunded",
+    "rma",
+    "revoked",
+    "returning",
+)
+
+
+def is_fully_return_like_order(order: dict[str, Any]) -> bool:
+    """True when an order is economically void (fully refunded/cancelled/voided).
+
+    Mirrors the semantics of bookings._normalized_sync_amounts and
+    analytics._normalize_order_metrics so that threshold and VAT reporting stay
+    consistent with those views. Partially refunded orders are NOT return-like
+    here; their reduced amounts already flow through the summaries.
+    """
+    tokens = [
+        str(order.get(field) or "").strip().lower()
+        for field in ("financial_status", "raw_status", "fulfillment_status")
+    ]
+    if any("partial" in token for token in tokens):
+        return False
+    return any(
+        keyword in token
+        for token in tokens
+        if token
+        for keyword in RETURN_LIKE_STATUS_KEYWORDS
+    )
+
+
 def build_threshold_candidate(orders: list[dict[str, Any]]) -> dict[str, Any] | None:
-    cumulative_cents = 0
+    """Find the first order whose IN-YEAR cumulative gross crosses the VAT threshold.
+
+    The §19 UStG threshold applies per calendar year, so accumulation resets on
+    January 1st instead of carrying previous-year revenue forward.
+    """
     ordered = sorted(
         orders,
         key=lambda item: (
@@ -152,17 +193,23 @@ def build_threshold_candidate(orders: list[dict[str, Any]]) -> dict[str, Any] | 
             str(item.get("order_id") or ""),
         ),
     )
+    yearly_cumulative: dict[int, int] = {}
     for order in ordered:
+        if is_fully_return_like_order(order):
+            continue
+        parsed_order_date = parse_iso(order.get("order_date"))
+        year = parsed_order_date.year if parsed_order_date is not None else 0
         gross_cents = max(int(order.get("sales_gross_cents") or order.get("total_cents") or 0), 0)
-        cumulative_cents += gross_cents
-        if cumulative_cents >= VAT_THRESHOLD_CENTS:
+        yearly_cumulative[year] = yearly_cumulative.get(year, 0) + gross_cents
+        if yearly_cumulative[year] >= VAT_THRESHOLD_CENTS:
             return {
+                "year": year,
                 "marketplace": order.get("marketplace"),
                 "order_id": order.get("order_id"),
                 "external_order_id": order.get("external_order_id"),
                 "order_date": order.get("order_date"),
                 "sales_gross_cents": gross_cents,
-                "cumulative_gross_cents": cumulative_cents,
+                "cumulative_gross_cents": yearly_cumulative[year],
                 "threshold_cents": VAT_THRESHOLD_CENTS,
             }
     return None
@@ -183,6 +230,11 @@ def build_vat_report(*, month: str, orders: list[dict[str, Any]]) -> dict[str, A
         if order_dt is None or order_dt < month_start or order_dt >= month_end:
             continue
         if not bool(order.get("vat_applicable")):
+            continue
+        if is_fully_return_like_order(order):
+            warnings.append(
+                f"Order {order.get('external_order_id') or order.get('order_id')} ist voll erstattet/storniert und wird nicht als Bemessungsgrundlage gezählt."
+            )
             continue
         if any(
             token in str(order.get(field) or "").strip().lower()
