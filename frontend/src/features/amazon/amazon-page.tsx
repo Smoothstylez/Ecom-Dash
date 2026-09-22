@@ -57,6 +57,24 @@ type FinanceOverview = {
   events?: FinanceEvent[];
 };
 
+type AmazonDashboardSummary = {
+  gross_sales_cents: number;
+  sales_net_cents: number;
+  sales_vat_cents: number;
+  orders_count: number;
+  fees_net_cents: number;
+  fees_vat_cents: number;
+  realized_cogs_cents: number;
+  realized_profit_cents: number;
+  realized_profit_percent: number | null;
+  inventory_cost_cents: number;
+  position_after_inventory_cents: number;
+  position_positive: boolean;
+  costs_complete: boolean;
+  finance_complete: boolean;
+  incomplete_event_count: number;
+};
+
 type InboundShipment = {
   shipment_id: string;
   shipment_name: string;
@@ -174,10 +192,11 @@ function formatCentsInput(cents: number) {
 }
 
 export function AmazonPage() {
-  const { refreshRequestToken } = useDashboardShellState();
-  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "pool">("overview");
+  const { filters, refreshRequestToken } = useDashboardShellState();
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "pool">("inventory");
   const [status, setStatus] = useState<AmazonStatus | null>(null);
   const [finance, setFinance] = useState<FinanceOverview | null>(null);
+  const [dashboardSummary, setDashboardSummary] = useState<AmazonDashboardSummary | null>(null);
   const [shipments, setShipments] = useState<InboundShipment[]>([]);
   const [inboundCosts, setInboundCosts] = useState<InboundCost[]>([]);
   const [shipmentFilters, setShipmentFilters] = useState<Set<string>>(new Set());
@@ -201,8 +220,16 @@ export function AmazonPage() {
         fetchJson<{ items?: InboundShipment[] }>(buildDashboardApiUrl("/api/amazon/inbound/shipments"), { signal: requestSignal }),
         fetchJson<{ items?: InboundCost[] }>(buildDashboardApiUrl("/api/amazon/inbound/costs"), { signal: requestSignal }),
       ]);
+      const summaryParams = new URLSearchParams();
+      if (filters.from) summaryParams.set("date_from", filters.from);
+      if (filters.to) summaryParams.set("date_to", filters.to);
+      const nextSummary = await fetchJson<AmazonDashboardSummary>(
+        buildDashboardApiUrl(`/api/amazon/dashboard-summary?${summaryParams.toString()}`),
+        { signal: requestSignal },
+      );
       setStatus(nextStatus);
       setFinance(nextFinance);
+      setDashboardSummary(nextSummary);
       setShipments(nextShipments.items || []);
       setInboundCosts(nextCosts.items || []);
     } catch (requestError: unknown) {
@@ -216,7 +243,7 @@ export function AmazonPage() {
     const controller = new AbortController();
     void refreshAmazonData(controller.signal);
     return () => controller.abort();
-  }, [refreshRequestToken]);
+  }, [filters.from, filters.to, refreshRequestToken]);
 
   const lastUpdatedText = useMemo(() => {
     const tasks = Object.values(status?.auto_refresh?.tasks || {});
@@ -429,19 +456,14 @@ export function AmazonPage() {
     <section className="page" aria-label="Amazon FBA">
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="kpi-grid">
-        <article className="kpi-card"><span>Operativer Netto-Umsatz (EUR)</span><strong>{formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.sales_net_cents || 0)}</strong><small>inklusive vorläufiger Deferred-Verkäufe</small></article>
-        <article className="kpi-card"><span>Operative Amazon-Gebühren netto</span><strong>{formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.fees_net_cents || 0)}</strong><small>Gebühren-USt. separat: {formatMoneyFromCents(finance?.operational_totals_by_currency?.EUR?.fees_vat_cents || 0)}</small></article>
-        <article className="kpi-card"><span>Freigegebener Netto-Umsatz (EUR)</span><strong>{formatMoneyFromCents(finance?.released_totals_by_currency?.EUR?.sales_net_cents || 0)}</strong><small>RELEASED und DEFERRED_RELEASED</small></article>
-        <article className="kpi-card"><span>Freigegebene Gebühren netto</span><strong>{formatMoneyFromCents(finance?.released_totals_by_currency?.EUR?.fees_net_cents || 0)}</strong><small>für Settlement verfügbar, nicht zwingend Bankeingang</small></article>
+        <article className="kpi"><div className="kpi-name">Brutto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.gross_sales_cents || 0)}</div><div className="kpi-sub">Amazon-Verkäufe im Zeitraum</div></article>
+        <article className="kpi"><div className="kpi-name">Netto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.sales_net_cents || 0)}</div><div className="kpi-sub">USt. enthalten: {formatMoneyFromCents(dashboardSummary?.sales_vat_cents || 0)}</div></article>
+        <article className="kpi"><div className="kpi-name">Orders</div><div className="kpi-value">{count(dashboardSummary?.orders_count)}</div><div className="kpi-sub">im gewählten Zeitraum</div></article>
+        <article className="kpi"><div className="kpi-name">Amazon-Gebühren</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.fees_net_cents || 0)}</div><div className="kpi-sub">Gebühren-USt.: {formatMoneyFromCents(dashboardSummary?.fees_vat_cents || 0)}</div></article>
+        <article className="kpi"><div className="kpi-name">Gewinn verkauft</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.realized_profit_cents || 0)}</div><div className="kpi-sub">Netto − Gebühren − FIFO-Wareneinsatz</div></article>
+        <article className="kpi"><div className="kpi-name">Positionsstand inkl. Bestand</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.position_after_inventory_cents || 0)}</div><div className="kpi-sub">Bestand gebunden: {formatMoneyFromCents(dashboardSummary?.inventory_cost_cents || 0)}</div></article>
       </div>
-      <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: "1rem" }}>
-        <button
-          className={classNames("segmented-btn", activeTab === "overview" && "active")}
-          type="button"
-          onClick={() => setActiveTab("overview")}
-        >
-          Übersicht
-        </button>
+      <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: "1rem", justifyContent: "center", width: "100%" }}>
         <button
           className={classNames("segmented-btn", activeTab === "inventory" && "active")}
           type="button"
@@ -453,6 +475,7 @@ export function AmazonPage() {
           Bestand
         </button>
         <button className={classNames("segmented-btn", activeTab === "pool" && "active")} type="button" onClick={() => { setActiveTab("pool"); setSelectedShipment(null); }}>Einkaufspool</button>
+        <button className={classNames("segmented-btn", activeTab === "overview" && "active")} type="button" onClick={() => setActiveTab("overview")}>Übersicht</button>
       </div>
       {activeTab === "pool" ? <AmazonPoolPage /> : null}
       {activeTab === "inventory" ? <AmazonInventoryPage /> : null}

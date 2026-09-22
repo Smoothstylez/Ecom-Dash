@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useDashboardRuntime } from "@/app/dashboard-runtime";
 import { withAdminHeaders } from "@/shared/api/admin-auth";
 import { fetchJson } from "@/shared/api/client";
 import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { formatMoneyFromCents as money } from "@/features/analytics/format";
 import "./amazon-pool.css";
+import { useAmazonDetailModal } from "./use-amazon-detail-modal";
 
 type Product = { id: string; name: string; available_quantity: number; reserved_quantity: number; in_transit_quantity: number; amazon_costed_quantity: number; average_home_cost_cents: number | null; sales_net_cents: number; margin_cents: number; margin_complete: boolean };
-type Invoice = { id: string; supplier: string; number: string; invoice_date: string; currency: string; gross_cents: number; notes?: string };
+type Invoice = { id: string; supplier: string; number: string; invoice_date: string; currency: string; gross_cents: number; freight_cents?: number; vat_cents?: number; notes?: string };
 type Line = { id: string; invoice_id: string; product_id: string; quantity: number; tax_status: string; gross_cents: number; net_cents: number; vat_cents: number; effective_cost_cents: number; deductible_vat_cents: number | null };
 type Receipt = { id: string; line_id: string; quantity: number; available_quantity: number };
 type Item = { id: string; shipment_id: string; seller_sku: string; quantity_shipped: number; quantity_received: number; status: string };
@@ -26,7 +29,9 @@ const cents = (text: string) => {
 const initialLine = (): DraftLine => ({ product_id: "", quantity: "1", gross: "", vat: "0", tax: "review" });
 
 export function AmazonPoolPage() {
+  const { previewModalApi } = useDashboardRuntime();
   const retryKeys = useRef(new Map<string, string>());
+  const documentUrlRef = useRef<string | null>(null);
   const [data, setData] = useState<Pool | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -88,14 +93,42 @@ export function AmazonPoolPage() {
   const upload = async (id: string, document: File) => { const body = new FormData(); body.append("file", document); return fetchJson(api(`/invoices/${id}/documents`), { method: "POST", body }); };
   const productOptions = data?.products.map(p => <option key={p.id} value={p.id}>{p.name}</option>);
   const chosen = data?.invoices.find(i => i.id === selectedInvoice);
+  const invoiceDetailPortalTarget = useAmazonDetailModal(Boolean(chosen), chosen ? `${chosen.supplier} · ${chosen.number}` : "Eingangsrechnung", () => setSelectedInvoice(""));
   const name = (id: string) => data?.products.find(p => p.id === id)?.name || id;
+  const invoiceStats = (invoice: Invoice) => {
+    const lines = data?.lines.filter(line => line.invoice_id === invoice.id) || [];
+    const lineIds = new Set(lines.map(line => line.id));
+    return {
+      totalCents: invoice.gross_cents + Number(invoice.freight_cents || 0),
+      vatCents: Number(invoice.vat_cents || lines.reduce((sum, line) => sum + line.vat_cents, 0)),
+      purchased: lines.reduce((sum, line) => sum + line.quantity, 0),
+      received: data?.receipts.filter(receipt => lineIds.has(receipt.line_id)).reduce((sum, receipt) => sum + receipt.quantity, 0) || 0,
+      paidCents: data?.payments.filter(payment => payment.invoice_id === invoice.id).reduce((sum, payment) => sum + payment.amount_cents, 0) || 0,
+      documents: data?.documents.filter(document => document.invoice_id === invoice.id).length || 0,
+    };
+  };
+  const previewDocument = async (document: { id: string; filename: string }) => {
+    const response = await fetch(api(`/documents/${document.id}`), withAdminHeaders({ headers: { Accept: "application/pdf,image/*,application/octet-stream" } }));
+    if (!response.ok) throw new Error("Beleg konnte nicht geladen werden");
+    if (documentUrlRef.current) URL.revokeObjectURL(documentUrlRef.current);
+    const url = URL.createObjectURL(await response.blob());
+    documentUrlRef.current = url;
+    previewModalApi?.open(url, document.filename, response.headers.get("content-type") || "application/pdf");
+  };
+  useEffect(() => () => { if (documentUrlRef.current) URL.revokeObjectURL(documentUrlRef.current); }, []);
+  const openInvoice = (invoice: Invoice) => {
+    setSelectedInvoice(invoice.id);
+    setReceiptLine("");
+    const document = data?.documents.find(item => item.invoice_id === invoice.id);
+    if (document) void previewDocument(document).catch(error => setError(error instanceof Error ? error.message : String(error)));
+  };
   const modifyLine = (index: number, changes: Partial<DraftLine>) => setDraftLines(lines => lines.map((l, i) => i === index ? { ...l, ...changes } : l));
   if (!data) return <p role="status">{error || "Einkaufspool wird geladen …"}</p>;
 
   return <section className="amazon-pool">
     <header><h2>Einkaufspool</h2><p>Einkäufe erfassen, Bestand bei dir verfolgen und Teilmengen auf FBA-Sendungen verteilen.</p></header>
     {error && <p role="alert" className="pool-error">{error}</p>}{message && <p role="status">{message}</p>}
-    <nav aria-label="Einkaufspool"><button className="button" onClick={() => setTab("purchases")}>Einkäufe</button><button className="button" onClick={() => setTab("products")}>Produkte & Listings</button><button className="button" onClick={() => setTab("shipments")}>FBA-Zuordnung</button></nav>
+    <nav className="amazon-pool-tabs" aria-label="Einkaufspool"><button className={tab === "purchases" ? "segmented-btn active" : "segmented-btn"} onClick={() => setTab("purchases")}>Einkäufe</button><button className={tab === "products" ? "segmented-btn active" : "segmented-btn"} onClick={() => setTab("products")}>Produkte & Listings</button><button className={tab === "shipments" ? "segmented-btn active" : "segmented-btn"} onClick={() => setTab("shipments")}>FBA-Zuordnung</button></nav>
     <fieldset disabled={busy}>
     {tab === "products" && <>
       <form onSubmit={e => { e.preventDefault(); void run(async () => { await post("/products", { name: productName }); setProductName(""); }, "Produkt angelegt."); }} className="pool-form"><label>Internes Produkt<input required value={productName} onChange={e => setProductName(e.target.value)} placeholder="z. B. CarlinKit MINI Ultra" /></label><button className="button">Produkt anlegen</button></form>
@@ -123,8 +156,9 @@ export function AmazonPoolPage() {
         </form>
       </details>
       {data.legacy_invoices?.length > 0 && <details><summary>Vorhandene Sendungsrechnungen übernehmen ({data.legacy_invoices.length})</summary><form className="pool-form" onSubmit={e => { e.preventDefault(); void run(() => post("/legacy-migration", { legacy_invoice_id: legacyInvoice, marketplace_id: marketplace, received_at: receiptDate }), "Altrechnung übernommen; ursprüngliche Belege und Kosten bleiben erhalten."); }}><label>Altrechnung<select required value={legacyInvoice} onChange={e => setLegacyInvoice(e.target.value)}><option value="">Auswählen</option>{data.legacy_invoices.map(i => <option key={i.id} value={i.id}>{i.supplier_name} · {i.invoice_number} · {i.shipment_id}</option>)}</select></label><label>Marketplace<select required value={marketplace} onChange={e => setMarketplace(e.target.value)}><option value="">Auswählen</option>{[...new Set(data.listings.map(l => l.marketplace_id))].map(m => <option key={m}>{m}</option>)}</select></label><label>Wareneingang am<input required type="date" value={receiptDate} onChange={e => setReceiptDate(e.target.value)} /></label><button className="button">Altrechnung übernehmen</button></form></details>}
-      <h3>Rechnungen und Wareneingänge</h3><label>Rechnung auswählen<select value={selectedInvoice} onChange={e => { setSelectedInvoice(e.target.value); setReceiptLine(""); }}><option value="">Auswählen</option>{data.invoices.map(i => <option key={i.id} value={i.id}>{i.invoice_date.slice(0, 10)} · {i.supplier} · {i.number}</option>)}</select></label>
-      {chosen && <><p>Rechnungsbetrag: {moneyIn(chosen.gross_cents, chosen.currency)} · Erfasste Zahlungen: {moneyIn(data.payments.filter(p => p.invoice_id === chosen.id).reduce((sum, p) => sum + p.amount_cents, 0), chosen.currency)}</p>{chosen.notes && <p><strong>Interne Notiz:</strong> {chosen.notes}</p>}
+      <h3>Rechnungen und Wareneingänge</h3>
+      <div className="pool-scroll"><table className="pool-invoice-table"><thead><tr><th>Datum</th><th>Lieferant / Rechnung</th><th>Betrag</th><th>MwSt.</th><th>Einheiten</th><th>Eingegangen</th><th>Status</th><th>Beleg</th></tr></thead><tbody>{[...data.invoices].sort((a, b) => b.invoice_date.localeCompare(a.invoice_date)).map(invoice => { const stats = invoiceStats(invoice); return <tr key={invoice.id} role="button" tabIndex={0} onClick={() => openInvoice(invoice)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openInvoice(invoice); } }}><td>{invoice.invoice_date.slice(0, 10)}</td><td><strong>{invoice.supplier}</strong><small>{invoice.number}{invoice.notes ? " · Notiz" : ""}</small></td><td>{moneyIn(stats.totalCents, invoice.currency)}</td><td>{moneyIn(stats.vatCents, invoice.currency)}</td><td>{stats.purchased}</td><td>{stats.received} / {stats.purchased}</td><td>{stats.paidCents >= stats.totalCents ? "Bezahlt" : stats.paidCents > 0 ? "Teilbezahlt" : "Offen"}</td><td>{stats.documents ? "PDF/Bild" : "—"}</td></tr>; })}</tbody></table></div>
+      {chosen && invoiceDetailPortalTarget ? createPortal(<div className="pool-invoice-detail"><p>Rechnungsbetrag: {moneyIn(invoiceStats(chosen).totalCents, chosen.currency)} · Erfasste Zahlungen: {moneyIn(invoiceStats(chosen).paidCents, chosen.currency)}</p>{chosen.notes && <p><strong>Interne Notiz:</strong> {chosen.notes}</p>}
       <ul>{data.lines.filter(l => l.invoice_id === chosen.id).map(l => <li key={l.id}>{name(l.product_id)}: {data.receipts.filter(r => r.line_id === l.id).reduce((sum, r) => sum + r.quantity, 0)} / {l.quantity} Stück eingegangen {l.tax_status === "review_required" && "· Vorsteuer ungeklärt"}</li>)}</ul>
       <form className="pool-form" onSubmit={e => { e.preventDefault(); void run(() => post("/receipts", { line_id: receiptLine, quantity: Number(receiptQty), received_at: receiptDate }), "Wareneingang gebucht."); }}><label>Position<select required value={receiptLine} onChange={e => setReceiptLine(e.target.value)}><option value="">Auswählen</option>{data.lines.filter(l => l.invoice_id === chosen.id).map(l => <option key={l.id} value={l.id}>{name(l.product_id)}</option>)}</select></label><label>Erhaltene Stück<input required type="number" min="1" step="1" value={receiptQty} onChange={e => setReceiptQty(e.target.value)} /></label><label>Eingang am<input type="date" required value={receiptDate} onChange={e => setReceiptDate(e.target.value)} /></label><button className="button">Wareneingang buchen</button></form>
       <form className="pool-form" onSubmit={e => { e.preventDefault(); void run(() => post("/payments", { invoice_id: chosen.id, amount_cents: cents(payment), paid_at: paymentDate, account_reference: account }), "Zahlung erfasst; kein zusätzlicher Wareneinsatz gebucht."); }}><label>Zahlbetrag ({chosen.currency})<input required value={payment} onChange={e => setPayment(e.target.value)} inputMode="decimal" /></label><label>Gezahlt am<input required type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} /></label><label>Konto / Zahlungsreferenz<input required value={account} onChange={e => setAccount(e.target.value)} /></label><button className="button">Zahlung erfassen</button></form>
@@ -133,8 +167,8 @@ export function AmazonPoolPage() {
           <div className="pool-form"><label>Korrekturposition<select required value={correctionLine} onChange={e => { setCorrectionLine(e.target.value); setPreview(null); const l = data.lines.find(l => l.id === e.target.value); if (l) { setCorrectionGross((l.gross_cents/100).toFixed(2)); setCorrectionVat((l.vat_cents/100).toFixed(2)); setCorrectionDeductible(((l.deductible_vat_cents || 0)/100).toFixed(2)); } }}><option value="">Auswählen</option>{data.lines.filter(l => l.invoice_id === chosen.id).map(l => <option value={l.id} key={l.id}>{name(l.product_id)}</option>)}</select></label><label>Korrigierter Bruttobetrag<input required value={correctionGross} onChange={e => { setCorrectionGross(e.target.value); setPreview(null); }} /></label><label>Steuerbetrag<input required value={correctionVat} onChange={e => { setCorrectionVat(e.target.value); setPreview(null); }} /></label><label>Abziehbare Vorsteuer<input required value={correctionDeductible} onChange={e => { setCorrectionDeductible(e.target.value); setPreview(null); }} /></label><label>Begründung<input required value={correctionReason} onChange={e => { setCorrectionReason(e.target.value); setPreview(null); }} /></label></div><button className="button">Vorschau berechnen</button>
         </form>{preview && <p>Wirtschaftliche Positionskosten: {money(preview.old_cost_cents)} → {money(preview.new_cost_cents)} <button className="button" onClick={() => void run(async () => { await post("/revisions", { ...preview.payload, preview: false }); setPreview(null); }, "Korrektur mit Änderungsnachweis übernommen.")}>Korrektur übernehmen</button></p>}
       </details>
-      <h4>Belege</h4>{data.documents.filter(d => d.invoice_id === chosen.id).map(d => <p key={d.id}><button type="button" className="button" onClick={() => void run(async () => { const response = await fetch(api(`/documents/${d.id}`), withAdminHeaders({})); if (!response.ok) throw new Error("Beleg konnte nicht geladen werden"); const url = URL.createObjectURL(await response.blob()); const a = document.createElement("a"); a.href = url; a.download = d.filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }, "Beleg heruntergeladen.")}>{d.filename}</button></p>)}<label>Weiteren Beleg hinzufügen<input type="file" onChange={e => { const document = e.target.files?.[0]; if (document) void run(() => upload(chosen.id, document), "Beleg gespeichert."); e.target.value = ""; }} /></label>
-      </>}
+      <h4>Belege</h4>{data.documents.filter(d => d.invoice_id === chosen.id).map(d => <p key={d.id}><button type="button" className="button" onClick={() => void previewDocument(d).catch(error => setError(error instanceof Error ? error.message : String(error)))}>Beleg anzeigen</button> <button type="button" className="button" onClick={() => void run(async () => { const response = await fetch(api(`/documents/${d.id}`), withAdminHeaders({})); if (!response.ok) throw new Error("Beleg konnte nicht geladen werden"); const url = URL.createObjectURL(await response.blob()); const a = document.createElement("a"); a.href = url; a.download = d.filename; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }, "Beleg heruntergeladen.")}>Download {d.filename}</button></p>)}<label>Weiteren Beleg hinzufügen<input type="file" onChange={e => { const document = e.target.files?.[0]; if (document) void run(() => upload(chosen.id, document), "Beleg gespeichert."); e.target.value = ""; }} /></label>
+      </div>, invoiceDetailPortalTarget) : null}
     </>}
     {tab === "shipments" && <>
       <p>Produkte zunächst mit der passenden Marketplace-/SKU-Kombination verbinden. Reservierte Stücke stehen keiner zweiten Sendung zur Verfügung.</p>

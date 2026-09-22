@@ -61,6 +61,54 @@ def test_fifo_allocation_projects_amazon_order(monkeypatch, tmp_path) -> None:
     assert remaining == 0
 
 
+def test_amazon_dashboard_summary_separates_realized_profit_from_inventory_position(monkeypatch, tmp_path) -> None:
+    import app.services.amazon_financials as financials
+    import app.services.amazon_fba as amazon_fba
+    import app.services.amazon_procurement as procurement
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    procurement.initialize()
+
+    with importer._connect() as connection:
+        connection.execute(
+            "INSERT INTO amazon_orders(amazon_order_id, marketplace_id, purchase_date, order_status, currency, raw_json, updated_at) VALUES ('SUMMARY-1', 'DE', '2026-09-10T00:00:00Z', 'Shipped', 'EUR', '{}', '2026-09-10T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO amazon_order_items(id, amazon_order_id, seller_sku, quantity_shipped, currency, item_price_cents, item_tax_cents) VALUES ('SUMMARY-ITEM', 'SUMMARY-1', 'SUMMARY-SKU', 1, 'EUR', 1000, 190)"
+        )
+        connection.execute(
+            "INSERT INTO inventory_lots(id, seller_sku, available_quantity, unit_cost_cents, cost_remainder_cents, received_at, created_at) VALUES ('SUMMARY-LOT', 'SUMMARY-SKU', 1, 300, 0, '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z')"
+        )
+        connection.execute(
+            "INSERT INTO fifo_allocations(id, amazon_order_id, amazon_order_item_id, inventory_lot_id, quantity, unit_cost_cents, allocated_cost_cents, allocated_at) VALUES ('SUMMARY-ALLOC', 'SUMMARY-1', 'SUMMARY-ITEM', 'SUMMARY-LOT', 1, 300, 300, '2026-09-10T00:00:00Z')"
+        )
+        product = connection.execute("INSERT INTO pool_products(id, name, created_at) VALUES ('SUMMARY-PRODUCT', 'Summary Product', '2026-09-01T00:00:00Z')")
+        connection.execute("INSERT INTO pool_listings(marketplace_id, seller_sku, asin, product_id) VALUES ('DE', 'SUMMARY-SKU', 'ASIN-SUMMARY', 'SUMMARY-PRODUCT')")
+        connection.execute("INSERT INTO pool_invoices(id, supplier, number, invoice_date, currency, fx_rate, fx_reference, document_path, notes, gross_cents, net_cents, vat_cents, freight_cents, created_at) VALUES ('SUMMARY-INVOICE', 'Supplier', 'S-1', '2026-09-01', 'EUR', '1', '', '', '', 200, 200, 0, 0, '2026-09-01T00:00:00Z')")
+        connection.execute("INSERT INTO pool_lines(id, invoice_id, product_id, quantity, gross_cents, net_cents, vat_cents, deductible_vat_cents, effective_cost_cents, freight_cents, tax_status) VALUES ('SUMMARY-LINE', 'SUMMARY-INVOICE', 'SUMMARY-PRODUCT', 1, 200, 200, 0, 0, 200, 0, 'confirmed')")
+        connection.execute("INSERT INTO pool_receipts(id, line_id, received_at, quantity, available_quantity, cost_cents, available_cost_cents, created_at) VALUES ('SUMMARY-RECEIPT', 'SUMMARY-LINE', '2026-09-01T00:00:00Z', 1, 1, 200, 200, '2026-09-01T00:00:00Z')")
+        connection.commit()
+
+    monkeypatch.setattr(financials, "events", lambda _connection: [{
+        "amazon_order_id": "SUMMARY-1", "posted_date": "2026-09-10T00:00:00Z",
+        "sales_cents": 1000, "sales_net_cents": 810, "sales_vat_cents": 190,
+        "fees_net_cents": 100, "fees_vat_cents": 0, "sales_tax_complete": True,
+        "fee_tax_complete": True,
+    }])
+
+    summary = amazon_fba.get_amazon_dashboard_summary(date_from="2026-09-01", date_to="2026-09-30")
+
+    assert summary["gross_sales_cents"] == 1000
+    assert summary["sales_net_cents"] == 810
+    assert summary["orders_count"] == 1
+    assert summary["realized_cogs_cents"] == 300
+    assert summary["realized_profit_cents"] == 410
+    assert summary["inventory_cost_cents"] == 500
+    assert summary["position_after_inventory_cents"] == -90
+
+
 def test_amazon_order_detail_projects_available_address_and_catalog_image(monkeypatch, tmp_path) -> None:
     import app.services.amazon_fba as amazon_fba
     import app.services.importers.amazon_sp_api as importer

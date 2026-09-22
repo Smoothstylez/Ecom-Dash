@@ -1157,6 +1157,86 @@ def get_amazon_finance_overview() -> dict[str, Any]:
     }
 
 
+def get_amazon_dashboard_summary(*, date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict[str, Any]:
+    """Period-aware Amazon KPI summary plus current costed inventory position."""
+    init_amazon_fba_db()
+    from app.services.amazon_financials import events as economic_events
+    from app.services import amazon_procurement
+
+    def in_period(event: dict[str, Any]) -> bool:
+        day = str(event.get("posted_date") or "")[:10]
+        if not day:
+            return False
+        return (not date_from or day >= date_from[:10]) and (not date_to or day <= date_to[:10])
+
+    with _connect() as connection:
+        period_events = [event for event in economic_events(connection) if in_period(event)]
+        order_ids = {str(event["amazon_order_id"]) for event in period_events if event.get("amazon_order_id") and int(event.get("sales_cents") or 0) != 0}
+        cogs_cents = 0
+        cogs_complete = True
+        if order_ids:
+            placeholders = ",".join("?" for _ in order_ids)
+            cogs_cents = int(connection.execute(
+                f"SELECT COALESCE(SUM(allocated_cost_cents), 0) FROM fifo_allocations WHERE amazon_order_id IN ({placeholders})",
+                tuple(order_ids),
+            ).fetchone()[0] or 0)
+            cogs_complete = not connection.execute(
+                f"""
+                SELECT 1 FROM amazon_order_items oi
+                WHERE oi.amazon_order_id IN ({placeholders})
+                  AND COALESCE((SELECT SUM(a.quantity) FROM fifo_allocations a WHERE a.amazon_order_item_id=oi.id), 0) < oi.quantity_shipped
+                LIMIT 1
+                """,
+                tuple(order_ids),
+            ).fetchone()
+        fba_inventory_cost = int(connection.execute(
+            "SELECT COALESCE(SUM(available_quantity * unit_cost_cents + cost_remainder_cents), 0) FROM inventory_lots"
+        ).fetchone()[0] or 0)
+
+    amazon_procurement.initialize()
+    with _connect() as connection:
+        pool_inventory_cost = int(connection.execute(
+            """
+            SELECT COALESCE(SUM(r.available_cost_cents), 0)
+            FROM pool_receipts r JOIN pool_lines l ON l.id=r.line_id
+            WHERE r.available_quantity > 0
+              AND EXISTS (SELECT 1 FROM pool_listings pl WHERE pl.product_id=l.product_id)
+            """
+        ).fetchone()[0] or 0)
+
+    sales_gross = sum(int(event.get("sales_cents") or 0) for event in period_events)
+    sales_vat = sum(int(event.get("sales_vat_cents") or 0) for event in period_events)
+    sales_net = sum(int(event.get("sales_net_cents") or 0) for event in period_events)
+    fees_net = sum(int(event.get("fees_net_cents") or 0) for event in period_events)
+    fees_vat = sum(int(event.get("fees_vat_cents") or 0) for event in period_events)
+    realized_profit = sales_net - fees_net - cogs_cents
+    inventory_cost = fba_inventory_cost + pool_inventory_cost
+    position = realized_profit - inventory_cost
+    incomplete_events = sum(not event.get("sales_tax_complete") or not event.get("fee_tax_complete") for event in period_events)
+
+    return {
+        "date_from": date_from,
+        "date_to": date_to,
+        "gross_sales_cents": sales_gross,
+        "sales_net_cents": sales_net,
+        "sales_vat_cents": sales_vat,
+        "orders_count": len(order_ids),
+        "fees_net_cents": fees_net,
+        "fees_vat_cents": fees_vat,
+        "realized_cogs_cents": cogs_cents,
+        "realized_profit_cents": realized_profit,
+        "realized_profit_percent": round(realized_profit / sales_net * 100, 1) if sales_net else None,
+        "fba_inventory_cost_cents": fba_inventory_cost,
+        "pool_inventory_cost_cents": pool_inventory_cost,
+        "inventory_cost_cents": inventory_cost,
+        "position_after_inventory_cents": position,
+        "position_positive": position >= 0,
+        "costs_complete": cogs_complete,
+        "finance_complete": incomplete_events == 0,
+        "incomplete_event_count": incomplete_events,
+    }
+
+
 def create_procurement_batch(*, reference: str, name: str, lines: list[dict[str, Any]], received_at: Optional[str] = None, notes: str = "") -> dict[str, Any]:
     if not reference.strip() or not name.strip() or not lines:
         raise ValueError("reference, name, and at least one line are required")

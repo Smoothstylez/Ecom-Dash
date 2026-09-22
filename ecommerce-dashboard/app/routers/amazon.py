@@ -250,6 +250,13 @@ def api_amazon_finance() -> dict[str, Any]:
     return {"ok": True, **get_amazon_finance_overview()}
 
 
+@router.get("/dashboard-summary")
+def api_amazon_dashboard_summary(date_from: Optional[str] = None, date_to: Optional[str] = None) -> dict[str, Any]:
+    from app.services.amazon_fba import get_amazon_dashboard_summary
+
+    return {"ok": True, **get_amazon_dashboard_summary(date_from=date_from, date_to=date_to)}
+
+
 @router.get("/inbound/shipments")
 def api_amazon_inbound_shipments(status: Optional[str] = None) -> dict[str, Any]:
     return {"ok": True, "items": list_inbound_shipments(status=status)}
