@@ -21,6 +21,10 @@ from app.services.order_summaries import cents_to_eur
 
 def _canonical_financial_event_predicate(alias: str = "e") -> str:
     lifecycle_key = f"COALESCE({alias}.lifecycle_id, {alias}.transaction_id, {alias}.id)"
+    def category(name):
+        return f"CASE WHEN lower({name}.event_type) LIKE '%refund%' OR lower(COALESCE(json_extract({name}.raw_json, '$.\"transaction-type\"'), ''))='refund' THEN 'refund' WHEN {name}.event_type IN ('ModernTransaction:Shipment','ShipmentEventList','SettlementReportLine') THEN 'sale' ELSE {name}.event_type END"
+    modern_match = f"modern.amazon_order_id IS {alias}.amazon_order_id AND modern.currency={alias}.currency AND ({category('modern')})=({category(alias)})"
+    report_match = f"report.amazon_order_id IS {alias}.amazon_order_id AND report.currency={alias}.currency AND ({category('report')})=({category(alias)})"
     return f"""
     (
         ({alias}.amazon_order_id IS NULL AND {alias}.event_type = 'SettlementReportLine')
@@ -28,7 +32,7 @@ def _canonical_financial_event_predicate(alias: str = "e") -> str:
         (
             EXISTS (
                 SELECT 1 FROM amazon_financial_events modern
-                WHERE modern.amazon_order_id = {alias}.amazon_order_id
+                WHERE {modern_match}
                   AND modern.event_type LIKE 'ModernTransaction:%'
             )
             AND {alias}.event_type LIKE 'ModernTransaction:%'
@@ -60,7 +64,7 @@ def _canonical_financial_event_predicate(alias: str = "e") -> str:
                             WHEN 'DEFERRED' THEN 1
                             ELSE 0
                         END
-                        AND COALESCE(newer.posted_date, '') > COALESCE({alias}.posted_date, '')
+                        AND (COALESCE(newer.posted_date, '') > COALESCE({alias}.posted_date, '') OR (COALESCE(newer.posted_date, '') = COALESCE({alias}.posted_date, '') AND newer.id > {alias}.id))
                     )
                   )
             )
@@ -68,12 +72,12 @@ def _canonical_financial_event_predicate(alias: str = "e") -> str:
         OR (
             NOT EXISTS (
                 SELECT 1 FROM amazon_financial_events modern
-                WHERE modern.amazon_order_id = {alias}.amazon_order_id
+                WHERE {modern_match}
                   AND modern.event_type LIKE 'ModernTransaction:%'
             )
             AND EXISTS (
                 SELECT 1 FROM amazon_financial_events report
-                WHERE report.amazon_order_id = {alias}.amazon_order_id
+                WHERE {report_match}
                   AND report.event_type = 'SettlementReportLine'
             )
             AND {alias}.event_type = 'SettlementReportLine'
@@ -81,12 +85,12 @@ def _canonical_financial_event_predicate(alias: str = "e") -> str:
         OR (
             NOT EXISTS (
                 SELECT 1 FROM amazon_financial_events modern
-                WHERE modern.amazon_order_id = {alias}.amazon_order_id
+                WHERE {modern_match}
                   AND modern.event_type LIKE 'ModernTransaction:%'
             )
             AND NOT EXISTS (
                 SELECT 1 FROM amazon_financial_events report
-                WHERE report.amazon_order_id = {alias}.amazon_order_id
+                WHERE {report_match}
                   AND report.event_type = 'SettlementReportLine'
             )
             AND {alias}.event_type <> 'SettlementReportLine'
@@ -108,7 +112,7 @@ def _raw_json(value: Any) -> dict[str, Any]:
 
 
 def _order_summary(row: sqlite3.Row) -> dict[str, Any]:
-    sales_cents = int(row["financial_sales_cents"] or row["order_total_cents"] or row["item_sales_cents"] or 0)
+    sales_cents = int(row["financial_sales_cents"] or 0) if row["financial_event_count"] else (0 if str(row["order_status"]).lower() in {"canceled", "cancelled"} else int(row["order_total_cents"] or row["item_sales_cents"] or 0))
     sales_vat_cents = min(max(int(row["item_tax_cents"] or 0), 0), max(sales_cents, 0))
     fees_cents = int(row["financial_fees_cents"] or 0)
     after_fees_cents = sales_cents - fees_cents
@@ -161,6 +165,8 @@ def load_amazon_order_summaries() -> list[dict[str, Any]]:
             SELECT
                 o.*,
                 (SELECT COUNT(*) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id) AS line_items_count,
+                (SELECT COALESCE(SUM(quantity_shipped),0) FROM amazon_order_items WHERE amazon_order_id=o.amazon_order_id) AS shipped_units,
+                (SELECT COALESCE(SUM(quantity),0) FROM fifo_allocations WHERE amazon_order_id=o.amazon_order_id) AS allocated_units,
                 (SELECT oi.title FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id ORDER BY oi.id LIMIT 1) AS first_article,
                 COALESCE((SELECT SUM(oi.item_price_cents) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id), 0) AS item_sales_cents,
                 COALESCE((SELECT SUM(oi.item_tax_cents) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id), 0) AS item_tax_cents,
@@ -173,7 +179,9 @@ def load_amazon_order_summaries() -> list[dict[str, Any]]:
             ORDER BY COALESCE(o.purchase_date, '') DESC, o.amazon_order_id DESC
             """
         ).fetchall()
-    return [_order_summary(row) for row in rows]
+        from app.services.amazon_financials import order_totals, apply_summary
+        totals = order_totals(connection)
+    return [apply_summary(_order_summary(row), totals.get(row['amazon_order_id']), shipped=row['shipped_units'], allocated=row['allocated_units']) for row in rows]
 
 
 def get_amazon_order_detail(order_id: str) -> Optional[dict[str, Any]]:
@@ -188,6 +196,8 @@ def get_amazon_order_detail(order_id: str) -> Optional[dict[str, Any]]:
             SELECT
                 o.*,
                 (SELECT COUNT(*) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id) AS line_items_count,
+                (SELECT COALESCE(SUM(quantity_shipped),0) FROM amazon_order_items WHERE amazon_order_id=o.amazon_order_id) AS shipped_units,
+                (SELECT COALESCE(SUM(quantity),0) FROM fifo_allocations WHERE amazon_order_id=o.amazon_order_id) AS allocated_units,
                 (SELECT oi.title FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id ORDER BY oi.id LIMIT 1) AS first_article,
                 COALESCE((SELECT SUM(oi.item_price_cents) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id), 0) AS item_sales_cents,
                 COALESCE((SELECT SUM(oi.item_tax_cents) FROM amazon_order_items oi WHERE oi.amazon_order_id = o.amazon_order_id), 0) AS item_tax_cents,
@@ -218,6 +228,8 @@ def get_amazon_order_detail(order_id: str) -> Optional[dict[str, Any]]:
             (order_id,),
         ).fetchall()
 
+        from app.services.amazon_financials import order_totals, apply_summary
+        totals = order_totals(connection)
     raw_order = _raw_json(row["raw_json"])
     shipping_address = normalize_amazon_address(raw_order.get("ShippingAddress"))
     billing_address = normalize_amazon_address(raw_order.get("BillingAddress"))
@@ -240,7 +252,7 @@ def get_amazon_order_detail(order_id: str) -> Optional[dict[str, Any]]:
         line_items.append(item)
 
     return {
-        "summary": _order_summary(summary_row),
+        "summary": apply_summary(_order_summary(summary_row), totals.get(order_id), shipped=summary_row["shipped_units"], allocated=summary_row["allocated_units"]),
         "order": dict(row),
         "order_raw": raw_order,
         "line_items": line_items,
@@ -362,6 +374,24 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
         ).fetchall()
         cogs_by_sku = {str(row["sku_key"]): int(row["cogs_cents"] or 0) for row in cogs_rows}
 
+        remaining_cost_rows = connection.execute(
+            """
+            SELECT seller_sku,
+                   COALESCE(SUM(available_quantity), 0) AS quantity,
+                   COALESCE(SUM(available_quantity * unit_cost_cents + cost_remainder_cents), 0) AS cost_cents
+            FROM inventory_lots
+            WHERE seller_sku <> ''
+            GROUP BY seller_sku
+            """
+        ).fetchall()
+        remaining_cost_by_sku = {
+            str(row["seller_sku"]): {
+                "quantity": int(row["quantity"] or 0),
+                "cost_cents": int(row["cost_cents"] or 0),
+            }
+            for row in remaining_cost_rows
+        }
+
         fee_rows = connection.execute(
             f"""
             SELECT
@@ -425,6 +455,7 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
         tax_cents = min(max(int(sales.get("tax_cents") or 0), 0), sales_cents)
         sales_net_cents = sales_cents - tax_cents
         cogs_cents = cogs_by_sku.get(sku_key, 0)
+        remaining = remaining_cost_by_sku.get(sku_key, {})
         fees_cents = round(fees_by_sku.get(sku_key, 0.0))
         fulfillable_quantity = int(stock.get("fulfillable_quantity") or 0)
         inbound_working_quantity = int(stock.get("inbound_working_quantity") or 0)
@@ -454,12 +485,36 @@ def list_amazon_sku_inventory(*, include_hidden: bool = False, include_dormant: 
             "cogs_cents": cogs_cents,
             "margin_cents": margin_cents,
             "margin_percent": round(margin_cents / sales_net_cents * 100, 1) if sales_net_cents else None,
+            "remaining_inventory_quantity": int(remaining.get("quantity") or 0),
+            "remaining_inventory_cost_cents": int(remaining.get("cost_cents") or 0),
             "fulfillable_quantity": fulfillable_quantity,
             "inbound_working_quantity": inbound_working_quantity,
             "inbound_shipped_quantity": inbound_shipped_quantity,
             "reserved_quantity": int(stock.get("reserved_quantity") or 0),
             "hidden": is_hidden,
         })
+    from app.services.amazon_financials import listing_metrics
+    metrics = listing_metrics()
+    for item in items:
+        matches = [m for m in metrics if m['seller_sku'] == item['sku_key']]
+        if matches:
+            for field, target in [('sales_gross_cents','sales_cents'),('sales_net_cents','sales_net_cents'),('sales_vat_cents','tax_cents'),('fees_net_cents','fees_cents'),('cogs_cents','cogs_cents'),('margin_cents','margin_cents')]:
+                item[target] = sum(m[field] for m in matches)
+            item['costs_complete'] = all(m['costs_complete'] for m in matches)
+            item['margin_complete'] = all(m['margin_complete'] for m in matches)
+            item['margin_percent'] = round(item['margin_cents'] / item['sales_net_cents'] * 100, 1) if item['sales_net_cents'] else None
+        sold = int(item['quantity_sold'] or 0)
+        item['average_sales_net_cents_per_unit'] = round(item['sales_net_cents'] / sold) if sold else None
+        item['average_cogs_cents_per_unit'] = round(item['cogs_cents'] / sold) if sold else None
+        item['average_fees_cents_per_unit'] = round(item['fees_cents'] / sold) if sold else None
+        item['average_profit_cents_per_unit'] = round(item['margin_cents'] / sold) if sold else None
+        item['position_after_inventory_cents'] = item['margin_cents'] - item['remaining_inventory_cost_cents']
+        contribution_per_unit = (item['sales_net_cents'] - item['fees_cents']) / sold if sold else 0
+        item['break_even_reached'] = item['position_after_inventory_cents'] >= 0
+        item['break_even_units_remaining'] = (
+            max(0, int((item['remaining_inventory_cost_cents'] + contribution_per_unit - 1) // contribution_per_unit))
+            if contribution_per_unit > 0 else None
+        )
     items.sort(key=lambda item: (item["title"] or item["sku_key"]).lower())
     return items
 
@@ -1012,6 +1067,9 @@ def get_amazon_finance_overview() -> dict[str, Any]:
             "SELECT event_id, component_type, amount_cents, currency, raw_json FROM amazon_financial_components ORDER BY id"
         ).fetchall()
 
+    from app.services.amazon_financials import events as economic_events
+    with _connect() as connection:
+        event_rows = economic_events(connection)
     report_rows = [row for row in event_rows if str(row["event_type"]) == "SettlementReportLine"]
     report_currencies = {str(row["currency"] or "EUR").upper() for row in report_rows}
     report_recovery_currencies = {
@@ -1035,12 +1093,13 @@ def get_amazon_finance_overview() -> dict[str, Any]:
 
     components_by_event: dict[str, list[dict[str, Any]]] = {}
     fba_inbound_transport_cents = 0
+    canonical_ids = {row["id"] for row in event_rows}
     for component_row in component_rows:
         component = dict(component_row)
         raw = _raw_json(component.get("raw_json"))
         component["name"] = str(raw.get("FeeType") or raw.get("ChargeType") or component["component_type"])
         components_by_event.setdefault(str(component["event_id"]), []).append(component)
-        if "fbainboundtransport" in str(component["name"]).lower():
+        if component["event_id"] in canonical_ids and "fbainboundtransport" in str(component["name"]).lower():
             fba_inbound_transport_cents += abs(int(component["amount_cents"] or 0))
 
     events: list[dict[str, Any]] = []
@@ -1058,9 +1117,9 @@ def get_amazon_finance_overview() -> dict[str, Any]:
             ]
         currency = str(event["currency"] or "EUR").upper()
         breakdown = extract_modern_financial_breakdown(_raw_json(event.get("raw_json"))) if str(event.get("event_type") or "").startswith("ModernTransaction:") else None
-        sales_net_cents = (int(breakdown["sales_cents"]) - int(breakdown["tax_cents"])) if breakdown else int(event["sales_cents"] or 0)
-        fees_net_cents = sum(int(fee.get("net_cents") or 0) for fee in (breakdown or {}).get("fees", []))
-        fees_vat_cents = sum(int(fee.get("vat_cents") or 0) for fee in (breakdown or {}).get("fees", []))
+        sales_net_cents = int(event["sales_net_cents"])
+        fees_net_cents = int(event["fees_net_cents"])
+        fees_vat_cents = int(event["fees_vat_cents"] or 0)
         event["sales_net_cents"] = sales_net_cents
         event["fees_net_cents"] = fees_net_cents
         event["fees_vat_cents"] = fees_vat_cents
@@ -1074,12 +1133,22 @@ def get_amazon_finance_overview() -> dict[str, Any]:
         totals = totals_by_currency.setdefault(currency, {"sales_cents": 0, "fees_cents": 0, "adjustments_cents": 0})
         totals["sales_cents"] += int(event["sales_cents"] or 0)
         totals["fees_cents"] += int(event["fees_cents"] or 0)
-        if not int(event["sales_cents"] or 0) and not int(event["fees_cents"] or 0):
-            totals["adjustments_cents"] += int(event["net_cents"] or 0)
+        totals["adjustments_cents"] += int(event["unclassified_cents"])
         events.append(event)
     for totals in totals_by_currency.values():
         totals["net_cents"] = totals["sales_cents"] - totals["fees_cents"] + totals["adjustments_cents"]
+    with _connect() as connection:
+        settlements = connection.execute('SELECT * FROM amazon_settlements').fetchall()
+    reconciliation = []
+    for settlement in settlements:
+        matched = [e for e in events if e.get('settlement_id') == settlement['settlement_id'] and e['currency'] == settlement['currency']]
+        actual = sum(e['net_cents'] for e in matched)
+        reconciliation.append({'settlement_id':settlement['settlement_id'],'currency':settlement['currency'],
+                               'reported_cents':settlement['original_total_cents'],'matched_cents':actual,
+                               'difference_cents':settlement['original_total_cents']-actual})
     return {
+        'reconciliation': reconciliation,
+        'incomplete_event_count': sum(not e['fee_tax_complete'] or not e['sales_tax_complete'] for e in events),
         "totals_by_currency": totals_by_currency,
         "operational_totals_by_currency": operational_totals_by_currency,
         "released_totals_by_currency": released_totals_by_currency,
@@ -1165,24 +1234,23 @@ def create_inventory_lot(*, batch_line_id: str, unit_cost_cents: int, received_a
 
 def allocate_order_fifo(order_id: str) -> dict[str, Any]:
     """Allocate an Amazon order's shipped SKUs to the oldest available lots once."""
-    init_amazon_fba_db()
+    from app.services.amazon_procurement import initialize
+    initialize()
     allocations: list[dict[str, Any]] = []
     with _connect() as connection:
         connection.execute("BEGIN IMMEDIATE")
-        order = connection.execute("SELECT amazon_order_id FROM amazon_orders WHERE amazon_order_id = ?", (order_id,)).fetchone()
+        order = connection.execute("SELECT amazon_order_id,marketplace_id,purchase_date FROM amazon_orders WHERE amazon_order_id = ?", (order_id,)).fetchone()
         if order is None:
             raise ValueError("Amazon order not found")
         items = connection.execute("SELECT * FROM amazon_order_items WHERE amazon_order_id = ? ORDER BY id", (order_id,)).fetchall()
         for item in items:
-            existing = connection.execute("SELECT COUNT(*) FROM fifo_allocations WHERE amazon_order_item_id = ?", (item["id"],)).fetchone()[0]
-            if existing:
-                continue
-            remaining = int(item["quantity_shipped"] or item["quantity_ordered"] or 0)
+            existing = connection.execute("SELECT COALESCE(SUM(quantity), 0) FROM fifo_allocations WHERE amazon_order_item_id = ?", (item["id"],)).fetchone()[0]
+            remaining = int(item["quantity_shipped"] or 0) - existing
             if remaining <= 0:
                 continue
             lots = connection.execute(
-                "SELECT * FROM inventory_lots WHERE seller_sku = ? AND available_quantity > 0 ORDER BY received_at, created_at, id",
-                (str(item["seller_sku"] or ""),),
+                "SELECT * FROM inventory_lots WHERE seller_sku = ? AND available_quantity > 0 AND (marketplace_id='' OR marketplace_id=?) AND (pool_transfer_line_id IS NULL OR julianday(received_at)<=julianday(?)) ORDER BY COALESCE((SELECT r.received_at FROM pool_transfer_lines tl JOIN pool_receipts r ON r.id=tl.receipt_id WHERE tl.id=pool_transfer_line_id),received_at), received_at, created_at, id",
+                (str(item["seller_sku"] or ""), order['marketplace_id'], order['purchase_date'] or ''),
             ).fetchall()
             for lot in lots:
                 if remaining <= 0:
@@ -1192,7 +1260,7 @@ def allocate_order_fifo(order_id: str) -> dict[str, Any]:
                 allocated_cost_cents = allocated * int(lot["unit_cost_cents"]) + remainder
                 allocation_id = str(uuid.uuid4())
                 connection.execute(
-                    "INSERT INTO fifo_allocations(id, amazon_order_id, amazon_order_item_id, inventory_lot_id, quantity, unit_cost_cents, allocated_cost_cents, allocated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO fifo_allocations(id, amazon_order_id, amazon_order_item_id, inventory_lot_id, quantity, unit_cost_cents, allocated_cost_cents, allocated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(amazon_order_id, amazon_order_item_id, inventory_lot_id) DO UPDATE SET quantity=quantity+excluded.quantity, allocated_cost_cents=allocated_cost_cents+excluded.allocated_cost_cents",
                     (allocation_id, order_id, item["id"], lot["id"], allocated, int(lot["unit_cost_cents"]), allocated_cost_cents, _utc_now()),
                 )
                 connection.execute(

@@ -19,7 +19,17 @@ type SkuSummary = {
   fees_cents: number;
   cogs_cents: number;
   margin_cents: number;
+  margin_complete?: boolean;
   margin_percent: number | null;
+  average_sales_net_cents_per_unit: number | null;
+  average_cogs_cents_per_unit: number | null;
+  average_fees_cents_per_unit: number | null;
+  average_profit_cents_per_unit: number | null;
+  remaining_inventory_quantity: number;
+  remaining_inventory_cost_cents: number;
+  position_after_inventory_cents: number;
+  break_even_reached: boolean;
+  break_even_units_remaining: number | null;
   fulfillable_quantity: number;
   inbound_working_quantity: number;
   inbound_shipped_quantity: number;
@@ -158,6 +168,7 @@ export function AmazonInventoryPage() {
                 <td>{formatMoneyFromCents(item.sales_cents)}</td>
                 <td className={marginClassName(item.margin_cents)}>
                   {formatMoneyFromCents(item.margin_cents)}
+                  {item.margin_complete === false && <div className="cell-sub">Kosten / Finanzdaten unvollständig</div>}
                   {item.margin_percent != null ? <div className="cell-sub">{formatPercent(item.margin_percent, 1)}</div> : null}
                 </td>
               </tr>
@@ -168,6 +179,17 @@ export function AmazonInventoryPage() {
       {detailPortalTarget && selectedSku ? createPortal(
         <div>
           {detailLoading ? <p>SKU wird geladen...</p> : null}
+          <div style={{ display: "flex", alignItems: "center", gap: "1rem", marginBottom: "1rem", paddingBottom: "1rem", borderBottom: "1px solid var(--th-line)" }}>
+            {selectedSku.image_url ? (
+              <img src={selectedSku.image_url} alt="" style={{ width: 150, height: 150, objectFit: "contain", borderRadius: 12, background: "var(--th-surface-warm, #f4f0ea)", flexShrink: 0 }} />
+            ) : (
+              <div style={{ width: 150, height: 150, borderRadius: 12, background: "var(--th-surface-warm, #eee)", display: "grid", placeItems: "center", color: "var(--th-muted, #777)", flexShrink: 0 }}>Kein Bild</div>
+            )}
+            <div>
+              <h2 style={{ margin: 0 }}>{selectedSku.title || selectedSku.seller_sku}</h2>
+              <p className="page-subtitle" style={{ marginBottom: 0 }}>{selectedSku.seller_sku} · {selectedSku.asin || "kein ASIN"}</p>
+            </div>
+          </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.6rem" }}>
             <p className="page-subtitle">{selectedSku.seller_sku} · {selectedSku.asin || "kein ASIN"}</p>
             <button type="button" className="button" onClick={() => void toggleHidden(selectedSku.sku_key, !selectedSku.hidden)}>
@@ -192,7 +214,11 @@ export function AmazonInventoryPage() {
                 <div className="detail-row"><span>Einkaufskosten (FIFO)</span><strong>{formatMoneyFromCents(selectedSku.cogs_cents)}</strong></div>
                 <div className="detail-row"><span>Amazon-Gebühren</span><strong>{formatMoneyFromCents(selectedSku.fees_cents)}</strong></div>
                 <div className="detail-row"><span>Amazon-Gebühr / Stück</span><strong>{selectedSku.fee_per_unit_cents != null ? formatMoneyFromCents(selectedSku.fee_per_unit_cents) : "-"}</strong></div>
-                <div className="detail-row"><span>Marge (netto)</span><strong>{formatMoneyFromCents(selectedSku.margin_cents)}</strong></div>
+                <div className="detail-row"><span>Gewinn aus Verkäufen (netto)</span><strong>{formatMoneyFromCents(selectedSku.margin_cents)}</strong></div>
+                <div className="detail-row"><span>Ø Verkauf netto / Stück</span><strong>{selectedSku.average_sales_net_cents_per_unit != null ? formatMoneyFromCents(selectedSku.average_sales_net_cents_per_unit) : "-"}</strong></div>
+                <div className="detail-row"><span>Ø Wareneinsatz / Stück</span><strong>{selectedSku.average_cogs_cents_per_unit != null ? formatMoneyFromCents(selectedSku.average_cogs_cents_per_unit) : "-"}</strong></div>
+                <div className="detail-row"><span>Ø Gebühren / Stück</span><strong>{selectedSku.average_fees_cents_per_unit != null ? formatMoneyFromCents(selectedSku.average_fees_cents_per_unit) : "-"}</strong></div>
+                <div className="detail-row"><span>Ø Gewinn / Stück</span><strong>{selectedSku.average_profit_cents_per_unit != null ? formatMoneyFromCents(selectedSku.average_profit_cents_per_unit) : "-"}</strong></div>
                 <div className="detail-row"><span>Marge %</span><strong>{selectedSku.margin_percent != null ? formatPercent(selectedSku.margin_percent, 1) : "-"}</strong></div>
               </div>
             </article>
@@ -207,6 +233,17 @@ export function AmazonInventoryPage() {
               </div>
             </article>
           </div>
+          <article className="detail-card" style={{ marginTop: "0.75rem" }}>
+            <h3>Position &amp; Break-even</h3>
+            <div className="detail-kv">
+              <div className="detail-row"><span>Gewinn aus verkauften Stück</span><strong>{formatMoneyFromCents(selectedSku.margin_cents)}</strong></div>
+              <div className="detail-row"><span>Noch gebundenes FBA-Kapital</span><strong>{formatMoneyFromCents(selectedSku.remaining_inventory_cost_cents)}</strong></div>
+              <div className="detail-row"><span>Vorläufiger Positionsstand</span><strong className={selectedSku.position_after_inventory_cents < 0 ? "value-neg" : "value-pos"}>{formatMoneyFromCents(selectedSku.position_after_inventory_cents)}</strong></div>
+              <div className="detail-row"><span>Break-even</span><strong>{selectedSku.break_even_reached ? "Erreicht" : "Noch nicht erreicht"}</strong></div>
+              {!selectedSku.break_even_reached && selectedSku.break_even_units_remaining != null ? <div className="detail-row"><span>Noch benötigte Verkäufe (Ø)</span><strong>{count(selectedSku.break_even_units_remaining)} Stück</strong></div> : null}
+            </div>
+            <p className="table-meta" style={{ marginBottom: 0 }}>Der Positionsstand ist ein vorläufiger Cash-/Projektindikator: Der verbleibende Bestand ist weiterhin Vermögen und noch kein endgültiger Aufwand.</p>
+          </article>
           <h3>Zugehörige Sendungen</h3>
           <div className="detail-table-wrap">
             <table>

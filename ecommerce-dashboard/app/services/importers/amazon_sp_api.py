@@ -125,7 +125,7 @@ def extract_modern_financial_breakdown(transaction: dict[str, Any]) -> dict[str,
     sales_cents = 0
     tax_cents = 0
     fees: list[dict[str, Any]] = []
-    fee_containers = {"amazonfees", "expenses"}
+    fee_containers = {"amazonfees", "expenses", "refunded expenses"}
     ignored_fee_types = {"amazonfees", "expenses", "base", "tax", "promo"}
 
     def walk(nodes: Any, scope: str) -> None:
@@ -137,23 +137,25 @@ def extract_modern_financial_breakdown(transaction: dict[str, Any]) -> dict[str,
             amount = _as_dict(node.get("breakdownAmount"))
             amount_cents = _amount_cents(amount.get("currencyAmount"))
             if scope == "sales" and normalized_type == "tax":
-                tax_cents += abs(amount_cents)
+                tax_cents += amount_cents
             elif scope == "fees" and normalized_type not in ignored_fee_types:
                 if amount_cents:
-                    fee = {"type": node_type, "amount_cents": abs(amount_cents)}
+                    fee = {"type": node_type, "amount_cents": -amount_cents}
                     children = [_as_dict(child) for child in _as_list(node.get("breakdowns"))]
                     base = next((child for child in children if _text(child.get("breakdownType")).lower() == "base"), None)
                     tax = next((child for child in children if _text(child.get("breakdownType")).lower() == "tax"), None)
                     if base is not None and tax is not None:
-                        fee["net_cents"] = abs(_amount_cents(_as_dict(base.get("breakdownAmount")).get("currencyAmount")))
-                        fee["vat_cents"] = abs(_amount_cents(_as_dict(tax.get("breakdownAmount")).get("currencyAmount")))
+                        fee["net_cents"] = -_amount_cents(_as_dict(base.get("breakdownAmount")).get("currencyAmount"))
+                        fee["vat_cents"] = -_amount_cents(_as_dict(tax.get("breakdownAmount")).get("currencyAmount"))
                     fees.append(fee)
             next_scope = scope
-            if normalized_type == "sales":
+            if normalized_type in {"sales", "refunded sales"}:
                 sales_cents += amount_cents
                 next_scope = "sales"
             elif normalized_type in fee_containers:
                 next_scope = "fees"
+                if not node.get("breakdowns") and amount_cents:
+                    fees.append({"type": node_type, "amount_cents": -amount_cents})
             walk(node.get("breakdowns"), next_scope)
 
     walk(transaction.get("breakdowns"), "")
@@ -250,10 +252,15 @@ def normalize_fba_status(status: str) -> dict[str, Any]:
         "DELETED": "Gelöscht",
         "ERROR": "Fehler",
     }
+    # Amazon can make units sellable before the shipment reaches CLOSED.  In
+    # particular, CHECKED_IN/RECEIVING may already expose fulfillable stock;
+    # inventory_eligible_at is therefore the first sellable transition, not
+    # the date on which the shipment is fully reconciled.
+    sellable = token in {"CHECKED_IN", "RECEIVING", "CLOSED"}
     return {
         "label": labels.get(token, token.replace("_", " ").title() or "Unbekannt"),
-        "received": token in {"RECEIVING", "CLOSED"},
-        "inventory_eligible": token in {"RECEIVING", "CLOSED"},
+        "received": sellable,
+        "inventory_eligible": sellable,
     }
 
 
@@ -1849,7 +1856,6 @@ def _upsert_inbound_shipment(
 
     normalized_items = normalize_shipment_items(items)
     if normalized_items:
-        connection.execute("DELETE FROM amazon_inbound_shipment_items WHERE shipment_id = ?", (shipment_id,))
         for item in normalized_items:
             connection.execute(
                 """
@@ -1857,6 +1863,9 @@ def _upsert_inbound_shipment(
                     id, shipment_id, seller_sku, fnsku, asin, title,
                     quantity_shipped, quantity_received, raw_json
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shipment_id,seller_sku,fnsku) DO UPDATE SET
+                    asin=excluded.asin,title=excluded.title,quantity_shipped=excluded.quantity_shipped,
+                    quantity_received=excluded.quantity_received,raw_json=excluded.raw_json
                 """,
                 (
                     _stable_id("amazon-inbound-item", f"{shipment_id}:{item['seller_sku']}:{item['fnsku']}"),
@@ -1933,11 +1942,11 @@ def _upsert_inbound_shipment(
 
 def _event_components(event: dict[str, Any]) -> list[tuple[str, int, str, dict[str, Any]]]:
     components: list[tuple[str, int, str, dict[str, Any]]] = []
-    for item in _as_list(event.get("ShipmentItemList")):
-        for key in ("ItemChargeList", "ItemFeeList", "PromotionList", "ItemFeeAdjustmentList"):
+    for item in _as_list(event.get("ShipmentItemList")) + _as_list(event.get("ShipmentItemAdjustmentList")):
+        for key in ("ItemChargeList", "ItemChargeAdjustmentList", "ItemFeeList", "PromotionList", "PromotionAdjustmentList", "ItemFeeAdjustmentList"):
             for component in _as_list(_as_dict(item).get(key)):
                 payload = _as_dict(component)
-                amount = _as_dict(payload.get("Amount"))
+                amount = _as_dict(payload.get("Amount", payload.get("ChargeAmount", payload.get("FeeAmount"))))
                 components.append((key, _amount_cents(amount), _currency(amount), payload))
     for key in ("FeeList", "ChargeList", "AdjustmentItemList"):
         for component in _as_list(event.get(key)):
@@ -1971,8 +1980,8 @@ def _upsert_financial_event(connection: sqlite3.Connection, event_type: str, eve
     event_id = _stable_id("financial-event", f"{event_type}:{_payload_hash(event_identity)}")
     components = _event_components(event)
     component_sum = sum(item[1] for item in components)
-    sales_cents = sum(amount for component_type, amount, _currency_code, _raw in components if component_type in {"ItemChargeList", "ChargeList", "PromotionList"})
-    fees_cents = abs(sum(amount for component_type, amount, _currency_code, _raw in components if "Fee" in component_type))
+    sales_cents = sum(amount for component_type, amount, _currency_code, _raw in components if component_type in {"ItemChargeList", "ItemChargeAdjustmentList", "ChargeList", "PromotionList", "PromotionAdjustmentList"})
+    fees_cents = -sum(amount for component_type, amount, _currency_code, _raw in components if "Fee" in component_type)
     net_cents = component_sum if components else _amount_cents(event.get("Amount"))
     currency = next((code for _kind, _amount, code, _raw in components if code), "EUR")
 
@@ -2104,15 +2113,13 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                 for identifier in _as_list(payload.get("relatedIdentifiers"))
             }
             order_id = identifiers.get("ORDER_ID", "")
-            if not order_id:
-                continue
             deferred_context = next(
                 (context for context in (_as_dict(value) for value in _as_list(payload.get("contexts")))
                 if _text(context.get("contextType")) == "DeferredContext"),
                 {},
             )
             lifecycle_id = identifiers.get("DEFERRED_TRANSACTION_ID") or transaction_id
-            if connection.execute(
+            if order_id and connection.execute(
                 "SELECT 1 FROM amazon_orders WHERE amazon_order_id = ?", (order_id,)
             ).fetchone() is None:
                 _upsert_order(
@@ -2133,10 +2140,10 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                 breakdown_payload = _as_dict(breakdown)
                 breakdown_type = _text(breakdown_payload.get("breakdownType")).lower()
                 amount = _as_dict(breakdown_payload.get("breakdownAmount"))
-                if breakdown_type == "sales":
+                if breakdown_type in {"sales", "refunded sales"}:
                     sales_cents += _amount_cents(amount.get("currencyAmount"))
-                elif breakdown_type == "expenses":
-                    expense_cents += abs(_amount_cents(amount.get("currencyAmount")))
+                elif breakdown_type in {"expenses", "refunded expenses"}:
+                    expense_cents -= _amount_cents(amount.get("currencyAmount"))
                 currency = _currency(amount.get("currencyCode"), currency)
 
             status = _text(payload.get("transactionStatus")).upper()
@@ -2161,7 +2168,7 @@ def sync_modern_financial_transactions(transactions: Iterable[dict[str, Any]]) -
                 (
                     event_id,
                     f"ModernTransaction:{_text(payload.get('transactionType')) or 'Unknown'}",
-                    order_id,
+                    order_id or None,
                     identifiers.get("SETTLEMENT_ID") or None,
                     _text(payload.get("postedDate")) or None,
                     finality,
@@ -2677,6 +2684,13 @@ def sync_amazon_fba(
         summary["status"] = "error"
         summary["errors"].append({"scope": "internal", "error": f"{type(exc).__name__}: {exc}"})
 
+    try:
+        from app.services.amazon_procurement import reconcile_all
+        summary['procurement'] = reconcile_all()
+    except Exception as exc:
+        summary['errors'].append({'scope': 'procurement', 'error': str(exc)})
+        if summary['status'] != 'error':
+            summary['status'] = 'partial'
     summary["rate_limits"] = client.rate_limits
     with _connect() as connection:
         connection.execute(

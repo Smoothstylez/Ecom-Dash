@@ -287,6 +287,8 @@ def _ensure_combined_orders_columns(connection: sqlite3.Connection) -> None:
     _ensure_column(connection, "combined_orders", "purchase_supplier", "TEXT")
     _ensure_column(connection, "combined_orders", "purchase_notes", "TEXT")
     _ensure_column(connection, "combined_orders", "profit_cents", "INTEGER NOT NULL DEFAULT 0")
+    for name in ('costs_complete', 'margin_complete', 'fees_net_cents'):
+        _ensure_column(connection, 'combined_orders', name, 'INTEGER')
     _ensure_column(connection, "combined_orders", "has_invoice", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(connection, "combined_orders", "invoice_document_id", "TEXT")
     _ensure_column(connection, "combined_orders", "fulfillment_channel", "TEXT")
@@ -581,7 +583,7 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                 purchase_vat = enrichment.get("purchase_vat_cents")
                 purchase_vat_cents = int(purchase_vat) if isinstance(purchase_vat, int) else 0
                 purchase_is_vat_deductible = 1 if bool(enrichment.get("purchase_is_vat_deductible")) else 0
-            profit_cents = int(order["after_fees_cents"]) - purchase_cost_cents
+            profit_cents = int(order["profit_cents"]) if order["marketplace"] == "amazon" else int(order["after_fees_cents"]) - purchase_cost_cents
 
             order_id = f"{order['marketplace']}:{order['order_id']}"
             connection.execute(
@@ -644,6 +646,9 @@ def populate_combined_orders(*, marketplace: str | None = None, order_id: str | 
                     enrichment.get("invoice_document_id") if order["marketplace"] != "amazon" else None,
                 ),
             )
+            if order['marketplace'] == 'amazon':
+                connection.execute('UPDATE combined_orders SET costs_complete=?,margin_complete=?,fees_net_cents=? WHERE id=?',
+                                   (int(order.get('costs_complete',False)),int(order.get('margin_complete',False)),order.get('fees_net_cents'),order_id))
             rows_written += 1
         connection.commit()
 

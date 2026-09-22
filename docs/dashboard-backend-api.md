@@ -1486,3 +1486,128 @@ Minimum review checklist:
 - important response fields still correct
 - any new validations or blocked actions documented
 - any new automatable feature added to the allowed scope
+
+### Amazon Einkaufspool (2026-09-22)
+
+The new entry point is **Amazon → Einkaufspool**. Purchasing is independent of
+FBA shipments. A product can have multiple explicit marketplace/Seller-SKU/ASIN
+mappings. Never infer equivalence from a title. FIFO is the sales cost method;
+weighted average home-stock cost is a display metric, not the sales valuation.
+
+All `/api/amazon/pool` routes use existing admin authentication. Money fields are
+integer cents; quantities are positive integers. Every command below, except
+reconciliation and file imports, requires a caller-generated `request_id`.
+**Reuse the same ID and identical payload after a timeout.** Reuse with changed
+payload fails. Commands and their audit/result are committed atomically.
+Validation failures return 400; malformed request shapes return 422.
+
+| Method / suffix | Purpose |
+|---|---|
+| GET (empty suffix) | Products, listing mappings, invoices/lines, receipts, transfers/lines, payments, documents, recent movements, revisions, legacy invoices, listing and shipment metrics, receipt discrepancies |
+| POST `/products` | `{request_id,name}` creates an internal product |
+| POST `/listings` | `{request_id,product_id,marketplace_id,seller_sku,asin}` maps a listing; existing product identities cannot silently change |
+| POST `/invoices` | Creates invoice and product positions; does not create stock or assert payment |
+| POST `/receipts` | `{request_id,line_id,quantity,received_at}` records actual partial delivery to own stock |
+| POST `/transfers` | Reserves FIFO own stock for Amazon shipment items |
+| POST `/transfers/action` | Dispatches or releases a reserved transfer |
+| GET `/reconcile-preview` | Current receipt differences and economic listing metrics before reconciliation |
+| POST `/reconcile` | Idempotently books Amazon receipt deltas and allocates shipped order quantities; returns `issues` and `cost_issues` for missing history; synchronizes documents/payments to bookkeeping |
+| POST `/payments` | `{request_id,invoice_id,paid_at,amount_cents,account_reference}` records an actual payment in invoice currency; partial payments are separate records |
+| POST `/adjustments` | `{request_id,receipt_id,quantity,occurred_at,reason}` documents own-stock writeoff; cannot consume reserved stock |
+| POST `/revisions` | Preview or apply an audited cost/tax correction, including already allocated sales costs |
+| POST `/legacy-migration` | `{request_id,legacy_invoice_id,marketplace_id,received_at}` adopts a complete EUR legacy shipment invoice after product mapping; existing lots/allocations retain their identities |
+| POST `/invoices/{id}/documents` | Multipart `file`; stores under shared bookkeeping document root; content hash prevents repeated attachment |
+| GET `/documents/{id}` | Authenticated document download |
+| POST `/tax-report` | Multipart `file` containing UTF-8 Amazon `SC_VAT_TAX_REPORT` CSV; preserves original rows for later tax review, does not change seller tax settings |
+
+Invoice example (nine units, 107.10 EUR gross, 17.10 deductible VAT):
+
+```json
+{
+  "request_id": "purchase-supplier-2026-001",
+  "supplier": "Supplier GmbH", "number": "2026-001",
+  "invoice_date": "2026-09-01", "currency": "EUR",
+  "fx_rate": "1", "fx_reference": "",
+  "freight_cents": 300,
+  "lines": [{
+    "product_id": "PRODUCT_UUID", "quantity": 9,
+    "gross_cents": 10710, "net_cents": 9000, "vat_cents": 1710,
+    "deductible_vat_cents": 1710
+  }]
+}
+```
+
+`deductible_vat_cents=null` means unreviewed, not tax-free. Initial provisional
+cost includes that VAT. Explicit zero means no deductible input VAT. A later
+review uses `/revisions` with an audit reason. Foreign invoices require a
+positive EUR-per-currency-unit `fx_rate` plus `fx_reference`; EUR must use 1.
+Original currency values remain intact. `freight_cents` is an **additional
+economic EUR cost**, not already included in product lines. Retain its source
+invoice as a document. It defaults to a goods-value split; optional
+`freight_allocations` supplies integer-cent shares in invoice-line order and
+must sum exactly to freight. No silent equal-split fallback with zero values.
+
+Reservation example:
+
+```json
+{
+  "request_id": "reserve-package-1",
+  "shipment_id": "FBA...", "marketplace_id": "A1PA6795UKMFR9",
+  "package_reference": "Paket 1",
+  "lines": [{"shipment_item_id": "ITEM_ID", "quantity": 7}]
+}
+```
+
+An optional `receipt_id` per reservation line explicitly chooses a source
+receipt instead of the FIFO suggestion. Reservations can span invoices and
+consume only available own stock. Multiple reservations/packages can share an
+FBA shipment; their total cannot exceed Amazon's shipment quantities.
+
+Dispatch uses `{request_id,transfer_id,action:"dispatch",dispatched_at,
+freight_cents,source_cost_id?}`. Optional `freight_allocations` uses transfer-line
+**ID sort order**, returned by the pool overview; the sum must match freight.
+A `source_cost_id` links existing assigned EUR Amazon transport cost, verifies
+amount and shipment, and prevents reuse. Cancel uses `action:"cancel"` and
+returns reserved quantities and exact cents to own stock. Dispatch cannot be
+cancelled as if it never happened. Amazon receipt decreases remain visible
+reconciliation exceptions, never silently create negative stock.
+
+Revisions require `{request_id,line_id,expected_cost_cents,gross_cents,
+net_cents,vat_cents,deductible_vat_cents,reason,preview}`. First use
+`preview:true`. Apply the reviewed payload with `preview:false` and a new retry
+ID. `expected_cost_cents` is the current line's economic product cost (excluding
+freight); stale corrections fail. The original values, reason and new values
+are retained in `revisions`. Quantities and existing FIFO provenance do not
+change. Existing freight allocations remain fixed rather than being silently
+redistributed after a price correction.
+
+Only recorded **payments**, never FIFO allocations or invoice upload alone,
+are projected as purchasing outflows to bookkeeping. The projection is
+idempotent and links the shared documents. VAT-period assignment, final EÜR,
+bank imports and future GmbH accounting are separate work. Missing bookkeeping
+storage returns an explicit unavailable status; saved pool data can be retried
+through reconciliation after the storage becomes available.
+
+Amazon sync now updates shipment items in place and reconciles receipt deltas
+and shipped sales costs after source ingestion. For FIFO timing, `CHECKED_IN`,
+`RECEIVING`, and `CLOSED` are sellable transitions; `CLOSED` is not required
+before a received quantity can be matched to a sale. Repeated runs consume no
+extra stock. Insufficient historic costs remain `cost_issues`, rather than
+invented zero-cost purchases. No purchases are synthesized from existing
+Amazon stock.
+
+Financial projections normalize `Refunded Sales` and `Refunded Expenses` with
+signed tax and fee reversals. Original raw events are retained. A zero sale
+balance stays zero. `costs_complete`, `margin_complete`, `sales_tax_complete`,
+`fee_tax_complete` describe missing valuation/data; unknown fee tax uses the
+full fee provisionally, never free fees. SKU/order/shipment contribution uses
+net sales less effective fee cost and FIFO cost. Shipment attribution is
+**calculated FIFO**, not proof of the physical unit Amazon shipped. The finance
+endpoint also returns settlement `reconciliation` differences and an
+`incomplete_event_count`. Business classification never chooses a VAT rate.
+
+The legacy shipment-invoice endpoints remain readable/compatible during
+migration. Use the pool for new purchases. Do not enter the same acquisition
+through both paths. Migrated documents, old raw events and old invoice records
+remain available; legacy confirmed costs are retained and flagged for tax
+review instead of retroactively assuming deductible VAT.

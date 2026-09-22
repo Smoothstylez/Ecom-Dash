@@ -7,6 +7,7 @@ import { buildDashboardApiUrl } from "@/shared/runtime/base-path";
 import { useDashboardShellState } from "@/app/dashboard-shell-state";
 import { useAmazonDetailModal } from "./use-amazon-detail-modal";
 import { AmazonInventoryPage } from "./amazon-inventory-page";
+import { AmazonPoolPage } from "./amazon-pool-page";
 
 type AmazonStatus = {
   configured?: boolean;
@@ -174,7 +175,7 @@ function formatCentsInput(cents: number) {
 
 export function AmazonPage() {
   const { refreshRequestToken } = useDashboardShellState();
-  const [activeTab, setActiveTab] = useState<"overview" | "inventory">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "inventory" | "pool">("overview");
   const [status, setStatus] = useState<AmazonStatus | null>(null);
   const [finance, setFinance] = useState<FinanceOverview | null>(null);
   const [shipments, setShipments] = useState<InboundShipment[]>([]);
@@ -451,7 +452,9 @@ export function AmazonPage() {
         >
           Bestand
         </button>
+        <button className={classNames("segmented-btn", activeTab === "pool" && "active")} type="button" onClick={() => { setActiveTab("pool"); setSelectedShipment(null); }}>Einkaufspool</button>
       </div>
+      {activeTab === "pool" ? <AmazonPoolPage /> : null}
       {activeTab === "inventory" ? <AmazonInventoryPage /> : null}
       {activeTab === "overview" ? (
         <>

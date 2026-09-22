@@ -25,6 +25,7 @@ from app.config import (
 )
 from app.routers.analytics import router as analytics_router
 from app.routers.amazon import router as amazon_router
+from app.routers.amazon_procurement import router as amazon_pool_router
 from app.routers.bookings import router as bookings_router
 from app.routers.customers import router as customers_router
 from app.routers.ebay import router as ebay_router
@@ -138,6 +139,7 @@ app.add_middleware(
 
 app.include_router(orders_router)
 app.include_router(amazon_router)
+app.include_router(amazon_pool_router)
 app.include_router(analytics_router)
 app.include_router(customers_router)
 app.include_router(bookings_router)

@@ -279,7 +279,7 @@ def _merge_enrichment(base_order: dict[str, Any], enrichment_map: dict[tuple[str
         purchase_vat_cents = int(base_order.get("purchase_vat_cents") or 0)
         purchase_is_vat_deductible = False
 
-    profit_cents = int(base_order["after_fees_cents"]) - purchase_cost_cents
+    profit_cents = int(base_order["profit_cents"]) if base_order.get("marketplace") == "amazon" else int(base_order["after_fees_cents"]) - purchase_cost_cents
 
     invoice_payload: Optional[dict[str, Any]] = None
     if enrichment.get("invoice_document_id"):

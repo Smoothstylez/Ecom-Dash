@@ -134,7 +134,7 @@ def _normalize_order_metrics(order: dict[str, Any]) -> dict[str, Any]:
     fees = int(order.get("fees_cents") or 0)
     after_fees = int(order.get("after_fees_cents") or 0)
     purchase = int(order.get("purchase_cost_cents") or 0)
-    profit = int(order.get("profit_cents") or (after_fees - purchase))
+    profit = int(order["profit_cents"]) if order.get("profit_cents") is not None else after_fees - purchase
     shipping = max(int(order.get("shipping_cents") or 0), 0)
 
     is_test = bool(order.get("is_test"))

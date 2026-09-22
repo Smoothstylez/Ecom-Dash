@@ -51,7 +51,7 @@ def test_fifo_allocation_projects_amazon_order(monkeypatch, tmp_path) -> None:
     assert summary["marketplace"] == "amazon"
     assert summary["fulfillment_channel"] == "AFN"
     assert summary["purchase_cost_cents"] == 25_000
-    assert summary["profit_cents"] == 5_000
+    assert summary["profit_cents"] == 210  # Net sales less FIFO; VAT is not profit.
     assert summary["sales_gross_cents"] == 30_000
     assert summary["sales_vat_cents"] == 4_790
     assert summary["sales_net_cents"] == 25_210
@@ -959,6 +959,34 @@ def test_inbound_receipt_timestamp_is_preserved_across_status_updates(monkeypatc
         )
         second = connection.execute("SELECT inventory_eligible_at FROM amazon_inbound_shipments WHERE shipment_id = 'FBA-RECEIPT-1'").fetchone()[0]
 
+    assert first
+    assert second == first
+
+
+def test_checked_in_shipment_is_sellable_before_closed(monkeypatch, tmp_path) -> None:
+    import app.services.importers.amazon_sp_api as importer
+
+    monkeypatch.setattr(importer, "AMAZON_FBA_DB_PATH", tmp_path / "amazon.sqlite3")
+    importer.init_amazon_fba_db()
+    with importer._connect() as connection:
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-CHECKED-IN-1", "ShipmentStatus": "CHECKED_IN"},
+            items=[{"SellerSKU": "SKU-1", "FulfillmentNetworkSKU": "FNSKU-1", "QuantityShipped": 3, "QuantityReceived": 1}],
+        )
+        first = connection.execute(
+            "SELECT inventory_eligible_at FROM amazon_inbound_shipments WHERE shipment_id = 'FBA-CHECKED-IN-1'"
+        ).fetchone()[0]
+        importer._upsert_inbound_shipment(
+            connection,
+            shipment={"ShipmentId": "FBA-CHECKED-IN-1", "ShipmentStatus": "CLOSED"},
+            items=[{"SellerSKU": "SKU-1", "FulfillmentNetworkSKU": "FNSKU-1", "QuantityShipped": 3, "QuantityReceived": 3}],
+        )
+        second = connection.execute(
+            "SELECT inventory_eligible_at FROM amazon_inbound_shipments WHERE shipment_id = 'FBA-CHECKED-IN-1'"
+        ).fetchone()[0]
+
+    assert importer.normalize_fba_status("CHECKED_IN")["inventory_eligible"] is True
     assert first
     assert second == first
 
