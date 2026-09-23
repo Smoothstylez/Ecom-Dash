@@ -33,6 +33,7 @@ from app.routers.exports import router as exports_router
 from app.routers.google_ads import router as google_ads_router
 from app.routers.invoices import router as invoices_router
 from app.routers.kaufland_tickets import router as kaufland_tickets_router
+from app.routers.ust_report import router as ust_report_router
 from app.routers.orders import router as orders_router
 from app.routers.sync import router as sync_router
 from app.services.live_sync import (
@@ -149,6 +150,8 @@ app.include_router(google_ads_router)
 app.include_router(invoices_router)
 app.include_router(kaufland_tickets_router)
 app.include_router(sync_router)
+app.include_router(ust_report_router)
+
 
 
 _timing_logger = logging.getLogger("api_timing")

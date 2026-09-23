@@ -404,3 +404,26 @@ def api_allocate_order_fifo(order_id: str) -> dict[str, Any]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True, **result}
+
+
+@router.post("/tax-report/request", dependencies=ADMIN_ONLY)
+def api_request_amazon_tax_report(payload: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+    """Fordert SC_VAT_TAX_REPORT ueber die SP-API an (restricted -> RDT)."""
+    from app.services import amazon_tax_import
+
+    month = (payload or {}).get("month")
+    try:
+        return {"ok": True, **amazon_tax_import.request_sc_vat_tax_report(month=month)}
+    except amazon_tax_import.AmazonTaxImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.post("/tax-report/{report_id}/import", dependencies=ADMIN_ONLY)
+def api_import_amazon_tax_report(report_id: str) -> dict[str, Any]:
+    """Laedt den Bericht, klassifiziert und speichert ihn idempotent."""
+    from app.services import amazon_tax_import
+
+    try:
+        return {"ok": True, **amazon_tax_import.import_report_document(report_id)}
+    except amazon_tax_import.AmazonTaxImportError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc

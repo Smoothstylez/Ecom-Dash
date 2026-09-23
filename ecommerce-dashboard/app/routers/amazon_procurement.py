@@ -219,7 +219,19 @@ def import_tax_report(file: UploadFile = File(...)):
                 row_id = hashlib.sha256(raw.encode()).hexdigest()
                 c.execute('INSERT OR IGNORE INTO pool_tax_rows VALUES (?,?,?,?,?,?)',
                           (row_id, row['Transaction ID'], row['Order ID'], row['SKU'], raw, db._utc_now()))
-        return {'rows': len(rows), 'status': 'stored_for_review'}
+        # Zusaetzlich klassifizieren (Return-Vererbung) und nach amazon_tax_rows schreiben.
+        from app.services import amazon_tax_import as ati
+        from app.services import ust_report as ust
+        eu = ust.get_eu_tax_settings()
+        classified = ati.link_and_inherit(
+            rows,
+            eu_tax_regime=eu['eu_tax_regime'],
+            eu_distance_prior_year_cents=eu['eu_distance_prior_year_cents'],
+            eu_distance_current_year_cents=eu['eu_distance_current_year_cents'],
+        )
+        persisted = ati.import_sc_vat_tax_rows(classified)
+        return {'rows': len(rows), 'status': 'classified', 'classified': persisted,
+                'blockers': sum(1 for item in classified if item['blocker'])}
     except (ValueError, UnicodeError, csv.Error) as exc:
         raise HTTPException(400, str(exc)) from exc
 

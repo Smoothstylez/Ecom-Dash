@@ -433,3 +433,80 @@ def import_sc_vat_tax_rows(classified_rows: Iterable[dict[str, Any]]) -> dict[st
                 skipped += 1
         connection.commit()
     return {"inserted": inserted, "skipped": skipped, "total": inserted + skipped}
+
+
+def request_sc_vat_tax_report(*, month: Optional[str] = None) -> dict[str, Any]:
+    """Fordert SC_VAT_TAX_REPORT ueber die SP-API an (restricted, erfordert RDT)."""
+    from app.services.importers import amazon_sp_api as db
+
+    config, missing = db.load_amazon_sp_api_config()
+    if config is None:
+        return {"status": "skipped", "missing": missing}
+    client = db.AmazonSpApiClient(config)
+    db.init_amazon_fba_db()
+    with db._connect() as connection:
+        marketplace_ids = [
+            str(row[0])
+            for row in connection.execute(
+                "SELECT marketplace_id FROM amazon_marketplaces ORDER BY marketplace_id"
+            ).fetchall()
+        ]
+    if not marketplace_ids:
+        return {"status": "skipped", "reason": "run an Amazon sync before requesting a report"}
+    data_start_time = None
+    data_end_time = None
+    if month:
+        start = datetime.strptime(month[:7], "%Y-%m")
+        end = datetime(start.year + (start.month == 12), start.month % 12 + 1, 1)
+        data_start_time = start.strftime("%Y-%m-%dT00:00:00Z")
+        data_end_time = end.strftime("%Y-%m-%dT00:00:00Z")
+    report_id = client.create_report(
+        "SC_VAT_TAX_REPORT", marketplace_ids,
+        data_start_time=data_start_time, data_end_time=data_end_time,
+    )
+    return {"status": "requested", "report_id": report_id, "report_type": "SC_VAT_TAX_REPORT"}
+
+
+def import_report_document(report_id: str, *, report_type: str = "SC_VAT_TAX_REPORT") -> dict[str, Any]:
+    """Laedt ein SC_VAT_TAX_REPORT-Dokument, klassifiziert und persistiert es."""
+    from app.services.importers import amazon_sp_api as db
+    from app.services import ust_report as _ust
+
+    config, missing = db.load_amazon_sp_api_config()
+    if config is None:
+        return {"status": "skipped", "missing": missing}
+    client = db.AmazonSpApiClient(config)
+    report = client.get_report(report_id)
+    status = _text(report.get("processingStatus"))
+    document_id = _text(report.get("reportDocumentId"))
+    if status not in {"DONE", "_DONE_"} or not document_id:
+        return {"status": "pending", "report_id": report_id, "processing_status": status}
+
+    rdt = None
+    if db.report_requires_rdt(report_type):
+        # Restricted Operations: das RDT ersetzt den LWA Token in x-amz-access-token.
+        rdt = client.create_restricted_data_token([
+            {"method": "GET", "path": f"/reports/2021-06-30/documents/{document_id}"}
+        ])
+    document = client.get_report_document(document_id, access_token=rdt)
+    document_url = _text(document.get("url"))
+    if not document_url:
+        raise AmazonTaxImportError(502, "report document did not include a download URL")
+    body = client.download_report_text(document_url, access_token=rdt)
+    rows = parse_sc_vat_tax_report(body)
+    eu_settings = _ust.get_eu_tax_settings()
+    classified = link_and_inherit(
+        rows,
+        eu_tax_regime=eu_settings["eu_tax_regime"],
+        eu_distance_prior_year_cents=eu_settings["eu_distance_prior_year_cents"],
+        eu_distance_current_year_cents=eu_settings["eu_distance_current_year_cents"],
+    )
+    persisted = import_sc_vat_tax_rows(classified)
+    return {
+        "status": "imported",
+        "report_id": report_id,
+        "report_type": report_type,
+        **persisted,
+        "blockers": sum(1 for item in classified if item["blocker"]),
+        "warnings": sum(len(item["warnings"]) for item in classified),
+    }
