@@ -787,6 +787,12 @@ def upsert_purchase_enrichment(
         invoice_document_id = existing["invoice_document_id"] if existing is not None else None
         created_at = existing["created_at"] if existing is not None else timestamp
 
+        existing_vat = existing["purchase_vat_cents"] if existing is not None and "purchase_vat_cents" in existing.keys() else None
+        existing_deductible = existing["purchase_is_vat_deductible"] if existing is not None and "purchase_is_vat_deductible" in existing.keys() else None
+
+        resolved_vat = max(int(purchase_vat_cents or 0), 0) if purchase_vat_cents is not None else (int(existing_vat or 0) if existing_vat is not None else 0)
+        resolved_deductible = (1 if bool(purchase_is_vat_deductible) else 0) if purchase_is_vat_deductible is not None else (1 if bool(existing_deductible) else 0)
+
         connection.execute(
             """
             INSERT INTO order_enrichments (
@@ -808,8 +814,8 @@ def upsert_purchase_enrichment(
                 marketplace,
                 order_id,
                 purchase_cost_cents,
-                max(int(purchase_vat_cents or 0), 0),
-                1 if bool(purchase_is_vat_deductible) else 0,
+                resolved_vat,
+                resolved_deductible,
                 _normalize_currency(purchase_currency),
                 supplier_name,
                 purchase_notes,

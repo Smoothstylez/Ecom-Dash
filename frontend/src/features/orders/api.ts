@@ -196,8 +196,8 @@ export function updateOrderPurchase(
       },
       body: JSON.stringify({
         purchase_cost_eur: purchaseCostEur,
-        purchase_vat_eur: options?.purchaseVatEur ?? null,
-        purchase_is_vat_deductible: Boolean(options?.purchaseIsVatDeductible),
+        ...(options?.purchaseVatEur !== undefined ? { purchase_vat_eur: options.purchaseVatEur } : {}),
+        ...(options?.purchaseIsVatDeductible !== undefined ? { purchase_is_vat_deductible: options.purchaseIsVatDeductible } : {}),
       }),
     },
   );

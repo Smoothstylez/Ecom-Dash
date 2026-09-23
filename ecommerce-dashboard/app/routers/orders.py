@@ -33,7 +33,7 @@ ADMIN_ONLY = [Depends(require_admin_access)]
 class PurchaseUpdateRequest(BaseModel):
     purchase_cost_eur: Optional[float] = Field(default=None)
     purchase_vat_eur: Optional[float] = Field(default=None)
-    purchase_is_vat_deductible: Optional[bool] = Field(default=False)
+    purchase_is_vat_deductible: Optional[bool] = Field(default=None)
     purchase_currency: Optional[str] = Field(default="EUR")
     supplier_name: Optional[str] = Field(default=None)
     purchase_notes: Optional[str] = Field(default=None)
