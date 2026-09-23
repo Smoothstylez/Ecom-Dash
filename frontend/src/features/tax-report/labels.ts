@@ -57,8 +57,8 @@ export const ISSUE_LABELS: Record<string, IssueInfo> = {
     kind: "warning",
   },
   KAUFLAND_RETURNS_NOT_SYNCED: {
-    label: "Kaufland-Retouren noch nicht geladen",
-    hint: "Beim nächsten Abgleich werden sie übernommen.",
+    label: "Kaufland-Retouren konnten nicht abgerufen werden",
+    hint: "Bitte den Kaufland-Sync ausführen. Solange ist die Zahl der Retouren unvollständig.",
     kind: "warning",
   },
 };

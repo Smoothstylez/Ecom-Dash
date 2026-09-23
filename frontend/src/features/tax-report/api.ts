@@ -29,6 +29,7 @@ export type UstReport = {
       rate_overrides_pending: number;
       pre_vat_units_cents: number;
       returns: { count: number; order_unit_ids?: string[] };
+      returns_synced: boolean;
       rows: Array<Record<string, unknown>>;
     };
     amazon: Record<string, AmazonBucket>;

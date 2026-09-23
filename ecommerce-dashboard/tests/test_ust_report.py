@@ -35,6 +35,11 @@ CREATE TABLE return_units(
   id_return_unit TEXT PRIMARY KEY, id_return TEXT NOT NULL, id_order_unit TEXT,
   ts_created_iso TEXT, status TEXT, note TEXT, reason TEXT, storefront TEXT,
   raw_json TEXT NOT NULL DEFAULT '{}', synced_at_iso TEXT NOT NULL DEFAULT '');
+CREATE TABLE sync_runs(
+  id_sync_run INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts_started_iso TEXT NOT NULL, ts_finished_iso TEXT NOT NULL,
+  storefront TEXT NOT NULL, status TEXT NOT NULL,
+  error_count INTEGER NOT NULL, summary_json TEXT NOT NULL);
 """
 
 
@@ -543,3 +548,35 @@ def test_amazon_returns_are_reported_in_their_booking_month(combined, kaufland):
     march = ust_report.build_ust_report("2026-03")["sections"]["amazon"]
     assert march["returns"]["count"] == 1
     assert march["returns"]["output_vat"] == -477
+
+
+def _mark_returns_synced(connection) -> None:
+    connection.execute(
+        "INSERT INTO sync_runs(ts_started_iso, ts_finished_iso, storefront, status, error_count, summary_json) "
+        "VALUES ('2026-09-23T17:44:33Z','2026-09-23T17:44:34Z','de','success',0,?)",
+        ('{"include_returns": true, "error_count": 0}',),
+    )
+    connection.commit()
+
+
+def test_no_returns_warning_when_returns_were_actually_synced(combined, kaufland):
+    """Fehlalarm: wenn der Sync Retouren abgerufen hat, bedeutet 0 auch 0.
+
+    'Kaufland-Retouren noch nicht synchronisiert' darf nur erscheinen, wenn der
+    Abruf nachweislich fehlt -- nicht bei nachweislich vorhandenen Nullen.
+    """
+    set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
+    _unit(kaufland, "u1", vat=19.0, price="11900", created="2026-02-10T00:00:00Z")
+    _mark_returns_synced(kaufland)
+    report = ust_report.build_ust_report("2026-02")
+    assert report["sections"]["kaufland"]["returns"]["count"] == 0
+    assert not any(w["code"] == "KAUFLAND_RETURNS_NOT_SYNCED" for w in report["warnings"])
+    assert report["sections"]["kaufland"]["returns_synced"] is True
+
+
+def test_returns_warning_stays_without_a_returns_sync(combined, kaufland):
+    set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
+    _unit(kaufland, "u1", vat=19.0, price="11900", created="2026-02-10T00:00:00Z")
+    report = ust_report.build_ust_report("2026-02")
+    assert any(w["code"] == "KAUFLAND_RETURNS_NOT_SYNCED" for w in report["warnings"])
+    assert report["sections"]["kaufland"]["returns_synced"] is False

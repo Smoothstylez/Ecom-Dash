@@ -281,7 +281,14 @@ export function TaxReportPage() {
                     ["Umsatz nach Retouren", formatMoneyFromCents(kaufland?.revenue_after_returns_cents || 0)],
                     ["Netto", formatMoneyFromCents(kaufland?.net_cents || 0)],
                     ["USt (19 %)", formatMoneyFromCents(kaufland?.output_vat_cents || 0)],
-                    ["Retouren", String(kaufland?.returns.count || 0)],
+                    [
+                      "Retouren",
+                      kaufland?.returns.count
+                        ? String(kaufland.returns.count)
+                        : kaufland?.returns_synced
+                          ? "Keine"
+                          : "Unbekannt",
+                    ],
                     ["Positionen ohne Steuersatz", String(pendingOverrides)],
                   ]}
                 />

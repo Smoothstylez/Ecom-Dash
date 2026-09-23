@@ -193,6 +193,24 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
     return result
 
 
+def kaufland_returns_synced() -> bool:
+    """True, wenn ein erfolgreicher Sync die Retouren tatsaechlich abgerufen hat.
+
+    Kaufland hat moeglicherweise schlicht keine Retouren. Dann bedeutet 0 auch 0
+    -- und eine Warnung waere ein Fehlalarm. Geprueft wird deshalb der Sync-
+    Nachweis (`include_returns: true`, `status: success`), nicht nur die Zeilenzahl.
+    """
+    try:
+        with _connect_kaufland() as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM sync_runs "
+                "WHERE status = 'success' AND summary_json LIKE '%\"include_returns\": true%'"
+            ).fetchone()
+        return int(row["n"] if row else 0) > 0
+    except _sqlite3.Error:
+        return False
+
+
 def load_kaufland_returns(month: str) -> dict[str, Any]:
     """Retouren im Buchungsmonat (returns.ts_created_iso), nicht im Verkaufsmonat."""
     with _connect_kaufland() as connection:
@@ -587,9 +605,10 @@ def build_ust_report(
         warnings.append({"code": "AMAZON_VAT_CALCULATION_MISSING", "count": sum(
             1 for row in amazon_rows if row.get("net_source") == "computed_home_rate"),
             "hint": "Amazon hat keine Steuer berechnet; deutsche 19 % wurden selbst angesetzt."})
-    if kaufland_returns["count"] == 0 and kaufland_rows:
+    returns_synced = kaufland_returns_synced()
+    if kaufland_rows and kaufland_returns["count"] == 0 and not returns_synced:
         warnings.append({"code": "KAUFLAND_RETURNS_NOT_SYNCED", "count": 0,
-                         "hint": "Kaufland-Retouren noch nicht synchronisiert."})
+                         "hint": "Die Kaufland-Retouren konnten nicht abgerufen werden — bitte Sync ausfuehren."})
 
     business_rules = {"block_filing_when_input_vat_incomplete": bool(block_filing_when_input_vat_incomplete)}
     if block_filing_when_input_vat_incomplete and missing_fee:
@@ -620,6 +639,7 @@ def build_ust_report(
                 "pre_vat_units_cents": sum(int(row["gross_cents"]) for row in kaufland_rows
                                            if row["tax_class"] == CLASS_PRE_VAT),
                 "returns": kaufland_returns,
+                "returns_synced": returns_synced,
                 "rows": [{k: v for k, v in row.items() if k != "warnings"} for row in kaufland_rows],
             },
             "amazon": amazon,
