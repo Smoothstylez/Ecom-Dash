@@ -113,7 +113,7 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
         rows = connection.execute(
             """
             SELECT u.id_order_unit, u.id_order, u.ts_created_iso, u.status, u.price, u.shipping_rate,
-                   u.vat, u.is_marketplace_deemed_supplier, u.shipping_country,
+                   u.vat, u.is_marketplace_deemed_supplier, u.shipping_country, u.revenue_gross,
                    COALESCE((SELECT SUM(CAST(NULLIF(r.amount, '') AS REAL)) FROM order_unit_refunds r
                              WHERE r.id_order_unit = u.id_order_unit), 0) AS refund_sum
             FROM order_units u
@@ -143,6 +143,7 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
             "vat_rate": rate,
             "gross_cents": gross_cents,
             "refund_cents": refund_cents,
+            "fees_cents": max(price_cents - _to_int(row["revenue_gross"]), 0),
             "net_source": "computed_from_rate",
             "rate_source": "api",
             "warnings": [],
@@ -404,3 +405,316 @@ def set_eu_tax_settings(
             f"UPDATE seller_profiles SET {assignments} WHERE id = 'default'", list(updates.values())
         )
     return get_eu_tax_settings()
+
+
+# ── Task 8: Report-Builder, Sperrlogik, Snapshots + Amendments ──────────────
+# Sperrlogik (verbindlich):
+#   hart (verhindert `filed`): AMAZON_UNRESOLVED, KAUFLAND_RATE_NEEDS_OVERRIDE,
+#     INPUT_VAT_PENDING_REVIEW, TAX_MODE_NOT_REGULAR, NO_VAT_START_DATE,
+#     UNRESOLVED_RETURN_LINK
+#   weich (Warnung + input_vat_incomplete): MISSING_FEE_INVOICE. Nach Punkt 9
+#     kein harter Blocker: die fehlende Gebuehrenrechnung macht die
+#     Ausgangs-USt nicht falsch. Nur die benannte Business-Regel
+#     `block_filing_when_input_vat_incomplete` (Default false) macht Blocker.
+#
+# Snapshots: `filed` ist unveranderlich. Korrekturen laufen ausschliesslich
+# ueber `amend_report` als neue Revision (kind='amendment').
+
+import json as _json
+import sqlite3 as _sqlite3
+
+from app.services import ust_documents as _docs
+from app.services.tax_reporting import get_tax_settings
+
+BLOCKER_AMAZON_UNRESOLVED = "AMAZON_UNRESOLVED"
+BLOCKER_KAUFLAND_RATE = "KAUFLAND_RATE_NEEDS_OVERRIDE"
+BLOCKER_INPUT_VAT_PENDING = "INPUT_VAT_PENDING_REVIEW"
+BLOCKER_TAX_MODE = "TAX_MODE_NOT_REGULAR"
+BLOCKER_NO_VAT_START = "NO_VAT_START_DATE"
+BLOCKER_RETURN_LINK = "UNRESOLVED_RETURN_LINK"
+WARNING_MISSING_FEE_INVOICE = "MISSING_FEE_INVOICE"
+
+CORRECTION_TYPES = frozenset({"RETURN", "REFUND"})
+
+
+def _shift_month(month: str, steps: int = 1) -> str:
+    parsed = datetime.strptime(month[:7], "%Y-%m")
+    year = parsed.year + (parsed.month - 1 + steps) // 12
+    month_index = (parsed.month - 1 + steps) % 12 + 1
+    return f"{year:04d}-{month_index:02d}"
+
+
+def load_amazon_tax_rows(month: str) -> list[dict[str, Any]]:
+    with connect_combined_db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM amazon_tax_rows WHERE substr(booking_date, 1, 7) = ? "
+            "ORDER BY booking_date, id",
+            (month,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _bucket_amazon(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    def empty() -> dict[str, Any]:
+        return {"count": 0, "gross": 0, "net": 0, "output_vat": 0}
+
+    classes = ("de_b2c", "eu_b2b_intra_community_supply", "eu_b2c_home_rate",
+               "unresolved", "deemed_supplier", "export", "unresolved_return_link")
+    buckets: dict[str, Any] = {name: empty() for name in classes}
+    buckets["returns"] = {"count": 0, "gross": 0, "net": 0, "output_vat": 0,
+                          "by_original_class": {}}
+    for row in rows:
+        is_correction = _text(row.get("transaction_type")).upper() in CORRECTION_TYPES
+        target = buckets["returns"] if is_correction else buckets.get(row["tax_class"])
+        if target is None:
+            target = buckets["unresolved"]
+        target["count"] += 1
+        target["gross"] += int(row.get("gross_cents") or 0)
+        target["net"] += int(row.get("net_cents") or 0)
+        target["output_vat"] += int(row.get("output_vat_cents") or 0)
+        if is_correction:
+            original = _text(row.get("original_tax_class")) or row.get("tax_class") or "unknown"
+            target["by_original_class"][original] = target["by_original_class"].get(original, 0) + 1
+    return buckets
+
+
+def detect_missing_fee_invoices(month: str) -> list[dict[str, Any]]:
+    """Gebuehren in `month` angefallen, aber keine freigegebene Gebuehrenrechnung."""
+    findings: list[dict[str, Any]] = []
+    kaufland_fees = sum(int(row.get("fees_cents") or 0) for row in load_kaufland_vat_rows(month))
+    candidates = {_text(row.get("deduction_month")) for row in (
+        _docs.list_input_vat_invoices(provider="kaufland")
+    ) if row.get("doc_type") == "fee" and row.get("input_vat_status") == "confirmed"}
+    if kaufland_fees > 0 and not ({month, _shift_month(month)} & candidates):
+        findings.append({
+            "code": WARNING_MISSING_FEE_INVOICE,
+            "provider": "kaufland",
+            "fees_cents": kaufland_fees,
+            "hint": "Kaufland-Gebuehren angefallen, aber keine freigegebene Gebuehrenrechnung "
+                    "(Rechnung kommt zum 1. des Folgemonats).",
+        })
+    return findings
+
+
+def build_ust_report(
+    month: str, *, block_filing_when_input_vat_incomplete: bool = False
+) -> dict[str, Any]:
+    month = _text(month)[:7]
+    settings = get_tax_settings()
+    eu_settings = get_eu_tax_settings()
+
+    kaufland_rows = load_kaufland_vat_rows(month)
+    kaufland_returns = load_kaufland_returns(month)
+    amazon_rows = load_amazon_tax_rows(month)
+    amazon = _bucket_amazon(amazon_rows)
+    input_vat = _docs.sum_input_vat_by_deduction_month(month)
+    missing_fee = detect_missing_fee_invoices(month)
+
+    kaufland_output_vat = sum(int(row["output_vat_cents"]) for row in kaufland_rows)
+    kaufland_gross = sum(int(row["gross_cents"]) for row in kaufland_rows)
+    kaufland_net = sum(int(row["net_cents"]) for row in kaufland_rows)
+    amazon_output_vat = sum(
+        amazon[name]["output_vat"] for name in
+        ("de_b2c", "eu_b2b_intra_community_supply", "eu_b2c_home_rate", "returns")
+    )
+    output_vat_cents = kaufland_output_vat + amazon_output_vat
+    input_vat_cents = sum(
+        int(input_vat[key]) for key in
+        ("purchases_cents", "amazon_fees_cents", "kaufland_fees_cents", "other_cents")
+    )
+
+    blockers: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+
+    unresolved_amazon = [
+        row for row in amazon_rows
+        if _text(row.get("tax_class")) in ("unresolved", "unresolved_return_link")
+    ]
+    if any(_text(row.get("tax_class")) == "unresolved_return_link" for row in unresolved_amazon):
+        blockers.append({"code": BLOCKER_RETURN_LINK,
+                         "count": sum(1 for row in unresolved_amazon
+                                      if _text(row.get("tax_class")) == "unresolved_return_link"),
+                         "hint": "Retoure ohne eindeutigen Ursprungs-SHIPMENT."})
+    if any(_text(row.get("tax_class")) == "unresolved" for row in unresolved_amazon):
+        blockers.append({"code": BLOCKER_AMAZON_UNRESOLVED,
+                         "count": sum(1 for row in unresolved_amazon
+                                      if _text(row.get("tax_class")) == "unresolved"),
+                         "hint": "Amazon-Sonderfaelle ohne bestaetigte Steuerbehandlung."})
+
+    kaufland_overrides_pending = sum(
+        1 for row in kaufland_rows if row["tax_class"] == CLASS_NEEDS_OVERRIDE
+    )
+    if kaufland_overrides_pending:
+        blockers.append({"code": BLOCKER_KAUFLAND_RATE,
+                         "count": kaufland_overrides_pending,
+                         "hint": "Kaufland `vat=0` ist ein Falschfeld und muss auf 19 % gesetzt werden."})
+
+    pending_review_count = int(input_vat.get("pending_review_count") or 0)
+    if pending_review_count:
+        blockers.append({"code": BLOCKER_INPUT_VAT_PENDING,
+                         "count": pending_review_count,
+                         "hint": "Eingangsrechnungen ohne Freigabe."})
+
+    if _normalize_tax_mode_for_report(settings.tax_mode) != "regular":
+        blockers.append({"code": BLOCKER_TAX_MODE, "count": 1,
+                         "hint": "Verkaeuferprofil steht nicht auf Regelbesteuerung."})
+    if settings.vat_effective_from is None:
+        blockers.append({"code": BLOCKER_NO_VAT_START, "count": 1,
+                         "hint": "Kein USt-Startzeitpunkt gesetzt."})
+
+    input_vat_incomplete = pending_review_count > 0 or bool(missing_fee)
+    warnings.extend(missing_fee)
+    if any(row.get("net_source") == "computed_home_rate" for row in amazon_rows):
+        warnings.append({"code": "AMAZON_VAT_CALCULATION_MISSING", "count": sum(
+            1 for row in amazon_rows if row.get("net_source") == "computed_home_rate"),
+            "hint": "Amazon hat keine Steuer berechnet; deutsche 19 % wurden selbst angesetzt."})
+    if kaufland_returns["count"] == 0 and kaufland_rows:
+        warnings.append({"code": "KAUFLAND_RETURNS_NOT_SYNCED", "count": 0,
+                         "hint": "Kaufland-Retouren noch nicht synchronisiert."})
+
+    business_rules = {"block_filing_when_input_vat_incomplete": bool(block_filing_when_input_vat_incomplete)}
+    if block_filing_when_input_vat_incomplete and missing_fee:
+        blockers.extend(missing_fee)
+
+    status = "draft" if blockers else "ready"
+    return {
+        "month": month,
+        "revision": None,
+        "kind": None,
+        "supersedes_id": None,
+        "status": status,
+        "settings": {
+            "tax_mode": settings.tax_mode,
+            "vat_effective_from": settings.vat_effective_from.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            if settings.vat_effective_from else None,
+            "eu_tax_regime": eu_settings["eu_tax_regime"],
+            "eu_distance_prior_year_cents": eu_settings["eu_distance_prior_year_cents"],
+            "eu_distance_current_year_cents": eu_settings["eu_distance_current_year_cents"],
+        },
+        "business_rules": business_rules,
+        "sections": {
+            "kaufland": {
+                "revenue_after_returns_cents": kaufland_gross,
+                "net_cents": kaufland_net,
+                "output_vat_cents": kaufland_output_vat,
+                "rate_overrides_pending": kaufland_overrides_pending,
+                "pre_vat_units_cents": sum(int(row["gross_cents"]) for row in kaufland_rows
+                                           if row["tax_class"] == CLASS_PRE_VAT),
+                "returns": kaufland_returns,
+                "rows": [{k: v for k, v in row.items() if k != "warnings"} for row in kaufland_rows],
+            },
+            "amazon": amazon,
+            "input_vat": {
+                **input_vat,
+                "input_vat_incomplete": input_vat_incomplete,
+            },
+        },
+        "totals": {
+            "output_vat_cents": output_vat_cents,
+            "input_vat_cents": input_vat_cents,
+            "vat_payable_cents": output_vat_cents - input_vat_cents,
+        },
+        "blockers": blockers,
+        "warnings": warnings,
+    }
+
+
+def _normalize_tax_mode_for_report(value: Any) -> str:
+    return "regular" if _text(value).lower() == "regular" else "small_business"
+
+
+def _persist_report(month: str, report: dict[str, Any], *, kind: str,
+                    supersedes_id: Optional[str]) -> dict[str, Any]:
+    with connect_combined_db() as connection:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(revision), 0) AS top FROM ust_reports WHERE month = ?", (month,)
+        ).fetchone()
+        revision = int(row["top"] or 0) + 1
+        report_id = _stable_id("ust-report", f"{month}:{revision}")
+        snapshot_json = _json.dumps(report, ensure_ascii=True, sort_keys=True, default=str)
+        connection.execute(
+            "INSERT INTO ust_reports(id,month,revision,kind,supersedes_id,status,snapshot_json,"
+            "blockers_json,warnings_json,created_at,filed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                report_id, month, revision, kind, supersedes_id, "filed", snapshot_json,
+                _json.dumps(report.get("blockers") or [], ensure_ascii=True, default=str),
+                _json.dumps(report.get("warnings") or [], ensure_ascii=True, default=str),
+                _utc_now(), _utc_now(),
+            ),
+        )
+        row = connection.execute(
+            "SELECT * FROM ust_reports WHERE id = ?", (report_id,)
+        ).fetchone()
+    return dict(row)
+
+
+def _latest_filed(month: str) -> Optional[dict[str, Any]]:
+    with connect_combined_db() as connection:
+        row = connection.execute(
+            "SELECT * FROM ust_reports WHERE month = ? ORDER BY revision DESC LIMIT 1", (month,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def file_report(month: str, *, block_filing_when_input_vat_incomplete: bool = False) -> dict[str, Any]:
+    month = _text(month)[:7]
+    if _latest_filed(month) is not None:
+        raise _docs.UstDocumentError(409, "Bericht ist bereits abgegeben; Korrekturen nur ueber amend_report.")
+    report = build_ust_report(
+        month, block_filing_when_input_vat_incomplete=block_filing_when_input_vat_incomplete
+    )
+    if report["blockers"]:
+        codes = ", ".join(sorted({item["code"] for item in report["blockers"]}))
+        raise _docs.UstDocumentError(409, f"Abgabe gesperrt: {codes}")
+    report["status"] = "filed"
+    return _persist_report(month, report, kind="original", supersedes_id=None)
+
+
+def amend_report(month: str, *, block_filing_when_input_vat_incomplete: bool = False) -> dict[str, Any]:
+    month = _text(month)[:7]
+    previous = _latest_filed(month)
+    if previous is None:
+        raise _docs.UstDocumentError(409, "Fuer diesen Monat liegt noch keine Abgabe vor.")
+    report = build_ust_report(
+        month, block_filing_when_input_vat_incomplete=block_filing_when_input_vat_incomplete
+    )
+    if report["blockers"]:
+        codes = ", ".join(sorted({item["code"] for item in report["blockers"]}))
+        raise _docs.UstDocumentError(409, f"Berichtigung gesperrt: {codes}")
+    report["status"] = "filed"
+    return _persist_report(month, report, kind="amendment", supersedes_id=previous["id"])
+
+
+def get_ust_report(month: str) -> dict[str, Any]:
+    month = _text(month)[:7]
+    stored = _latest_filed(month)
+    if stored is not None:
+        report = _json.loads(stored["snapshot_json"])
+        report.update(
+            id=stored["id"],
+            revision=int(stored["revision"]),
+            kind=stored["kind"],
+            supersedes_id=stored["supersedes_id"],
+            status="filed",
+        )
+        return report
+    return build_ust_report(month)
+
+
+def list_report_months() -> list[dict[str, Any]]:
+    with connect_combined_db() as connection:
+        rows = connection.execute(
+            "SELECT * FROM ust_reports ORDER BY month, revision DESC"
+        ).fetchall()
+    return [
+        {
+            "month": row["month"],
+            "revision": int(row["revision"]),
+            "kind": row["kind"],
+            "status": row["status"],
+            "supersedes_id": row["supersedes_id"],
+            "filed_at": row["filed_at"],
+            "created_at": row["created_at"],
+        }
+        for row in rows
+    ]
