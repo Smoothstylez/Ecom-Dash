@@ -271,6 +271,7 @@ def root(request: Request) -> Response:
 @app.get("/google-ads", include_in_schema=False)
 @app.get("/customers", include_in_schema=False)
 @app.get("/invoices", include_in_schema=False)
+@app.get("/tax-report", include_in_schema=False)
 @app.get("/support", include_in_schema=False)
 def dashboard_alias(request: Request) -> Response:
     return _dashboard_shell_response(request)
