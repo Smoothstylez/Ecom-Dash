@@ -4,6 +4,7 @@ export const DASHBOARD_ROUTES = [
   "support",
   "customers",
   "invoices",
+  "tax-report",
   "bookings",
   "google-ads",
   "amazon",
@@ -26,6 +27,9 @@ export function resolveDashboardRoute(pathname: string): DashboardRoute {
   }
   if (normalized === "/invoices") {
     return "invoices";
+  }
+  if (normalized === "/tax-report") {
+    return "tax-report";
   }
   if (normalized === "/bookings" || normalized === "/bookings/full") {
     return "bookings";

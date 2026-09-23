@@ -583,6 +583,9 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
               <div className="table-head" style={{ marginBottom: 12 }}>
                 <div>
                   <h3 className="table-title">Umsatzsteuer Report</h3>
+                  <div className="table-meta">
+                    <a href="/tax-report">Vollständiger USt-Report →</a>
+                  </div>
                   <div className="table-meta">Basis: Order-Eingangszeitpunkt innerhalb des Monats</div>
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>

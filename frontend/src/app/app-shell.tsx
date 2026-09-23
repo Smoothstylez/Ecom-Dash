@@ -637,6 +637,18 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                 }}
               >
                 <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 2h9l5 5v15a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm8 2v4h4M8 12h8v-2H8v2zm0 4h8v-2H8v2zm0 4h5v-2H8v2z" /></svg>
+
+              </button>
+              <button
+                type="button"
+                className={classNames("sidebar-nav-btn", route === "tax-report" && "active")}
+                aria-label="USt-Report"
+                title="USt-Report"
+                onClick={() => {
+                  navigate("/tax-report");
+                }}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3h16a1 1 0 0 1 1 1v16a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1zm3 4v2h10V7H7zm0 4v2h10v-2H7zm0 4v2h6v-2H7z" /></svg>
                 <span>Rechnungen</span>
               </button>
               <button
