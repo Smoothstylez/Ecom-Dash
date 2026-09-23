@@ -400,11 +400,30 @@ def set_eu_tax_settings(
     if not updates:
         return get_eu_tax_settings()
     assignments = ", ".join(f"{key} = ?" for key in updates)
+    now = _utc_now()
     with connect_combined_db() as connection:
+        # Die Profilzeile kann fehlen (frisch angelegtes Schema). Ohne sie wuerde
+        # das UPDATE ins Leere laufen und die Einstellung stillschweigend verloren.
         connection.execute(
-            f"UPDATE seller_profiles SET {assignments} WHERE id = 'default'", list(updates.values())
+            "INSERT INTO seller_profiles(id, legal_name, created_at, updated_at) "
+            "VALUES ('default', '', ?, ?) ON CONFLICT(id) DO NOTHING",
+            (now, now),
         )
-    return get_eu_tax_settings()
+        connection.execute(
+            f"UPDATE seller_profiles SET {assignments}, updated_at = ? WHERE id = 'default'",
+            [*updates.values(), now],
+        )
+    settings = get_eu_tax_settings()
+    # Steuerklassen haengen an der EU-Verkaufsregel: bereits importierte
+    # Amazon-Zeilen muessen nachgezogen werden, sonst bleibt 'unresolved'.
+    from app.services.amazon_tax_import import reclassify_all_rows
+
+    reclassify_all_rows(
+        eu_tax_regime=settings["eu_tax_regime"],
+        eu_distance_prior_year_cents=settings["eu_distance_prior_year_cents"],
+        eu_distance_current_year_cents=settings["eu_distance_current_year_cents"],
+    )
+    return settings
 
 
 # ── Task 8: Report-Builder, Sperrlogik, Snapshots + Amendments ──────────────

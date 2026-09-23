@@ -621,3 +621,41 @@ def test_import_sc_vat_tax_rows_round_trips_into_the_ust_report(tmp_path, monkey
     # idempotent: erneuter Import derselben Zeile schreibt kein Duplikat
     assert ati.import_sc_vat_tax_rows(classified)["skipped"] == 1
     assert len(ust_report.load_amazon_tax_rows("2026-06")) == 1
+
+
+def test_changing_eu_regime_reclassifies_stored_rows(tmp_path, monkeypatch):
+    """Die Steuerklasse haengt von der EU-Verkaufsregel ab.
+
+    Beim Import wird klassifiziert und gespeichert. Wenn sich die Regel
+    spaeter aendert (z. B. Fernabsatzgrenze bestaetigt), muessen die
+    gespeicherten Zeilen neu eingeordnet werden — sonst bleibt alles auf
+    'unresolved', obwohl die Regel geklaert ist.
+    """
+    from app import db as combined_db
+    from app.services import ust_report
+
+    monkeypatch.setattr(combined_db, "COMBINED_DB_PATH", tmp_path / "combined.sqlite3")
+    combined_db.init_combined_db()
+
+    at_b2c = _row(**{
+        "Order ID": "333-AT", "Shipment ID": "S-AT", "SKU": "A", "Transaction ID": "T-AT",
+        "Ship To Country": "AT", "Tax Rate": "0.0000",
+        "Tax Calculation Reason Code": "NonTaxable",
+        "Is Amazon Invoiced": "false",
+        "Shipment Date": "10-Jun-2026 UTC", "Order Date": "10-Jun-2026 UTC",
+        "OUR_PRICE Tax Inclusive Selling Price": "29.90",
+        "OUR_PRICE Tax Amount": "0.00",
+        "OUR_PRICE Tax Exclusive Selling Price": "29.90",
+    })
+    ati.import_sc_vat_tax_rows(ati.link_and_inherit([at_b2c], eu_tax_regime="unconfirmed"))
+    before = ust_report.load_amazon_tax_rows("2026-06")[0]
+    assert before["tax_class"] == "unresolved"
+    assert before["output_vat_cents"] == 0
+
+    ust_report.set_eu_tax_settings(eu_tax_regime="home_rate_under_threshold")
+
+    after = ust_report.load_amazon_tax_rows("2026-06")[0]
+    assert after["tax_class"] == "eu_b2c_home_rate"
+    assert after["net_source"] == "computed_home_rate"
+    assert after["net_cents"] == 2513
+    assert after["output_vat_cents"] == 477

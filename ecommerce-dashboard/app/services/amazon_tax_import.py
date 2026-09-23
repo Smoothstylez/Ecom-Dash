@@ -514,3 +514,63 @@ def import_report_document(report_id: str, *, report_type: str = "SC_VAT_TAX_REP
         "blockers": sum(1 for item in classified if item["blocker"]),
         "warnings": sum(len(item["warnings"]) for item in classified),
     }
+
+
+def reclassify_all_rows(
+    *,
+    eu_tax_regime: str,
+    eu_distance_prior_year_cents: int = 0,
+    eu_distance_current_year_cents: int = 0,
+) -> dict[str, Any]:
+    """Ordnet alle gespeicherten Zeilen mit den aktuellen Einstellungen neu ein.
+
+    Die Steuerklasse ist abhaengig von der EU-Verkaufsregel. Nachdem die Regel
+    bestaetigt wurde (z. B. Fernabsatzgrenze), muessen bereits importierte
+    Zeilen neu zugeordnet werden -- sonst bleibt 'unresolved' stehen, obwohl
+    die Frage geklaert ist. Die Rohdaten bleiben unangetastet.
+    """
+    from app.db import connect_combined_db
+
+    with connect_combined_db() as connection:
+        stored = connection.execute(
+            "SELECT id, raw_json FROM amazon_tax_rows ORDER BY id"
+        ).fetchall()
+    if not stored:
+        return {"updated": 0, "total": 0}
+
+    raw_rows = [json.loads(row["raw_json"]) for row in stored]
+    classified = link_and_inherit(
+        raw_rows,
+        eu_tax_regime=eu_tax_regime,
+        eu_distance_prior_year_cents=eu_distance_prior_year_cents,
+        eu_distance_current_year_cents=eu_distance_current_year_cents,
+    )
+    by_id = {_row_id(item["raw_row"]): item for item in classified}
+
+    updated = 0
+    with connect_combined_db() as connection:
+        for row in stored:
+            item = by_id.get(row["id"])
+            if item is None:
+                continue
+            connection.execute(
+                """
+                UPDATE amazon_tax_rows SET
+                    tax_class = ?, original_tax_class = ?, net_source = ?, vat_rate = ?,
+                    gross_cents = ?, net_cents = ?, output_vat_cents = ?, booking_date = ?
+                WHERE id = ?
+                """,
+                (
+                    item["tax_class"],
+                    item["original_tax_class"],
+                    item["net_source"],
+                    item["vat_rate"],
+                    item["gross_cents"],
+                    item["net_cents"],
+                    item["output_vat_cents"],
+                    item["booking_date"],
+                    row["id"],
+                ),
+            )
+            updated += 1
+    return {"updated": updated, "total": len(stored)}
