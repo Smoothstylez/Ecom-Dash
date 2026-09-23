@@ -255,9 +255,17 @@ def init_combined_db() -> None:
             """
         )
         _ensure_combined_orders_columns(connection)
+        _init_ust_schema(connection)
         connection.commit()
 
     _migrate_invoice_paths_to_relative()
+
+
+def _init_ust_schema(connection: sqlite3.Connection) -> None:
+    # Lazy import: app.services.ust_schema benutzt _ensure_column aus app.db.
+    from app.services.ust_schema import init_ust_schema
+
+    init_ust_schema(connection)
 
 
 def _table_columns(connection: sqlite3.Connection, table_name: str) -> set[str]:
