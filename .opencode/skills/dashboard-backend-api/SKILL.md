@@ -47,3 +47,34 @@ Maintenance rule:
   change, update this skill, the agent file, `docs/dashboard-backend-api.md`,
   and any affected helper scripts in `scripts/dashboard-api/` in the same
   commit.
+
+## USt Report Agent API
+
+Monthly VAT report, input VAT ledger and Kaufland rate corrections. Read before
+mutate; verify after mutate. `X-Admin-Token` required on every route.
+
+- Report: `GET /api/ust-report?month=YYYY-MM`, `GET /api/ust-report/months`
+- Filing: `POST /api/ust-report/{month}/refresh` | `file` | `amend`.
+  `file` returns `409` while hard blockers remain (`AMAZON_UNRESOLVED`,
+  `KAUFLAND_RATE_NEEDS_OVERRIDE`, `INPUT_VAT_PENDING_REVIEW`,
+  `TAX_MODE_NOT_REGULAR`, `NO_VAT_START_DATE`, `UNRESOLVED_RETURN_LINK`).
+  `MISSING_FEE_INVOICE` is only a warning plus `input_vat_incomplete`, unless
+  `block_filing_when_input_vat_incomplete` is enabled (default off).
+  Filed snapshots are immutable; corrections use `amend`, never overwrite.
+- Input VAT documents: `POST /api/ust-report/documents` (multipart),
+  `GET /api/ust-report/documents`, `GET .../{id}/download`,
+  `PATCH .../{id}`. Input VAT is deductible in
+  `max(service_month, docs_month)` where `service_month` prefers
+  `service_date`/`delivery_date`, then `period_to`, `period_from`,
+  `invoice_date` and `docs_month` is `received_date` or `invoice_date`.
+  Never treat `invoice_date` as the service date.
+- Kaufland rate fixes: `POST /api/ust-report/kaufland-overrides` and
+  `/bulk`. Kaufland `vat` is a PERCENTAGE (19.0 / 0.0), never an amount.
+- Settings: `POST /api/ust-report/settings` with `eu_tax_regime` one of
+  `unconfirmed`, `home_rate_under_threshold`, `oss_destination`.
+- Amazon: `POST /api/amazon/tax-report/request` and
+  `POST /api/amazon/tax-report/{report_id}/import`. Restricted reports use an
+  RDT as `x-amz-access-token` replacing the LWA token.
+
+Helper: `scripts/dashboard-api/file-ust-report.sh`.
+

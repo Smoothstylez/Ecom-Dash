@@ -1377,6 +1377,123 @@ Blocked for this automation scope:
 
 - `POST /api/exports/restore`
 
+## USt Report API
+
+Monthly German VAT report, input VAT ledger and Kaufland rate corrections.
+All routes require `X-Admin-Token`.
+
+### Periodization (authoritative)
+
+Input VAT is deductible in the first period in which the service has been
+performed AND a proper invoice is available (UStAE):
+
+```
+service_month = month(service_date) or month(period_to or period_from or invoice_date)
+docs_month    = month(received_date or invoice_date)
+deduction_month = max(service_month, docs_month)
+```
+
+`service_date` / `delivery_date` is a real delivery/performance date and wins
+over `period_to` and `invoice_date`. The invoice date is never assumed to be
+the service date. Only monthly platform fees may use `period_to` as the
+service end.
+
+Output VAT and revenue follow the delivery/transaction month. Returns and
+refunds follow their own booking month.
+
+### Classification
+
+Amazon `SC_VAT_TAX_REPORT` rows are classified in this order:
+
+1. `RETURN` / `REFUND` -- inherits the original SHIPMENT's class via
+   `(Order ID, Shipment ID, SKU)`
+2. `deemed_supplier` (Tax Collection Responsibility = Amazon)
+3. `export`
+4. `de_b2c` (DE -> DE at 19%, Amazon's own tax components are authoritative)
+5. `eu_b2b_intra_community_supply` (DE -> EU, valid foreign VAT ID, Taxable, 0%)
+6. `eu_b2c_home_rate` (EU B2C without VAT ID; `net = round_half_up(gross / 1.19)`)
+7. `unresolved`
+
+Kaufland `vat` is a PERCENTAGE (19.0 / 0.0), not an amount. The tax base is the
+customer gross (`price + shipping_rate`) net of refunds.
+
+### Blocking policy
+
+Hard blockers (prevent `filed`):
+
+- `AMAZON_UNRESOLVED`
+- `KAUFLAND_RATE_NEEDS_OVERRIDE`
+- `INPUT_VAT_PENDING_REVIEW`
+- `TAX_MODE_NOT_REGULAR`
+- `NO_VAT_START_DATE`
+- `UNRESOLVED_RETURN_LINK`
+
+Soft warnings: `MISSING_FEE_INVOICE` (also sets `input_vat_incomplete`), and
+`AMAZON_VAT_CALCULATION_MISSING`. A missing fee invoice only means the input
+VAT is not yet deductible -- it does not make the output VAT wrong -- so it
+does NOT block filing unless the named business rule
+`block_filing_when_input_vat_incomplete` is turned on (default `false`).
+
+### Filing lifecycle
+
+`filed` snapshots are immutable. Corrections go through `POST .../amend`,
+which appends a new revision with `kind: "amendment"` and `supersedes_id`
+pointing at the filed original.
+
+### Endpoints
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| GET | `/api/ust-report?month=YYYY-MM` | Report (live, or the latest filed snapshot) |
+| GET | `/api/ust-report/months` | `{items, total}` of revisions |
+| POST | `/api/ust-report/{month}/refresh` | Recompute without filing |
+| POST | `/api/ust-report/{month}/file` | File; `409` while blockers remain |
+| POST | `/api/ust-report/{month}/amend` | Append an amendment revision |
+| POST | `/api/ust-report/documents` | `multipart/form-data` input VAT invoice |
+| GET | `/api/ust-report/documents?month=&provider=&input_vat_status=` | `{items, total}` |
+| GET | `/api/ust-report/documents/{id}/download` | PDF |
+| PATCH | `/api/ust-report/documents/{id}` | `input_vat_status`, `received_date`, `service_date`, `notes` |
+| POST | `/api/ust-report/kaufland-overrides` | `{id_order_unit, to_rate, reason}` |
+| POST | `/api/ust-report/kaufland-overrides/bulk` | `{month, reason, to_rate}` |
+| POST | `/api/ust-report/settings` | `eu_tax_regime`, EU distance totals |
+| POST | `/api/amazon/tax-report/request` | Request `SC_VAT_TAX_REPORT` |
+| POST | `/api/amazon/tax-report/{report_id}/import` | Fetch, classify, persist |
+
+`POST /api/amazon/pool/tax-report` (legacy manual upload) still stores raw rows
+in `pool_tax_rows` and additionally classifies and persists them into
+`amazon_tax_rows`.
+
+### Input VAT documents
+
+Form fields for `POST /api/ust-report/documents`:
+
+`file`, `provider` (`amazon`/`kaufland`/`other`), `doc_type`
+(`fee`/`purchase`/`damage_compensation`/`other`), `invoice_number`,
+`invoice_date`, `received_date`, `service_date`, `period_from`, `period_to`,
+`currency`, `gross_cents`, `net_cents`, `vat_cents`, `deductible_vat_cents`,
+`notes`.
+
+Validation: `gross_cents == net_cents + vat_cents`, `deductible_vat_cents <=
+vat_cents`, no negative amounts, and `damage_compensation` must carry no VAT.
+Only `input_vat_status = "confirmed"` documents are deductible. Duplicate
+`(provider, invoice_number)` returns `409`; identical file bytes return `409`
+and leave no orphan file.
+
+### EU distance-selling threshold
+
+`EU_DISTANCE_SELLING_THRESHOLD_CENTS = 10000 * 100` (10.000 EUR). This is a
+separate constant from the section-19 threshold (`VAT_THRESHOLD_CENTS =
+100000 * 100`). The home VAT rate is only allowed when `eu_tax_regime` is
+`home_rate_under_threshold` AND both the prior and the current year are below
+the threshold; otherwise those cases stay `unresolved` and block filing.
+
+### Restricted Data Tokens
+
+`SC_VAT_TAX_REPORT` and the VAT Invoice Data Reports are restricted. For
+restricted operations the RDT is sent as `x-amz-access-token` **instead of**
+the LWA token -- there is no separate `RestrictedDataToken` header on the
+SP-API. `report_requires_rdt()` declares which report types need one.
+
 ## Recommended Agent Workflows
 
 ## Helper Scripts
@@ -1467,6 +1584,8 @@ Agent error handling rules:
 - Do not retry the same invalid payload blindly.
 - For `409`, read the relevant resource and explain the conflict.
 - For uploads, confirm the local path and file size before retrying.
+
+- `scripts/dashboard-api/file-ust-report.sh` is the helper for the USt report.
 
 ## Update Checklist For Future Backend Changes
 

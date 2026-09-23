@@ -32,3 +32,4 @@ Maintenance rule:
 
 - If a related backend route or payload changes, update these helpers together
   with `docs/dashboard-backend-api.md`, the skill file, and the agent file.
+- `file-ust-report.sh YYYY-MM [--amend]` -- file or amend the monthly USt report.
