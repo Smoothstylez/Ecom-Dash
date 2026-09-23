@@ -243,7 +243,7 @@ export function TaxReportPage() {
         className="trend-granularity"
         role="tablist"
         aria-label="USt-Report Ansicht"
-        style={{ marginTop: "1rem", justifyContent: "center", width: "100%" }}
+        style={{ marginTop: 12, justifyContent: "center", width: "100%" }}
       >
         {TABS.map((entry) => (
           <button
@@ -259,7 +259,7 @@ export function TaxReportPage() {
 
       {tab === "uebersicht" && report ? (
         <>
-          <section className="detail-grid" style={{ marginTop: "1rem" }}>
+          <section className="detail-grid" style={{ marginTop: 12 }}>
             <article className="detail-card">
               <h3>Ergebnis</h3>
               <div className="detail-kv">
@@ -311,7 +311,7 @@ export function TaxReportPage() {
             </article>
           </section>
 
-          <section className="card table-card" style={{ marginTop: "1rem" }}>
+          <section className="card table-card" style={{ marginTop: 12 }}>
             <div className="table-head">
               <h2 className="table-title">Was noch offen ist</h2>
               <div className="table-meta">{openCount ? `${openCount} Punkt(e)` : "Alles geklärt"}</div>
@@ -381,7 +381,7 @@ export function TaxReportPage() {
       ) : null}
 
       {tab === "kaufland" && report ? (
-        <section className="card table-card" style={{ marginTop: "1rem" }}>
+        <section className="card table-card" style={{ marginTop: 12 }}>
           <div className="table-head">
             <h2 className="table-title">Kaufland-Verkäufe</h2>
             <div className="table-meta">{kaufland?.rows.length || 0} Positionen</div>
@@ -423,7 +423,7 @@ export function TaxReportPage() {
       ) : null}
 
       {tab === "amazon" && report ? (
-        <section className="card table-card" style={{ marginTop: "1rem" }}>
+        <section className="card table-card" style={{ marginTop: 12 }}>
           <div className="table-head">
             <h2 className="table-title">Amazon-Umsätze</h2>
             <div className="table-meta">nach steuerlicher Behandlung</div>
@@ -462,7 +462,7 @@ export function TaxReportPage() {
 
       {tab === "vorsteuer" && report ? (
         <>
-          <section className="card table-card" style={{ marginTop: "1rem" }}>
+          <section className="card table-card" style={{ marginTop: 12 }}>
             <div className="table-head">
               <h2 className="table-title">Vorsteuer im Berichtsmonat</h2>
               <div className="table-meta">
@@ -493,7 +493,7 @@ export function TaxReportPage() {
             </div>
           </section>
 
-          <section className="detail-grid" style={{ marginTop: "1rem" }}>
+          <section className="detail-grid" style={{ marginTop: 12 }}>
             <article className="detail-card">
               <h3>EU-Verkaufsregel</h3>
               <div className="detail-kv">
@@ -525,7 +525,7 @@ export function TaxReportPage() {
       ) : null}
 
       {tab === "belege" ? (
-        <section className="card table-card" style={{ marginTop: "1rem" }}>
+        <section className="card table-card" style={{ marginTop: 12 }}>
           <div className="table-head">
             <h2 className="table-title">Eingangsrechnungen</h2>
             <div className="orders-head-actions">

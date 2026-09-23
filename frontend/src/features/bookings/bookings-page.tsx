@@ -2087,7 +2087,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const transactionsContent = (
     <>
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Transaktionen</h3>
+        <h3 className="table-title">Transaktionen</h3>
         <div id="bookingsTransactionsMeta" className="table-meta">
           {data.bookingsTotal > 0
             ? `${NUMBER_FORMATTER.format(transactionsPageStart)}-${NUMBER_FORMATTER.format(transactionsPageEnd)} / ${NUMBER_FORMATTER.format(data.bookingsTotal)} Zeilen`
@@ -2179,7 +2179,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const monthlyInvoicesContent = (
     <>
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Sammelrechnungen</h3>
+        <h3 className="table-title">Sammelrechnungen</h3>
         <div className="table-meta">{`${NUMBER_FORMATTER.format(data.monthlyInvoicesTotal)} Zeilen`}</div>
       </div>
       <div className="table-wrap">
@@ -2228,7 +2228,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const ordersContent = (
     <section className="card table-card">
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Bestellungen mit Kostenaufschluesselung</h3>
+        <h3 className="table-title">Bestellungen mit Kostenaufschluesselung</h3>
         <div id="bookingsOrdersMeta" className="table-meta">
           {data.bookingOrdersTotal > 0
             ? `${NUMBER_FORMATTER.format(bookingOrdersPageStart)}-${NUMBER_FORMATTER.format(bookingOrdersPageEnd)} / ${NUMBER_FORMATTER.format(data.bookingOrdersTotal)} Zeilen`
@@ -2304,7 +2304,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const templatesContent = (
     <section className="card table-card">
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Templates</h3>
+        <h3 className="table-title">Templates</h3>
         <div className="table-meta">{`${NUMBER_FORMATTER.format(data.bookingTemplatesTotal)} Zeilen`}</div>
       </div>
       <div className="table-wrap">
@@ -2347,7 +2347,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const accountsContent = (
     <section className="card table-card">
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Konten</h3>
+        <h3 className="table-title">Konten</h3>
         <div className="table-meta">{`${NUMBER_FORMATTER.format(data.bookingAccountsTotal)} Zeilen`}</div>
       </div>
       <div className="table-wrap">
@@ -2376,7 +2376,7 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
   const documentsContent = (
     <section className="card table-card">
       <div className="table-head">
-        <h3 className="table-title" style={{ fontSize: "0.98rem" }}>Belege</h3>
+        <h3 className="table-title">Belege</h3>
         <div className="table-meta">{`${NUMBER_FORMATTER.format(data.bookingDocumentsTotal)} Zeilen`}</div>
       </div>
       <div className="table-wrap">

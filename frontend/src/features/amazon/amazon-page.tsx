@@ -456,14 +456,14 @@ export function AmazonPage() {
     <section className="page" aria-label="Amazon FBA">
       {error ? <div className="table-meta" style={{ color: "var(--danger, #c44)" }}>{error}</div> : null}
       <div className="kpi-grid">
-        <article className="kpi"><div className="kpi-name">Brutto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.gross_sales_cents || 0)}</div><div className="kpi-sub">Amazon-Verkäufe im Zeitraum</div></article>
-        <article className="kpi"><div className="kpi-name">Netto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.sales_net_cents || 0)}</div><div className="kpi-sub">USt. enthalten: {formatMoneyFromCents(dashboardSummary?.sales_vat_cents || 0)}</div></article>
-        <article className="kpi"><div className="kpi-name">Orders</div><div className="kpi-value">{count(dashboardSummary?.orders_count)}</div><div className="kpi-sub">im gewählten Zeitraum</div></article>
-        <article className="kpi"><div className="kpi-name">Amazon-Gebühren</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.fees_net_cents || 0)}</div><div className="kpi-sub">Gebühren-USt.: {formatMoneyFromCents(dashboardSummary?.fees_vat_cents || 0)}</div></article>
-        <article className="kpi"><div className="kpi-name">Gewinn verkauft</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.realized_profit_cents || 0)}</div><div className="kpi-sub">Netto − Gebühren − FIFO-Wareneinsatz</div></article>
-        <article className="kpi"><div className="kpi-name">Positionsstand inkl. Bestand</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.position_after_inventory_cents || 0)}</div><div className="kpi-sub">Bestand gebunden: {formatMoneyFromCents(dashboardSummary?.inventory_cost_cents || 0)}</div></article>
+        <article className="card kpi"><div className="kpi-name">Brutto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.gross_sales_cents || 0)}</div><div className="kpi-sub">Amazon-Verkäufe im Zeitraum</div></article>
+        <article className="card kpi"><div className="kpi-name">Netto-Umsatz</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.sales_net_cents || 0)}</div><div className="kpi-sub">USt. enthalten: {formatMoneyFromCents(dashboardSummary?.sales_vat_cents || 0)}</div></article>
+        <article className="card kpi"><div className="kpi-name">Orders</div><div className="kpi-value">{count(dashboardSummary?.orders_count)}</div><div className="kpi-sub">im gewählten Zeitraum</div></article>
+        <article className="card kpi"><div className="kpi-name">Amazon-Gebühren</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.fees_net_cents || 0)}</div><div className="kpi-sub">Gebühren-USt.: {formatMoneyFromCents(dashboardSummary?.fees_vat_cents || 0)}</div></article>
+        <article className="card kpi"><div className="kpi-name">Gewinn verkauft</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.realized_profit_cents || 0)}</div><div className="kpi-sub">Netto − Gebühren − FIFO-Wareneinsatz</div></article>
+        <article className="card kpi"><div className="kpi-name">Positionsstand inkl. Bestand</div><div className="kpi-value">{formatMoneyFromCents(dashboardSummary?.position_after_inventory_cents || 0)}</div><div className="kpi-sub">Bestand gebunden: {formatMoneyFromCents(dashboardSummary?.inventory_cost_cents || 0)}</div></article>
       </div>
-      <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: "1rem", justifyContent: "center", width: "100%" }}>
+      <div id="amazonTabGroup" className="trend-granularity" role="tablist" aria-label="Amazon Ansicht" style={{ marginTop: 12, justifyContent: "center", width: "100%" }}>
         <button
           className={classNames("segmented-btn", activeTab === "inventory" && "active")}
           type="button"
@@ -481,7 +481,7 @@ export function AmazonPage() {
       {activeTab === "inventory" ? <AmazonInventoryPage /> : null}
       {activeTab === "overview" ? (
         <>
-          <section className="card table-card" style={{ marginTop: "1rem" }}>
+          <section className="card table-card" style={{ marginTop: 12 }}>
             <div className="table-head">
               <h2 className="table-title">FBA-Sendungen</h2>
               <div className="orders-head-actions">
@@ -560,7 +560,7 @@ export function AmazonPage() {
             </div>
           </section>
           {inboundCosts.some((cost) => !cost.shipment_id) ? (
-            <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+            <section className="card" style={{ padding: 16, marginTop: 12 }}>
               <h2>Amazon-Inbound-Kosten ohne Shipment-Zuordnung</h2>
               <p className="page-subtitle">Diese Finance-Ereignisse sind echt, werden aber erst nach deiner Bestätigung den Einstandskosten zugerechnet.</p>
               <div className="table-wrap">
@@ -570,13 +570,13 @@ export function AmazonPage() {
                     <td>{cost.cost_type}</td>
                     <td>{formatMoneyFromCents(cost.amount_cents)}</td>
                     <td>{cost.status}</td>
-                    <td>{selectedShipment ? <button type="button" className="button" onClick={() => void confirmCost(cost.id, selectedShipment.shipment.shipment_id)}>Dem geöffneten Shipment zuordnen</button> : <span className="table-meta">Shipment öffnen</span>}</td>
+                    <td>{selectedShipment ? <button type="button" className="btn-inline secondary" onClick={() => void confirmCost(cost.id, selectedShipment.shipment.shipment_id)}>Dem geöffneten Shipment zuordnen</button> : <span className="table-meta">Shipment öffnen</span>}</td>
                   </tr>)}</tbody>
                 </table>
               </div>
             </section>
           ) : null}
-          <section className="card" style={{ padding: "1.25rem", marginTop: "1rem" }}>
+          <section className="card" style={{ padding: 16, marginTop: 12 }}>
             <h2>Amazon-Einnahmen und Ausgaben</h2>
             <p className="page-subtitle">Ereignisse sind noch nicht automatisch gebucht und muessen vor der Buchhaltung geprueft werden.</p>
             <div className="table-wrap">
@@ -634,10 +634,10 @@ export function AmazonPage() {
                 <input aria-label={`Brutto ${draft.file.name}`} placeholder="Brutto EUR" inputMode="decimal" value={draft.gross} onChange={(event) => updateInvoiceDraft(key, { gross: event.target.value })} />
                 <input aria-label={`Netto ${draft.file.name}`} placeholder="Netto EUR" inputMode="decimal" value={draft.net} onChange={(event) => updateInvoiceDraft(key, { net: event.target.value })} />
                 <input aria-label={`USt ${draft.file.name}`} placeholder="USt EUR" inputMode="decimal" value={draft.vat} onChange={(event) => updateInvoiceDraft(key, { vat: event.target.value })} />
-                <button type="button" className="button button-primary" disabled={draft.status === "uploading"} onClick={() => void uploadInvoiceDraft(key)}>
+                <button type="button" className="btn-inline primary" disabled={draft.status === "uploading"} onClick={() => void uploadInvoiceDraft(key)}>
                   {draft.status === "uploading" ? "Lädt..." : "Hochladen"}
                 </button>
-                <button type="button" className="button" onClick={() => removeInvoiceDraft(key)}>Entfernen</button>
+                <button type="button" className="btn-inline danger" onClick={() => removeInvoiceDraft(key)}>Entfernen</button>
               </div>
               {draft.error ? <p className="table-meta" style={{ color: "var(--danger, #c44)" }}>{draft.error}</p> : null}
             </div>
@@ -689,7 +689,7 @@ export function AmazonPage() {
                     <td><input aria-label={`Brutto ${item.seller_sku}`} placeholder="Brutto EUR" inputMode="decimal" value={lineDraft.gross} onChange={(event) => updateInvoiceLineDraft(key, { gross: event.target.value }, existing)} /></td>
                     <td><input aria-label={`Netto ${item.seller_sku}`} placeholder="Netto EUR" inputMode="decimal" value={lineDraft.net} onChange={(event) => updateInvoiceLineDraft(key, { net: event.target.value }, existing)} /></td>
                     <td><input aria-label={`USt ${item.seller_sku}`} placeholder="USt EUR" inputMode="decimal" value={lineDraft.vat} onChange={(event) => updateInvoiceLineDraft(key, { vat: event.target.value }, existing)} /></td>
-                    <td><button type="button" className="button" onClick={() => void addInvoiceLine(item, existing)}>{existing ? "Position aktualisieren" : "Position speichern"}</button></td>
+                    <td><button type="button" className="btn-inline primary" onClick={() => void addInvoiceLine(item, existing)}>{existing ? "Position aktualisieren" : "Position speichern"}</button></td>
                   </>}
                 </tr>;
               })}</tbody>
@@ -698,7 +698,7 @@ export function AmazonPage() {
           {selectedShipment.cost_allocations.length ? <p className="table-meta">Produktkosten bereits bestaetigt; FIFO-Lots sind erzeugt.</p> : (
             <button
               type="button"
-              className="button button-primary"
+              className="btn-inline primary"
               disabled={!selectedShipment.invoices.length || selectedShipment.invoice_lines.length !== selectedShipment.items.filter((item) => item.quantity_received > 0).length || !["RECEIVING", "CLOSED"].includes(selectedShipment.shipment.status)}
               onClick={() => void confirmProductCosts()}
             >

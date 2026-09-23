@@ -494,7 +494,7 @@ export function SupportPage({ isActive }: SupportPageProps) {
 
                 <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: 12, marginTop: 10 }}>
                   <div className="card" style={{ padding: 12 }}>
-                    <div className="table-title" style={{ fontSize: 15 }}>Verlauf</div>
+                    <div className="table-title">Verlauf</div>
                     <div id="supportMessages" style={{ display: "grid", gap: 8, marginTop: 10, maxHeight: 320, overflowY: "auto" }}>
                       {(detail.messages || []).map((message) => (
                         <div key={String(message.id_ticket_message || "")} className="order-card" style={{ padding: 10 }}>
@@ -509,7 +509,7 @@ export function SupportPage({ isActive }: SupportPageProps) {
                     </div>
 
                     <div style={{ marginTop: 14 }}>
-                      <div className="table-title" style={{ fontSize: 15 }}>Antwort senden</div>
+                      <div className="table-title">Antwort senden</div>
                       <textarea
                         id="supportMessageInput"
                         value={messageText}
@@ -553,7 +553,7 @@ export function SupportPage({ isActive }: SupportPageProps) {
 
                   <div style={{ display: "grid", gap: 12 }}>
                     <div className="card" style={{ padding: 12 }}>
-                      <div className="table-title" style={{ fontSize: 15 }}>Kontext</div>
+                      <div className="table-title">Kontext</div>
                       <div className="table-meta" style={{ marginTop: 8 }}>Status: {humanizeStatus(selectedTicket.status)}</div>
                       <div className="table-meta" style={{ marginTop: 4 }}>Erstellt: {formatDateTime(selectedTicket.ts_created_iso)}</div>
                       <div className="table-meta" style={{ marginTop: 4 }}>Aktualisiert: {formatDateTime(selectedTicket.ts_updated_iso)}</div>
@@ -583,7 +583,7 @@ export function SupportPage({ isActive }: SupportPageProps) {
                     </div>
 
                     <div className="card" style={{ padding: 12 }}>
-                      <div className="table-title" style={{ fontSize: 15 }}>Anhaenge</div>
+                      <div className="table-title">Anhaenge</div>
                       <div id="supportAttachments" style={{ display: "grid", gap: 8, marginTop: 8 }}>
                         {(detail.attachments || []).length === 0 ? <div className="table-meta">Keine Anhaenge.</div> : null}
                         {(detail.attachments || []).map((attachment) => (
@@ -608,7 +608,7 @@ export function SupportPage({ isActive }: SupportPageProps) {
                     </div>
 
                     <div className="card" style={{ padding: 12 }}>
-                      <div className="table-title" style={{ fontSize: 15 }}>Interne Notizen</div>
+                      <div className="table-title">Interne Notizen</div>
                       <textarea
                         id="supportNoteInput"
                         rows={4}

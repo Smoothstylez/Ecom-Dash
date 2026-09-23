@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useDashboardShellState } from "@/app/dashboard-shell-state";
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
 import { fetchOrders, type OrderSummary } from "@/features/orders/api";
+import { TaxReportMonthPicker as MonthPicker } from "@/features/tax-report/tax-report-month-picker";
 
 import {
   buildInvoicePreviewUrl,
@@ -452,7 +453,7 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
                       <tr
                         key={key}
                         data-invoice-order-row="true"
-                        style={active ? { background: "rgba(41, 94, 174, 0.10)" } : undefined}
+                        style={active ? { background: "color-mix(in srgb, var(--th-accent) 10%, transparent)" } : undefined}
                         onClick={() => {
                           setSelectedOrderKey(key);
                         }}
@@ -590,7 +591,7 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
                 </div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                   <span className="table-meta">Monat</span>
-                  <input className="settings-inline-input" type="month" value={vatReportMonth} onChange={(event) => setVatReportMonth(event.target.value)} />
+                  <MonthPicker value={vatReportMonth} onChange={setVatReportMonth} />
                 </div>
               </div>
 
@@ -771,7 +772,7 @@ export function InvoicesPage({ isActive }: InvoicesPageProps) {
                         id="invoicePreviewFrame"
                         title="Invoice Preview"
                         src={previewUrl}
-                        style={{ width: "100%", minHeight: 760, border: "1px solid rgba(148, 163, 184, 0.25)", borderRadius: 12, background: "#fff" }}
+                        style={{ width: "100%", minHeight: 760, border: "1px solid var(--th-line)", borderRadius: 12, background: "var(--th-surface-white)" }}
                       />
                     ) : (
                       <div className="table-meta">Noch keine Preview verfuegbar.</div>

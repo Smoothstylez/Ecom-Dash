@@ -126,7 +126,7 @@ export function AmazonInventoryPage() {
   }
 
   return (
-    <section className="card table-card" style={{ marginTop: "1rem" }}>
+    <section className="card table-card" style={{ marginTop: 12 }}>
       <div className="table-head">
         <h2 className="table-title">FBA Bestand</h2>
         <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
@@ -192,7 +192,7 @@ export function AmazonInventoryPage() {
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "0.6rem" }}>
             <p className="page-subtitle">{selectedSku.seller_sku} · {selectedSku.asin || "kein ASIN"}</p>
-            <button type="button" className="button" onClick={() => void toggleHidden(selectedSku.sku_key, !selectedSku.hidden)}>
+            <button type="button" className="btn-inline ghost" onClick={() => void toggleHidden(selectedSku.sku_key, !selectedSku.hidden)}>
               {selectedSku.hidden ? "Wieder einblenden" : "Ausblenden"}
             </button>
           </div>
