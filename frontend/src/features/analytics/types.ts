@@ -83,6 +83,7 @@ export type AnalyticsPayload = {
   top_payment_methods: AnalyticsPaymentMethodRow[];
   shopify_revenue_total_cents: number;
   kaufland_revenue_total_cents: number;
+  amazon_revenue_total_cents: number;
   monthly: Array<{
     month: string;
     order_count: number;

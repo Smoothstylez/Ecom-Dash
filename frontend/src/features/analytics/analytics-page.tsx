@@ -74,7 +74,7 @@ const SECTION_CONFIG = {
 } as const;
 
 const DEFAULT_CARD_ORDER = {
-  kpi: ["orders", "revenue", "after-fees", "purchase", "profit", "channels"],
+  kpi: ["orders", "revenue", "after-fees", "purchase", "profit"],
   "insights-a": ["snapshot", "channel-compare"],
   "insights-b": ["fulfillment", "payments"],
   donuts: ["donut-profit", "donut-revenue"],
@@ -353,6 +353,7 @@ function normalizeAnalyticsPayload(payload: AnalyticsPayload): AnalyticsPayload 
     repeat_customer_rate_pct: Number(payload.repeat_customer_rate_pct || 0),
     shopify_revenue_total_cents: Number(payload.shopify_revenue_total_cents || 0),
     kaufland_revenue_total_cents: Number(payload.kaufland_revenue_total_cents || 0),
+    amazon_revenue_total_cents: Number(payload.amazon_revenue_total_cents || 0),
     marketplaces: Array.isArray(payload.marketplaces) ? payload.marketplaces : [],
     top_payment_methods: Array.isArray(payload.top_payment_methods) ? payload.top_payment_methods : [],
     monthly: Array.isArray(payload.monthly) ? payload.monthly : [],
@@ -608,23 +609,33 @@ function DonutMarketplaceCard({
   dragProps: CardDragProps;
 }) {
   const marketplaces = payload.marketplaces || [];
-  const shopifyProfit = Number(marketplaces.find((item) => item.marketplace === "shopify")?.profit_total_cents || 0) / 100;
-  const kauflandProfit = Number(marketplaces.find((item) => item.marketplace === "kaufland")?.profit_total_cents || 0) / 100;
-  const total = shopifyProfit + kauflandProfit;
-  const visualTotal = Math.max(0, shopifyProfit) + Math.max(0, kauflandProfit);
-  const hasData = shopifyProfit > 0 || kauflandProfit > 0;
+  const marketplaceData = marketplaces
+    .map((item) => ({
+      label: item.marketplace === "shopify" ? "Shopify" : item.marketplace === "kaufland" ? "Kaufland" : item.marketplace === "amazon" ? "Amazon" : item.marketplace,
+      profit: Math.max(0, Number(item.profit_total_cents || 0) / 100),
+      color: item.marketplace === "shopify"
+        ? readCssVariable("--th-donut-shopify", "#50b468")
+        : item.marketplace === "kaufland"
+          ? readCssVariable("--th-donut-kaufland", "#d85048")
+          : item.marketplace === "amazon"
+            ? readCssVariable("--th-donut-amazon", "#e8923a")
+            : readCssVariable("--th-line", "#ccc"),
+    }))
+    .filter((item) => item.profit > 0);
+  const total = marketplaceData.reduce((sum, item) => sum + item.profit, 0);
+  const hasData = marketplaceData.length > 0;
 
   useChart(
     "donutMarketplace",
     () => ({
       type: "doughnut",
       data: {
-        labels: hasData ? ["Shopify", "Kaufland"] : ["Keine Daten"],
+        labels: hasData ? marketplaceData.map((item) => item.label) : ["Keine Daten"],
         datasets: [
           {
-            data: hasData ? [Math.max(0, shopifyProfit), Math.max(0, kauflandProfit)] : [1],
+            data: hasData ? marketplaceData.map((item) => item.profit) : [1],
             backgroundColor: hasData
-              ? [readCssVariable("--th-donut-shopify", "#50b468"), readCssVariable("--th-donut-kaufland", "#d85048")]
+              ? marketplaceData.map((item) => item.color)
               : [readCssVariable("--th-line", "#ccc")],
             borderWidth: 0,
             hoverOffset: 6,
@@ -651,7 +662,7 @@ function DonutMarketplaceCard({
             callbacks: {
               label(context: any) {
                 const value = Number(context.parsed || 0);
-                const pct = visualTotal > 0 ? ((value / visualTotal) * 100).toFixed(1) : "0.0";
+                const pct = total > 0 ? ((value / total) * 100).toFixed(1) : "0.0";
                 return `${String(context.label || "")}: ${value.toLocaleString("de-DE", { style: "currency", currency: "EUR" })} (${pct}%)`;
               },
             },
@@ -672,7 +683,7 @@ function DonutMarketplaceCard({
       onDrop={dragProps.onDrop}
       onDragEnd={dragProps.onDragEnd}
     >
-      <h2 className="chart-title" data-tooltip="Verteilung des Gewinns auf Shopify und Kaufland.">Gewinn nach Marktplatz</h2>
+      <h2 className="chart-title" data-tooltip="Gewinnverteilung nach Marketplace.">Gewinn nach Marktplatz</h2>
       <div className="donut-canvas-wrap">
         <canvas id="donutMarketplace" />
         <div className="donut-center-label">
@@ -1124,19 +1135,6 @@ export function AnalyticsPage({ isActive }: AnalyticsPageProps) {
           subId="kpiProfitSub"
           subText={`Marge ${formatPercent(payload.margin_pct)}`}
           valueClassName={payload.profit_total_cents < 0 ? "value-neg" : "value-pos"}
-          dragProps={dragProps}
-        />
-      );
-    }
-
-    if (group === "kpi" && cardId === "channels") {
-      return (
-        <KpiCard
-          cardId="channels"
-          name="Channel Split"
-          valueId="kpiChannels"
-          value={`S: ${formatMoneyFromCents(payload.shopify_revenue_total_cents)} | K: ${formatMoneyFromCents(payload.kaufland_revenue_total_cents)}`}
-          tooltip="Shopify / Kaufland Umsatz"
           dragProps={dragProps}
         />
       );

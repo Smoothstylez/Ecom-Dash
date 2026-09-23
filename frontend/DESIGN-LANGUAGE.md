@@ -19,8 +19,22 @@ Ausnahmen nur nach ausdruecklicher Freigabe.
 - **Alle Farben** ueber `--th-*`-CSS-Variablen. **Nie** Hex/RGB/hsl hardcoden.
 - `data-theme` auf `<html>` steuert das aktive Theme; `ThemeProvider` verwaltet Wechsel + Persistenz.
 - Custom-Theme-Editor (`DashboardThemeModal`) schreibt dieselben `--th-*`-Variablen.
-- Ausnahmen fuer Betriebszustande: `var(--danger)`, `var(--success)`, `var(--warning)`, `var(--info)` (in `main.css` definiert).
+- Ausnahmen fuer Betriebszustande: `var(--danger)`, `var(--success)`, `var(--warning)`, `--info` (in `main.css` definiert).
 - **Verboten:** `style={{ color: "#..." }}`, `background: "rgba(...)"`, `background: "#fff"`.
+
+### Marketplace-Farben (verbindlich)
+
+| Marketplace | Token | Farbe (warm-light) | Badge-Klasse | Row-Klasse |
+|---|---|---|---|---|
+| Shopify | `--th-marketplace-shopify` | Gruen `#1f8b5f` | `badge-shopify` | `order-row-shopify` |
+| Kaufland | `--th-marketplace-kaufland` | Rot `#d85048` | `badge-kaufland` | `order-row-kaufland` |
+| Amazon | `--th-marketplace-amazon` | Orange `#e8923a` | `badge-amazon` | `order-row-amazon` |
+
+**Regeln:**
+- In **Vergleichsdarstellungen** (Charts, Tabellen, Karten) immer diese drei Marketplace-Farben verwenden.
+- `--th-donut-shopify` / `--th-donut-kaufland` / `--th-donut-amazon` fuer Donut-Charts.
+- Green bleibt Shopify vorbehalten. Kaufland = Rot, Amazon = Orange.
+- Custom-Theme-Editor: Gruppe „Marketplace" fuer alle Marketplace-Tokens.
 
 Erlaubt (Theme-konform):
 ```tsx

@@ -262,6 +262,11 @@ function KpiCard({ title, value, subtext }: { title: string; value: string; subt
   );
 }
 
+function readCssVariable(name: string, fallback: string) {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
 function applyGlobeThemeColors(globe: CustomerGlobeInstance | null) {
   if (!globe) {
     return;
@@ -732,7 +737,13 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
         continue;
       }
       const dominant = safeText(point.dominant_marketplace).toLowerCase();
-      const color = dominant === "kaufland" ? "#1f8b5f" : "#2d5ea8";
+      const color = dominant === "kaufland"
+        ? readCssVariable("--th-marketplace-kaufland", "#d85048")
+        : dominant === "amazon"
+          ? readCssVariable("--th-marketplace-amazon", "#e8923a")
+          : dominant === "shopify"
+            ? readCssVariable("--th-marketplace-shopify", "#1f8b5f")
+            : readCssVariable("--th-row-other", "#6f7c92");
       const orderCount = Number(point.order_count || 0);
       const radius = Math.max(4, Math.min(22, 4 + Math.sqrt(Math.max(orderCount, 0)) * 1.8));
       const marker = L.circleMarker([lat, lng], {
@@ -1136,7 +1147,13 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
                     <div className="customer-market-badges">
                       {markets.length ? markets.map((market) => {
                         const token = safeText(market).toLowerCase();
-                        const badgeClass = token === "kaufland" ? "badge badge-sale" : "badge badge-invoice";
+                        const badgeClass = token === "kaufland"
+                          ? "badge badge-kaufland"
+                          : token === "amazon"
+                            ? "badge badge-amazon"
+                            : token === "shopify"
+                              ? "badge badge-shopify"
+                              : "badge badge-default";
                         return <span key={`${safeText(item.customer_id || item.customer_name)}:${token}`} className={badgeClass}>{token || "-"}</span>;
                       }) : "-"}
                     </div>

@@ -682,12 +682,16 @@ export function OrdersPage({ isActive }: OrdersPageProps) {
                   ? "order-row-shopify"
                   : marketplaceToken === "kaufland"
                     ? "order-row-kaufland"
-                    : "";
+                    : marketplaceToken === "amazon"
+                      ? "order-row-amazon"
+                      : "";
                 const badgeClass = marketplaceToken === "shopify"
-                  ? "badge-invoice"
+                  ? "badge-shopify"
                   : marketplaceToken === "kaufland"
-                    ? "badge-sale"
-                    : "badge-default";
+                    ? "badge-kaufland"
+                    : marketplaceToken === "amazon"
+                      ? "badge-amazon"
+                      : "badge-default";
                 const parsedDraft = parsePurchaseEur(drafts[key] ?? centsToInputValue(order.purchase_cost_cents));
                 const previewProfit = parsedDraft.ok
                   ? Number(order.after_fees_cents || 0) - Number(parsedDraft.cents || 0)

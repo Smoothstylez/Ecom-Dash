@@ -3071,6 +3071,24 @@ button:hover {
   color: var(--th-badge-default-text);
 }
 
+.badge-shopify {
+  background: var(--th-badge-shopify-bg);
+  border-color: var(--th-badge-shopify-border);
+  color: var(--th-badge-shopify-text);
+}
+
+.badge-kaufland {
+  background: var(--th-badge-kaufland-bg);
+  border-color: var(--th-badge-kaufland-border);
+  color: var(--th-badge-kaufland-text);
+}
+
+.badge-amazon {
+  background: var(--th-badge-amazon-bg);
+  border-color: var(--th-badge-amazon-border);
+  color: var(--th-badge-amazon-text);
+}
+
 
 .tx-type-sub {
   margin-top: 4px;
@@ -3122,11 +3140,15 @@ tr.tx-row-other td:first-child {
 
 
 tr.order-row-shopify td:first-child {
-  box-shadow: inset 3px 0 0 var(--th-row-invoice);
+  box-shadow: inset 3px 0 0 var(--th-marketplace-shopify);
 }
 
 tr.order-row-kaufland td:first-child {
-  box-shadow: inset 3px 0 0 var(--th-row-sale);
+  box-shadow: inset 3px 0 0 var(--th-marketplace-kaufland);
+}
+
+tr.order-row-amazon td:first-child {
+  box-shadow: inset 3px 0 0 var(--th-marketplace-amazon);
 }
 
 .order-invoice-link {
@@ -4355,20 +4377,26 @@ tbody tr:nth-child(even) {
   }
 
   .orders-table tbody tr.order-row-shopify,
-  .orders-table tbody tr.order-row-kaufland {
+  .orders-table tbody tr.order-row-kaufland,
+  .orders-table tbody tr.order-row-amazon {
     border-left-width: 4px;
   }
 
   .orders-table tbody tr.order-row-shopify {
-    border-left-color: var(--th-row-invoice);
+    border-left-color: var(--th-marketplace-shopify);
   }
 
   .orders-table tbody tr.order-row-kaufland {
-    border-left-color: var(--th-row-sale);
+    border-left-color: var(--th-marketplace-kaufland);
+  }
+
+  .orders-table tbody tr.order-row-amazon {
+    border-left-color: var(--th-marketplace-amazon);
   }
 
   .orders-table tbody tr.order-row-shopify td:first-child,
-  .orders-table tbody tr.order-row-kaufland td:first-child {
+  .orders-table tbody tr.order-row-kaufland td:first-child,
+  .orders-table tbody tr.order-row-amazon td:first-child {
     box-shadow: none;
   }
 
