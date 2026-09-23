@@ -32,6 +32,23 @@ _AMAZON_API_BUCKETS = {
     "default": (1.0, 1.0),
 }
 
+# Report-Typen, fuer die getReportDocument ein Restricted Data Token (RDT)
+# verlangt. Das RDT wird dabei ALS x-amz-access-token gesetzt (es ersetzt den
+# LWA Access Token); einen gesonderten "RestrictedDataToken"-Header gibt es bei
+# der SP-API nicht.
+REPORT_TYPES_REQUIRING_RDT = frozenset(
+    {
+        "SC_VAT_TAX_REPORT",
+        "GET_VAT_TRANSACTION_DATA",
+        "GET_FLAT_FILE_VAT_INVOICE_DATA_REPORT",
+        "GET_XML_VAT_INVOICE_DATA_REPORT",
+    }
+)
+
+
+def report_requires_rdt(report_type: str) -> bool:
+    return _text(report_type) in REPORT_TYPES_REQUIRING_RDT
+
 
 class AmazonSpApiError(RuntimeError):
     pass
@@ -1159,6 +1176,7 @@ class AmazonSpApiClient:
         params: Optional[dict[str, Any]] = None,
         method: str = "GET",
         body: Optional[dict[str, Any]] = None,
+        access_token: Optional[str] = None,
     ) -> dict[str, Any]:
         bucket_key = amazon_api_bucket_key(path)
         while True:
@@ -1172,7 +1190,9 @@ class AmazonSpApiClient:
             url = f"{url}?{query}"
         data = _json_dumps(body).encode("utf-8") if body is not None else None
         request = Request(url, data=data, method=method)
-        request.add_header("x-amz-access-token", self._lwa_access_token())
+        # Restricted Operations: ein uebergebenes RDT ersetzt den LWA Token im
+        # selben Header. Kein zweiter Token-Header.
+        request.add_header("x-amz-access-token", access_token or self._lwa_access_token())
         request.add_header("Accept", "application/json")
         if body is not None:
             request.add_header("Content-Type", "application/json")
@@ -1511,26 +1531,58 @@ class AmazonSpApiClient:
             )
         return transactions
 
-    def create_settlement_report(self, marketplace_ids: list[str], started_after: str) -> str:
-        payload = self.request_json(
-            "/reports/2021-06-30/reports",
-            method="POST",
-            body={
-                "reportType": "GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE",
-                "marketplaceIds": marketplace_ids,
-                "dataStartTime": started_after,
-            },
-        )
+    def create_report(
+        self,
+        report_type: str,
+        marketplace_ids: list[str],
+        *,
+        data_start_time: Optional[str] = None,
+        data_end_time: Optional[str] = None,
+        report_options: Optional[dict[str, str]] = None,
+    ) -> str:
+        body: dict[str, Any] = {
+            "reportType": _text(report_type),
+            "marketplaceIds": list(marketplace_ids),
+        }
+        if data_start_time:
+            body["dataStartTime"] = data_start_time
+        if data_end_time:
+            body["dataEndTime"] = data_end_time
+        if report_options:
+            body["reportOptions"] = dict(report_options)
+        payload = self.request_json("/reports/2021-06-30/reports", method="POST", body=body)
         report_id = _text(payload.get("reportId"))
         if not report_id:
             raise AmazonSpApiError("Reports API did not return reportId")
         return report_id
 
+    def create_settlement_report(self, marketplace_ids: list[str], started_after: str) -> str:
+        return self.create_report(
+            "GET_V2_SETTLEMENT_REPORT_DATA_FLAT_FILE",
+            marketplace_ids,
+            data_start_time=started_after,
+        )
+
+    def create_restricted_data_token(self, restricted_resources: list[dict[str, Any]]) -> str:
+        payload = self.request_json(
+            "/tokens/2021-03-01/restrictedDataToken",
+            method="POST",
+            body={"restrictedResources": list(restricted_resources)},
+        )
+        token = _text(payload.get("restrictedDataToken"))
+        if not token:
+            raise AmazonSpApiError("Tokens API did not return a restrictedDataToken")
+        return token
+
     def get_report(self, report_id: str) -> dict[str, Any]:
         return self.request_json(f"/reports/2021-06-30/reports/{report_id}")
 
-    def get_report_document(self, document_id: str) -> dict[str, Any]:
-        return self.request_json(f"/reports/2021-06-30/documents/{document_id}")
+    def get_report_document(
+        self, document_id: str, *, access_token: Optional[str] = None
+    ) -> dict[str, Any]:
+        return self.request_json(
+            f"/reports/2021-06-30/documents/{document_id}", access_token=access_token
+        )
 
     def list_reports(self, report_type: str) -> list[dict[str, Any]]:
         payload = self.request_json(
@@ -1546,9 +1598,12 @@ class AmazonSpApiClient:
             payload = self.request_json("/reports/2021-06-30/reports", params={"nextToken": next_token, "pageSize": 100})
         return reports
 
-    def download_report_text(self, url: str) -> str:
+    def download_report_text(self, url: str, *, access_token: Optional[str] = None) -> str:
         try:
-            with urlopen(url, timeout=90) as response:
+            request = Request(url, method="GET")
+            if access_token:
+                request.add_header("x-amz-access-token", access_token)
+            with urlopen(request, timeout=90) as response:
                 return response.read().decode("utf-8-sig")
         except (HTTPError, URLError, OSError, UnicodeDecodeError) as exc:
             raise AmazonSpApiError(f"report document download failed: {exc}") from exc
