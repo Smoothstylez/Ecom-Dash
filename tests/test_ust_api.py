@@ -110,7 +110,7 @@ class UstApiTests(_IsolatedDbMixin, unittest.TestCase):
                 headers=self.admin,
                 data={
                     "provider": "kaufland", "doc_type": "fee",
-                    "invoice_number": "R0226-23464200", "invoice_date": "2026-03-01",
+                    "invoice_number": "TEST-R0226", "invoice_date": "2026-03-01",
                     "received_date": "2026-03-01",
                     "period_from": "2026-02-01", "period_to": "2026-02-28",
                     "gross_cents": "231899", "net_cents": "194873",
@@ -146,7 +146,7 @@ class UstApiTests(_IsolatedDbMixin, unittest.TestCase):
 
     def test_patch_document_edits_received_date_and_status(self) -> None:
         row = ust_documents.save_input_vat_invoice({
-            "provider": "kaufland", "doc_type": "fee", "invoice_number": "PATCH-API-1",
+            "provider": "kaufland", "doc_type": "fee", "invoice_number": "TEST-PATCH-API-1",
             "invoice_date": "2026-08-28", "received_date": "2026-08-28",
             "service_date": "2026-09-03",
             "gross_cents": 100, "net_cents": 84, "vat_cents": 16, "deductible_vat_cents": 16,

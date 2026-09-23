@@ -61,16 +61,16 @@ def test_input_vat_invoices_rejects_duplicate_provider_invoice_number(connection
     )
     connection.execute(
         insert,
-        ("a", "kaufland", "fee", "R0226-23464200", "2026-03-01", "2026-03-01", 231899, 194873, 37026, "2026-03", "2026-03-01T00:00:00Z"),
+        ("a", "kaufland", "fee", "TEST-R0226", "2026-03-01", "2026-03-01", 231899, 194873, 37026, "2026-03", "2026-03-01T00:00:00Z"),
     )
     with pytest.raises(sqlite3.IntegrityError):
         connection.execute(
             insert,
-            ("b", "kaufland", "fee", "R0226-23464200", "2026-03-02", "2026-03-02", 1, 1, 0, "2026-03", "2026-03-02T00:00:00Z"),
+            ("b", "kaufland", "fee", "TEST-R0226", "2026-03-02", "2026-03-02", 1, 1, 0, "2026-03", "2026-03-02T00:00:00Z"),
         )
     connection.execute(
         insert,
-        ("c", "amazon", "fee", "R0226-23464200", "2026-03-01", "2026-03-01", 1, 1, 0, "2026-03", "2026-03-01T00:00:00Z"),
+        ("c", "amazon", "fee", "TEST-R0226", "2026-03-01", "2026-03-01", 1, 1, 0, "2026-03", "2026-03-01T00:00:00Z"),
     )
 
 
@@ -279,7 +279,7 @@ def _invoice_payload(**overrides):
     payload = {
         "provider": "kaufland",
         "doc_type": "fee",
-        "invoice_number": "R0226-23464200",
+        "invoice_number": "TEST-R0226",
         "invoice_date": "2026-08-28",
         "received_date": "2026-08-28",
         "service_date": None,
@@ -336,7 +336,7 @@ def test_damage_compensation_carries_no_input_vat(connection):
     row = ust_documents.save_input_vat_invoice(
         _invoice_payload(
             doc_type="damage_compensation",
-            invoice_number="C0326-80490",
+            invoice_number="TEST-C0326",
             gross_cents=12597,
             net_cents=12597,
             vat_cents=0,
@@ -353,7 +353,7 @@ def test_damage_compensation_rejects_vat(connection):
         ust_documents.save_input_vat_invoice(
             _invoice_payload(
                 doc_type="damage_compensation",
-                invoice_number="C0726-91224",
+                invoice_number="TEST-C0726",
                 gross_cents=5723,
                 net_cents=5000,
                 vat_cents=723,
@@ -432,7 +432,7 @@ def test_duplicate_document_bytes_are_not_stored_twice(connection, tmp_path, mon
     ust_documents.save_input_vat_invoice(_invoice_payload(), file_bytes=b"%PDF-1.4 same", filename="a.pdf")
     with pytest.raises(ust_documents.UstDocumentError) as excinfo:
         ust_documents.save_input_vat_invoice(
-            _invoice_payload(invoice_number="R0326-23591132"), file_bytes=b"%PDF-1.4 same", filename="b.pdf"
+            _invoice_payload(invoice_number="TEST-R0326"), file_bytes=b"%PDF-1.4 same", filename="b.pdf"
         )
     assert excinfo.value.status_code == 409
     assert len(list((tmp_path / "documents").rglob("*.pdf"))) == 1

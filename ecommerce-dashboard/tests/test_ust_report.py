@@ -356,7 +356,7 @@ def test_input_vat_is_split_by_doc_type_and_provider(combined, kaufland):
 
 def test_damage_compensation_is_nontaxable_without_input_vat(combined, kaufland):
     set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
-    for number, gross in (("C0326-80490", 12597), ("C0726-91224", 5723)):
+    for number, gross in (("TEST-C0326", 12597), ("TEST-C0726", 5723)):
         _docs.save_input_vat_invoice({
             "provider": "kaufland", "doc_type": "damage_compensation", "invoice_number": number,
             "invoice_date": "2026-03-05", "received_date": "2026-03-05",
