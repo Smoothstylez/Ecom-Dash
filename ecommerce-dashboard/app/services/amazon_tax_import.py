@@ -378,13 +378,17 @@ def _row_id(raw_row: dict[str, Any]) -> str:
 
 
 def import_sc_vat_tax_rows(classified_rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
-    """Persistiert klassifizierte Zeilen idempotent nach amazon_tax_rows."""
-    from app.services.importers import amazon_sp_api as db
+    """Persistiert klassifizierte Zeilen idempotent nach amazon_tax_rows.
+
+    `amazon_tax_rows` wird von ust_schema in der Combined-DB angelegt und von
+    ust_report.load_amazon_tax_rows dort gelesen -- also hier auch in die
+    Combined-DB schreiben, nicht in die Amazon-FBA-DB.
+    """
+    from app.db import connect_combined_db
 
     inserted = 0
     skipped = 0
-    db.init_amazon_fba_db()
-    with db._connect() as connection:
+    with connect_combined_db() as connection:
         for item in classified_rows:
             raw_row = item.get("raw_row") or {}
             row_id = _row_id(raw_row)

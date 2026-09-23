@@ -589,3 +589,35 @@ def test_return_booking_date_uses_return_row_month_not_order_month():
     results = ati.link_and_inherit([shipment, refund], eu_tax_regime=EU_TAX_REGIME_HOME_RATE)
     assert results[0]["booking_date"] == "2026-06-03"
     assert results[1]["booking_date"] == "2026-07-11"
+
+
+def test_import_sc_vat_tax_rows_round_trips_into_the_ust_report(tmp_path, monkeypatch):
+    """Klassifizierte Zeilen muessen dort landen, wo der USt-Report liest.
+
+    `amazon_tax_rows` wird von ust_schema in der Combined-DB angelegt und von
+    ust_report.load_amazon_tax_rows dort gelesen. Ein Schreiben ueber die
+    Amazon-FBA-DB waere eine Verwechslung und liefert dem Report immer 0.
+    """
+    from app import db as combined_db
+    from app.services import ust_report
+
+    monkeypatch.setattr(combined_db, "COMBINED_DB_PATH", tmp_path / "combined.sqlite3")
+    combined_db.init_combined_db()
+
+    shipment = _row(**{
+        "Order ID": "333-RT", "Shipment ID": "S-RT", "SKU": "A", "Transaction ID": "T-RT",
+        "Shipment Date": "03-Jun-2026 UTC", "Order Date": "02-Jun-2026 UTC",
+        "Tax Rate": "0.1900", "Tax Calculation Reason Code": "Taxable",
+    })
+    classified = ati.link_and_inherit([shipment], eu_tax_regime="unconfirmed")
+    result = ati.import_sc_vat_tax_rows(classified)
+    assert result["inserted"] == 1
+
+    loaded = ust_report.load_amazon_tax_rows("2026-06")
+    assert len(loaded) == 1
+    assert loaded[0]["tax_class"] == "de_b2c"
+    assert loaded[0]["booking_date"] == "2026-06-03"
+
+    # idempotent: erneuter Import derselben Zeile schreibt kein Duplikat
+    assert ati.import_sc_vat_tax_rows(classified)["skipped"] == 1
+    assert len(ust_report.load_amazon_tax_rows("2026-06")) == 1
