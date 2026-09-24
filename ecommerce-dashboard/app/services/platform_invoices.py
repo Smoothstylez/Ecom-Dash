@@ -452,18 +452,27 @@ def approve_platform_invoice(
 
         period_from = _iso_day(invoice.get("period_from"))
         period_to = _iso_day(invoice.get("period_to"))
-        booked = expected_fee_cents(
-            connection,
-            provider=invoice.get("provider") or "",
-            period_from=period_from,
-            period_to=period_to,
-            include_booked=True,
-        )
         invoice_amount = int(invoice.get("invoice_amount_cents") or 0)
+        is_consolidated = invoice.get("doc_kind") != parser.DOC_KIND_SINGLE
+        # Einzelbelege haben keinen Abgleich: sie sind eine eigene Rechnung mit
+        # einer Position. Wuerde man hier gegen die Summe aller Gebuehren im
+        # Zeitraum rechnen, zoegen sie Buchungen der Sammelrechnung an sich und
+        # erzeugten eine falsche Korrektur.
+        booked = (
+            expected_fee_cents(
+                connection,
+                provider=invoice.get("provider") or "",
+                period_from=period_from,
+                period_to=period_to,
+                include_booked=True,
+            )
+            if is_consolidated
+            else invoice_amount
+        )
         difference = invoice_amount - booked
         had_variance = False
 
-        if difference != 0:
+        if difference != 0 and is_consolidated:
             variance_id = _create_variance_booking(
                 connection, invoice, difference, booked
             )
@@ -474,14 +483,8 @@ def approve_platform_invoice(
                 (invoice_id, variance_id),
             )
             had_variance = True
-            booked = expected_fee_cents(
-                connection,
-                provider=invoice.get("provider") or "",
-                period_from=period_from,
-                period_to=period_to,
-                include_booked=True,
-            )
-            difference = invoice_amount - booked
+            booked = invoice_amount
+            difference = 0
 
         connection.execute(
             """
@@ -656,7 +659,9 @@ def _link_transactions(
     period_from = _iso_day(invoice.get("period_from"))
     period_to = _iso_day(invoice.get("period_to"))
     invoice_id = invoice["id"]
-    if period_from:
+    # Nur Sammelrechnungen verknuepfen die orderbezogene Provision. Ein
+    # Einzelbeleg hat damit nichts zu tun und darf sie nicht mitzaehlen.
+    if period_from and invoice.get("doc_kind") != parser.DOC_KIND_SINGLE:
         rows = connection.execute(
             """
             SELECT id FROM transactions
