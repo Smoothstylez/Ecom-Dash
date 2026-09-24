@@ -1494,6 +1494,77 @@ restricted operations the RDT is sent as `x-amz-access-token` **instead of**
 the LWA token -- there is no separate `RestrictedDataToken` header on the
 SP-API. `report_requires_rdt()` declares which report types need one.
 
+## Eingangsrechnungen (Plattform-Rechnungen)
+
+Upload, automatisches Auslesen, Abgleich gegen die gebuchten Gebuehren und
+ausdrueckliche Freigabe. Deckt Kaufland- und Amazon-Belege ab, spaeter auch
+Wareneinkauf. Die Parsing-Regeln stehen in `docs/platform-invoice-parsing.md`.
+
+**Ablauf: parse -> draft -> approve.** Kein Schritt darf uebersprungen werden:
+
+1. `POST /api/bookings/monthly-invoices/parse` liest den Beleg und liefert die
+   Vorbefuellung. Es wird **nichts gespeichert**.
+2. `POST /api/bookings/monthly-invoices/draft` legt ab, Status `needs_review`.
+   Weiterhin **keine Buchung**.
+3. `POST /api/bookings/monthly-invoices/{id}/approve` ist der **einzige** Weg,
+   der etwas ins Ledger schreibt.
+
+Ein KI-Agent soll bei `parse_confidence < 1` oder nicht-leeren
+`needs_review_reasons` dem Menschen zur Freigabe vorlegen, nicht selbst
+freigeben.
+
+### Parse (Prefill, ohne Anlegen)
+
+`POST /api/bookings/monthly-invoices/parse`
+
+Request (JSON): `pdf_text` (Belegtext) **oder** `pdf_path` (Datei auf dem
+Server), optional `csv_text` (Amazon-Fee-CSV, bevorzugt neben dem PDF).
+
+```json
+{
+  "pdf_text": "Rechnungs Nr.: R0726-...",
+  "csv_text": "\"Transaction Date\",..."
+}
+```
+
+Antwort: `parsed` mit Kopfdaten, `lines` (je Position Netto/USt/Brutto),
+`parse_confidence` (0..1), `needs_review_reasons` (Liste) und `preview`
+(`expected_cents`, `invoice_cents`, `difference_cents`, `has_expected`).
+
+### Draft (ablegen, ohne Buchung)
+
+`POST /api/bookings/monthly-invoices/draft`
+
+Request: `parsed` (das Objekt aus `parse`), optional `document_id`, `notes`,
+`invoice_amount_cents`, `vat_amount_cents` (ueberschreiben die geparsten Werte).
+
+Antwort: `invoice` mit Status `needs_review`.
+
+### Approve (die Freigabe)
+
+`POST /api/bookings/monthly-invoices/{id}/approve`
+
+Request (optional): `{"create_missing_bookings": true}`.
+
+Bucht die Positionen ohne Automatik (Grundgebuehr, Werbung, Einzelbelege),
+laesst die orderbezogene Verkaufsprovision unangetastet und gleicht eine
+Abweichung mit einer eigenen `ADJUSTMENT`-Buchung
+(`category = invoice_variance`, Referenz `Abweichung Sammelrechnung …`) aus.
+Antwort: `invoice` mit `approved_transaction_ids` und `had_variance`.
+
+**Idempotent** ueber `source_key` -- ein erneuter Aufruf bucht nicht doppelt.
+
+### Statuswerte
+
+`draft` -> `needs_review` -> `approved`, daneben weiter `matched` / `mismatch`
+aus dem bisherigen Abgleich. Alte Zeilen mit `draft` bleiben gueltig.
+
+### Verhalten bei Abweichung
+
+Der Rechnungsbetrag gilt am Ende. Bestehende Transaktionen werden nie
+ueberschrieben; die Differenz wird als eigene, sichtbare Korrekturbuchung
+erganzt und braucht eine eigene Freigabe.
+
 ## Recommended Agent Workflows
 
 ## Helper Scripts
