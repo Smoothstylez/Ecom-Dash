@@ -590,6 +590,7 @@ body.bookings-full #customersPanel {
 
 body.bookings-full #bookingsPanel {
   display: grid !important;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 /* Bookings subtabs live in the sidebar; only the shared action button remains here. */
