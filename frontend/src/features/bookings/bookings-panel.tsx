@@ -139,12 +139,15 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
               <div className="bookings-form-grid">
                 <div className="control">
                   <label htmlFor="createSammelProvider">Provider</label>
-                  <select id="createSammelProvider" defaultValue="paypal">
-                    <option value="paypal">PayPal Fees</option>
-                    <option value="shopify_payments">Shopify Payments Fees</option>
-                    <option value="kaufland">Kaufland Fees</option>
+                  <select id="createSammelProvider" defaultValue="kaufland">
+                    <option value="kaufland">Kaufland</option>
+                    <option value="amazon">Amazon</option>
+                    <option value="aliexpress">AliExpress</option>
                     <option value="google_ads">Google Ads</option>
-                    <option value="ebay">eBay Fees</option>
+                    <option value="ebay">eBay</option>
+                    <option value="paypal">PayPal</option>
+                    <option value="shopify_payments">Shopify Payments</option>
+                    <option value="other">Sonstiger Lieferant</option>
                   </select>
                 </div>
                 <div className="control control-menu-wrap sammel-month-wrap">

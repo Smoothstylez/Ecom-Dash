@@ -1209,6 +1209,69 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
                   ]}
                 />
               </div>
+              {differenceAmount !== 0 ? (
+                <p className="sammel-preview">
+                  Die Rechnung weicht von dem ab, was gebucht ist. Beim Freigeben
+                  gilt der Rechnungsbetrag; die Abweichung wird als eigene,
+                  markierte Korrekturbuchung ergänzt.
+                </p>
+              ) : null}
+              {invoiceReviewOf(invoice).confidence < 1 || invoiceReviewOf(invoice).reasons.length ? (
+                <div className="sammel-preview">
+                  <strong>
+                    Bitte pruefen ({Math.round(invoiceReviewOf(invoice).confidence * 100)} % sicher erkannt)
+                  </strong>
+                  {invoiceReviewOf(invoice).reasons.length ? (
+                    <ul>
+                      {invoiceReviewOf(invoice).reasons.map((reason: string) => (
+                        <li key={reason}>{reason}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
+              {invoice.status === "needs_review" ? (
+                <div className="booking-detail-actions">
+                  <button
+                    className="btn-inline primary"
+                    data-action="approve-invoice-modal"
+                    type="button"
+                  >
+                    Freigeben und buchen
+                  </button>
+                </div>
+              ) : null}
+            </article>
+            <article className="detail-card">
+              <h3>Positionen</h3>
+              {invoiceLinesOf(invoice).length ? (
+                <div className="table-shell">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Art</th>
+                        <th>Anz.</th>
+                        <th>Netto</th>
+                        <th>USt</th>
+                        <th>Brutto</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {invoiceLinesOf(invoice).map((line: Record<string, string | number>) => (
+                        <tr key={`${line.position_key}-${line.label}`}>
+                          <td>{positionLabelOf(String(line.position_key))}{line.label && line.label !== line.position_key ? ` – ${String(line.label)}` : ""}</td>
+                          <td>{Number(line.line_count) || 1}</td>
+                          <td>{formatMoneyFromCents(Number(line.net_cents) || 0)}</td>
+                          <td>{formatMoneyFromCents(Number(line.vat_cents) || 0)}</td>
+                          <td>{formatMoneyFromCents(Number(line.gross_cents) || 0)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <p className="sammel-preview">Keine Positionen erfasst.</p>
+              )}
             </article>
             <article className="detail-card">
               <h3>Beleg & Notiz</h3>
@@ -1323,4 +1386,41 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
   }
 
   return createPortal(detailsContent, detailsContentElement);
+}
+
+
+// --- Eingangsrechnungen: geparste Positionen und Parser-Warnungen -----------
+// Die Felder kommen aus `lines_json` / `needs_review_reasons` und sind bei
+// alten Zeilen schlicht abwesend -- deshalb ueber unknown abfragen statt einen
+// erzwungenen Cast.
+
+const INVOICE_LINE_LABELS: Record<string, string> = {
+  provision: "Verkaufsprovision",
+  provision_storno: "Storno Provision",
+  base_fee: "Grundgebuehr",
+  advertising: "Werbung",
+  subscription: "Abo",
+  fulfillment: "Versand/FBA",
+  refund_admin: "Retourenbearbeitung",
+  cancellation_fee: "Gebuehr Storno",
+  fee_refund: "Erstattung Gebuehren",
+  other: "Sonstiges",
+};
+
+function positionLabelOf(key: string): string {
+  return INVOICE_LINE_LABELS[key] || key;
+}
+
+function invoiceLinesOf(invoice: unknown): Array<Record<string, string | number>> {
+  const lines = (invoice as { lines?: unknown } | null | undefined)?.lines;
+  return Array.isArray(lines) ? (lines as Array<Record<string, string | number>>) : [];
+}
+
+function invoiceReviewOf(invoice: unknown): { reasons: string[]; confidence: number } {
+  const source = (invoice ?? {}) as { needs_review_reasons?: unknown; parse_confidence?: unknown };
+  const reasons = Array.isArray(source.needs_review_reasons)
+    ? (source.needs_review_reasons as string[])
+    : [];
+  const confidence = Number(source.parse_confidence ?? 1);
+  return { reasons, confidence: Number.isFinite(confidence) ? confidence : 1 };
 }
