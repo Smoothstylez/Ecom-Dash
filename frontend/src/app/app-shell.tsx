@@ -689,7 +689,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                 <button
                   className={classNames("sidebar-subnav-btn", bookingsSubtab === "templates" && "active")}
                   type="button"
-                  data-bookings-subtab="templates"
+                  data-bookings-subtab="templates" hidden
                   onClick={() => {
                     setBookingsSubtab("templates");
                   }}
@@ -699,7 +699,7 @@ export function AppShell({ route, navigate, children }: AppShellProps) {
                 <button
                   className={classNames("sidebar-subnav-btn", bookingsSubtab === "accounts" && "active")}
                   type="button"
-                  data-bookings-subtab="accounts"
+                  data-bookings-subtab="accounts" hidden
                   onClick={() => {
                     setBookingsSubtab("accounts");
                   }}

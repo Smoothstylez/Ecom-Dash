@@ -559,6 +559,9 @@ def build_ust_report(
         int(input_vat[key]) for key in
         ("purchases_cents", "amazon_fees_cents", "kaufland_fees_cents", "other_cents")
     )
+    # Spiegel der Buchungen: bereits gebuchte und freigegebene Vorsteuer.
+    booked_fee_vat_cents = sum_booked_input_vat(month)
+    input_vat_cents += booked_fee_vat_cents
 
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -645,7 +648,8 @@ def build_ust_report(
             "amazon": amazon,
             "input_vat": {
                 **input_vat,
-                "input_vat_incomplete": input_vat_incomplete,
+                "booked_fee_vat_cents": booked_fee_vat_cents,
+            "input_vat_incomplete": input_vat_incomplete,
             },
         },
         "totals": {
@@ -757,3 +761,48 @@ def list_report_months() -> list[dict[str, Any]]:
         }
         for row in rows
     ]
+
+
+
+def sum_booked_input_vat(month: str) -> int:
+    """Vorsteuer, die in den Buchungen bereits erfasst ist.
+
+    Der USt-Report ist der Spiegel der Buchungen, keine zweite Wahrheit. Alles,
+    was ueber `transactions` mit `is_vat_deductible` und ueber bereits
+    freigegebene `monthly_invoices` laeuft, zaehlt hier mit. Altbestand aus
+    `input_vat_invoices` bleibt zusaetzlich lesbar, bis er migriert ist.
+    """
+    from app.config import BOOKKEEPING_DB_PATH
+    import sqlite3
+
+    if not BOOKKEEPING_DB_PATH.exists():
+        return 0
+    total = 0
+    connection = sqlite3.connect(BOOKKEEPING_DB_PATH)
+    try:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """
+            SELECT COALESCE(SUM(vat_amount), 0) AS vat
+            FROM transactions
+            WHERE direction = 'OUT'
+              AND is_vat_deductible = 1
+              AND substr(date, 1, 10) BETWEEN ? AND ?
+            """,
+            (f"{month}-01", f"{month}-31"),
+        ).fetchone()
+        total += int(row["vat"])
+        row = connection.execute(
+            """
+            SELECT COALESCE(SUM(vat_amount_cents), 0) AS vat
+            FROM monthly_invoices
+            WHERE status = 'approved'
+              AND substr(period_from, 1, 7) <= ?
+              AND substr(period_to, 1, 7) >= ?
+            """,
+            (month, month),
+        ).fetchone()
+        total += int(row["vat"])
+    finally:
+        connection.close()
+    return total
