@@ -904,11 +904,12 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     if (ui.newButton instanceof HTMLElement) {
       if (toolConfig) {
         ui.newButton.style.display = "";
+        ui.newButton.style.visibility = "visible";
         ui.newButton.setAttribute("data-target", toolConfig.target);
         ui.newButton.setAttribute("aria-expanded", String(openToolPanelId === toolConfig.target));
         setButtonLabel(ui.newButton, toolConfig.label);
       } else {
-        ui.newButton.style.display = "none";
+        ui.newButton.style.visibility = "hidden";
         ui.newButton.setAttribute("aria-expanded", "false");
       }
     }
