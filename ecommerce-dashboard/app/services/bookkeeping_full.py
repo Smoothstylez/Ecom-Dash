@@ -29,7 +29,15 @@ TRANSACTION_SOURCES = {"api", "manual"}
 TRANSACTION_STATUSES = {"pending", "confirmed", "reconciled"}
 RECURRING_SCHEDULES = {"monthly", "quarterly", "yearly"}
 BOOKING_CLASSES = {"automatic", "monthly", "single"}
-MONTHLY_INVOICE_STATUSES = {"draft", "matched", "mismatch"}
+# `needs_review` und `approved` kommen vom Eingangsrechnungs-Flow (Parser ->
+# Vorbefuellung -> ausdrueckliche Freigabe). Die alten Werte bleiben gueltig.
+MONTHLY_INVOICE_STATUSES = {
+    "draft",
+    "matched",
+    "mismatch",
+    "needs_review",
+    "approved",
+}
 TRANSACTION_CATEGORY_TYPES = {
     "sale": {"SALE"},
     "fee": {"FEE", "SHIPPING"},
@@ -207,6 +215,32 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
         changed = True
 
     changed = _ensure_column(connection, "monthly_invoices", "vat_amount_cents", "INTEGER NOT NULL DEFAULT 0") or changed
+
+    # --- Eingangsrechnungen: nur ergänzen, nie ersetzen (alte Zeilen bleiben
+    # lesbar, weil fehlende Spalten einfach NULL sind). ---
+    changed = _ensure_column(connection, "monthly_invoices", "invoice_number", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "invoice_date", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "doc_kind", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "doc_category", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "original_invoice_number", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "lines_json", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "parse_confidence", "REAL") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "needs_review_reasons", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "fx_rate", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "vat_cents_eur", "INTEGER") or changed
+
+    # --- Eingangsrechnungen: nur ergänzen, nie ersetzen (alte Zeilen bleiben
+    # lesbar, weil fehlende Spalten einfach NULL sind). ---
+    changed = _ensure_column(connection, "monthly_invoices", "invoice_number", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "invoice_date", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "doc_kind", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "doc_category", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "original_invoice_number", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "lines_json", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "parse_confidence", "REAL") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "needs_review_reasons", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "fx_rate", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "vat_cents_eur", "INTEGER") or changed
 
     # --- backfill booking_class for existing rows ---
     if changed and _table_exists(connection, "transactions"):
@@ -2285,7 +2319,17 @@ def get_document_resolved_path(file_path: str) -> Path:
 # Monthly Invoice (Sammelrechnung) CRUD
 # ---------------------------------------------------------------------------
 
-SAMMELRECHNUNG_PROVIDERS = {"paypal", "shopify_payments", "kaufland", "google_ads", "ebay"}
+SAMMELRECHNUNG_PROVIDERS = {
+    "paypal",
+    "shopify_payments",
+    "kaufland",
+    "google_ads",
+    "ebay",
+    # Eingangsrechnungen der Plattformen sowie spaeterer Lieferanten.
+    "amazon",
+    "aliexpress",
+    "other",
+}
 
 
 def _monthly_invoice_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
