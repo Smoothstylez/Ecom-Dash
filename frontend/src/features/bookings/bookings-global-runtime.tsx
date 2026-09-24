@@ -913,6 +913,24 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
       });
       return;
     }
+    if (action === "approve-invoice-modal") {
+      const invoiceId = actionElement?.getAttribute("data-invoice-id") || "";
+      if (!invoiceId || !actionElement) {
+        return;
+      }
+      actionElement.setAttribute("disabled", "true");
+      void (async () => {
+        const api = await import("./api");
+        const result = await api.approvePlatformInvoice(invoiceId);
+        if (result.ok) {
+          window.location.reload();
+          return;
+        }
+        window.alert(result.detail || "Freigabe fehlgeschlagen");
+        actionElement.removeAttribute("disabled");
+      })();
+      return;
+    }
     if (action === "save-invoice-modal") {
       event.preventDefault();
       event.stopPropagation();
@@ -1235,6 +1253,7 @@ export function BookingsGlobalRuntime({ registerDetailApis = true }: BookingsGlo
                   <button
                     className="btn-inline primary"
                     data-action="approve-invoice-modal"
+                    data-invoice-id={String(invoice.id)}
                     type="button"
                   >
                     Freigeben und buchen

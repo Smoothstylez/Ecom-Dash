@@ -1761,6 +1761,59 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       }
 
       const actionElement = target.closest<HTMLElement>("[data-action]");
+
+      if (actionElement?.getAttribute("data-action") === "parse-sammel-doc") {
+        const fileInput = document.querySelector<HTMLInputElement>("#createSammelFile");
+        const file = fileInput?.files?.[0];
+        if (!file) {
+          window.alert("Bitte zuerst eine Belegdatei waehlen.");
+          return;
+        }
+        actionElement.setAttribute("disabled", "true");
+        void (async () => {
+          const { parsePlatformInvoice } = await import("./api");
+          const result = await parsePlatformInvoice({ pdfText: await file.text() });
+          actionElement.removeAttribute("disabled");
+          if (!result.ok || !result.parsed) {
+            window.alert(result.detail || "Beleg nicht lesbar");
+            return;
+          }
+          const parsed = result.parsed as Record<string, unknown>;
+          const toInput = (cents: unknown) =>
+            cents === null || cents === undefined ? "" : (Number(cents) / 100).toFixed(2).replace(".", ",");
+          const amount = document.querySelector<HTMLInputElement>("#createSammelAmount");
+          const vat = document.querySelector<HTMLInputElement>("#createSammelVatAmount");
+          const notes = document.querySelector<HTMLInputElement>("#createSammelNotes");
+          if (amount) {
+            amount.value = toInput(parsed.gross_cents);
+          }
+          if (vat) {
+            vat.value = toInput(parsed.vat_cents);
+          }
+          const preview = document.querySelector<HTMLElement>("#sammelPreview");
+          if (preview) {
+            const confidence = Number(parsed.parse_confidence ?? 1);
+            const reasons = Array.isArray(parsed.needs_review_reasons)
+              ? (parsed.needs_review_reasons as string[])
+              : [];
+            const previewData = (parsed.preview ?? {}) as Record<string, unknown>;
+            preview.style.display = "block";
+            preview.innerHTML = [
+              `Rechnungsnummer ${String(parsed.invoice_number ?? "-")}`,
+              `Zeitraum ${String(parsed.period_from ?? "-")} bis ${String(parsed.period_to ?? "-")}`,
+              `Sicher erkannt: ${Math.round(confidence * 100)} %`,
+              `Erwartet (gebucht): ${toInput(previewData.expected_cents)} EUR`,
+              `Differenz: ${toInput(previewData.difference_cents)} EUR`,
+              ...(reasons.length ? ["Pruefen: " + reasons.join(", ")] : []),
+            ].join(" &middot; ");
+          }
+          if (notes && !notes.value) {
+            notes.value = String(parsed.invoice_number || "");
+          }
+        })();
+        return;
+      }
+
       const action = String(actionElement?.dataset.action || "").trim();
       if (action === "preview-document") {
         event.preventDefault();

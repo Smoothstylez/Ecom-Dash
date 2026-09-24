@@ -423,3 +423,63 @@ export function uploadBookingDocument(payload: FormData) {
     body: payload,
   });
 }
+
+
+// --- Eingangsrechnungen: auslesen, ablegen, freigeben -----------------------
+// parse legt nichts an, draft bucht nichts, approve ist der einzige Weg ins
+// Ledger. Siehe docs/platform-invoice-parsing.md.
+
+export async function parsePlatformInvoice(input: {
+  pdfText?: string;
+  pdfPath?: string;
+  csvText?: string;
+}): Promise<{ ok: boolean; parsed?: Record<string, unknown>; detail?: string }> {
+  const response = await fetch(buildDashboardApiUrl("/api/bookings/monthly-invoices/parse"), withAdminHeaders({
+    method: "POST",
+    body: JSON.stringify({
+      pdf_text: input.pdfText ?? null,
+      pdf_path: input.pdfPath ?? null,
+      csv_text: input.csvText ?? null,
+    }),
+  }));
+  if (!response.ok) {
+    return { ok: false, detail: await response.text() };
+  }
+  return (await response.json()) as { ok: boolean; parsed?: Record<string, unknown> };
+}
+
+export async function createPlatformInvoiceDraft(input: {
+  parsed: Record<string, unknown>;
+  documentId?: string;
+  notes?: string;
+  invoiceAmountCents?: number;
+  vatAmountCents?: number;
+}): Promise<{ ok: boolean; invoice?: Record<string, unknown>; detail?: string }> {
+  const response = await fetch(buildDashboardApiUrl("/api/bookings/monthly-invoices/draft"), withAdminHeaders({
+    method: "POST",
+    body: JSON.stringify({
+      parsed: input.parsed,
+      document_id: input.documentId ?? null,
+      notes: input.notes ?? "",
+      invoice_amount_cents: input.invoiceAmountCents ?? null,
+      vat_amount_cents: input.vatAmountCents ?? null,
+    }),
+  }));
+  if (!response.ok) {
+    return { ok: false, detail: await response.text() };
+  }
+  return (await response.json()) as { ok: boolean; invoice?: Record<string, unknown> };
+}
+
+export async function approvePlatformInvoice(
+  invoiceId: string,
+): Promise<{ ok: boolean; invoice?: Record<string, unknown>; detail?: string }> {
+  const response = await fetch(
+    buildDashboardApiUrl(`/api/bookings/monthly-invoices/${encodeURIComponent(invoiceId)}/approve`),
+    withAdminHeaders({ method: "POST", body: JSON.stringify({ create_missing_bookings: true }) }),
+  );
+  if (!response.ok) {
+    return { ok: false, detail: await response.text() };
+  }
+  return (await response.json()) as { ok: boolean; invoice?: Record<string, unknown> };
+}

@@ -185,6 +185,7 @@ export function BookingsPanel({ panelRef, bookingsSubtab }: BookingsPanelProps) 
               </div>
               <div id="sammelPreview" className="sammel-preview" style={{ display: "none" }} />
               <div className="bookings-form-actions">
+                <button id="parseSammelDocBtn" className="btn-inline" data-action="parse-sammel-doc" type="button">Beleg auslesen</button>
                 <button id="createSammelBtn" className="btn-inline primary" type="button">Sammelrechnung anlegen</button>
               </div>
             </div>
