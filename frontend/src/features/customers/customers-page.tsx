@@ -262,6 +262,8 @@ function KpiCard({ title, value, subtext }: { title: string; value: string; subt
   );
 }
 
+const CARTO_API_KEY = "cb1_3w5s_1_f3f7205daf91918044ea2cff";
+
 function readCssVariable(name: string, fallback: string) {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
@@ -716,9 +718,10 @@ export function CustomersPage({ isActive }: CustomersPageProps) {
         minZoom: 1,
         maxZoom: 18,
       });
-      L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+      L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png?key=${CARTO_API_KEY}`, {
         subdomains: "abcd",
         maxZoom: 18,
+        detectRetina: true,
         attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> &copy; <a href='https://carto.com/'>CARTO</a>",
       }).addTo(nextMap);
       const nextLayer = L.layerGroup().addTo(nextMap);

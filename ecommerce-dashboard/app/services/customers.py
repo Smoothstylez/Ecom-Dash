@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional, cast
 
-from app.config import KAUFLAND_DB_PATH, SHOPIFY_DB_PATH
+from app.config import AMAZON_FBA_DB_PATH, KAUFLAND_DB_PATH, SHOPIFY_DB_PATH
 from app.db import connect_combined_db, now_iso
 from app.services.orders import list_all_orders_without_pagination
 
@@ -481,8 +481,8 @@ def _upsert_geo_cache(*, location_key: str, query_text: str, lat: Optional[float
         connection.commit()
 
 
-def _remote_geocode_city(*, city: str, country_code: str) -> Optional[tuple[float, float]]:
-    query_name = city.strip()
+def _remote_geocode_city(*, city: str, country_code: str, postcode: str = "") -> Optional[tuple[float, float]]:
+    query_name = ", ".join(part for part in (postcode.strip(), city.strip()) if part)
     if not query_name:
         return None
     params = urllib.parse.urlencode(
@@ -642,6 +642,48 @@ def _load_kaufland_order_locations(order_ids: set[str]) -> dict[str, dict[str, A
     return payload
 
 
+def _load_amazon_order_locations(order_ids: set[str]) -> dict[str, dict[str, Any]]:
+    if not AMAZON_FBA_DB_PATH.exists() or not order_ids:
+        return {}
+
+    payload: dict[str, dict[str, Any]] = {}
+    ids = sorted({str(order_id).strip() for order_id in order_ids if str(order_id).strip()})
+    if not ids:
+        return payload
+
+    with _connect_readonly(AMAZON_FBA_DB_PATH) as connection:
+        for chunk in _chunked(ids):
+            placeholders = ",".join("?" for _ in chunk)
+            rows = connection.execute(
+                f"""
+                SELECT amazon_order_id, raw_json
+                FROM amazon_orders
+                WHERE amazon_order_id IN ({placeholders})
+                """,
+                tuple(chunk),
+            ).fetchall()
+
+            for row in rows:
+                order_id = str(row["amazon_order_id"])
+                raw = _safe_json_load(row["raw_json"])
+                shipping = _as_dict(raw.get("ShippingAddress"))
+
+                city = str(shipping.get("City") or "").strip()
+                country_code = _normalize_country_code(shipping.get("CountryCode"))
+                postcode = str(shipping.get("PostalCode") or "").strip()
+
+                payload[order_id] = {
+                    "lat": None,
+                    "lng": None,
+                    "city": city,
+                    "country_code": country_code,
+                    "country": country_code,
+                    "postcode": postcode,
+                }
+
+    return payload
+
+
 def _customer_locations_cache_key(
     *,
     from_date: Optional[str],
@@ -707,9 +749,15 @@ def build_customer_locations_map(
         for order in orders
         if str(order.get("marketplace") or "").strip().lower() == "kaufland" and str(order.get("order_id") or "").strip()
     }
+    amazon_order_ids = {
+        str(order.get("order_id") or "").strip()
+        for order in orders
+        if str(order.get("marketplace") or "").strip().lower() == "amazon" and str(order.get("order_id") or "").strip()
+    }
 
     shopify_locations = _load_shopify_order_locations(shopify_order_ids)
     kaufland_locations = _load_kaufland_order_locations(kaufland_order_ids)
+    amazon_locations = _load_amazon_order_locations(amazon_order_ids)
 
     order_candidates: dict[str, dict[str, Any]] = {}
     unresolved_keys: dict[str, dict[str, str]] = {}
@@ -717,10 +765,10 @@ def build_customer_locations_map(
     for order in orders:
         market = str(order.get("marketplace") or "").strip().lower()
         order_id = str(order.get("order_id") or "").strip()
-        if market not in {"shopify", "kaufland"} or not order_id:
+        if market not in {"shopify", "kaufland", "amazon"} or not order_id:
             continue
 
-        location = shopify_locations.get(order_id) if market == "shopify" else kaufland_locations.get(order_id)
+        location = shopify_locations.get(order_id) if market == "shopify" else (kaufland_locations.get(order_id) if market == "kaufland" else amazon_locations.get(order_id))
         if not isinstance(location, dict):
             location = {}
 
@@ -762,11 +810,11 @@ def build_customer_locations_map(
             "city": city,
             "country_code": country_code,
             "country": country,
-            "query_text": ", ".join(part for part in (city, country_code or country) if part),
+            "query_text": ", ".join(part for part in (postcode, city, country_code or country) if part),
         }
 
     cache = _load_geo_cache(list(unresolved_keys.keys())) if unresolved_keys else {}
-    remote_geocode_budget = 10
+    remote_geocode_budget = 100
     geocode_attempts = 0
     geocode_successes = 0
     cache_location_hits = 0
@@ -792,9 +840,9 @@ def build_customer_locations_map(
         lng: Optional[float] = None
         provider = "unresolved"
 
-        if city and remote_geocode_budget > 0 and force_refresh:
+        if city and remote_geocode_budget > 0:
             geocode_attempts += 1
-            geo = _remote_geocode_city(city=city, country_code=country_code)
+            geo = _remote_geocode_city(city=city, country_code=country_code, postcode=str(candidate.get("postcode") or "").strip())
             remote_geocode_budget -= 1
             if geo is not None:
                 lat, lng = geo
@@ -826,7 +874,7 @@ def build_customer_locations_map(
     for order in orders:
         market = str(order.get("marketplace") or "").strip().lower()
         order_id = str(order.get("order_id") or "").strip()
-        if market not in {"shopify", "kaufland"} or not order_id:
+        if market not in {"shopify", "kaufland", "amazon"} or not order_id:
             continue
 
         order_key = f"{market}:{order_id}"
