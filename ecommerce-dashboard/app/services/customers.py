@@ -482,18 +482,18 @@ def _upsert_geo_cache(*, location_key: str, query_text: str, lat: Optional[float
 
 
 def _remote_geocode_city(*, city: str, country_code: str, postcode: str = "") -> Optional[tuple[float, float]]:
-    query_name = ", ".join(part for part in (postcode.strip(), city.strip()) if part)
+    query_name = city.strip()
     if not query_name:
         return None
-    params = urllib.parse.urlencode(
-        {
-            "name": query_name,
-            "count": "6",
-            "language": "de",
-            "format": "json",
-        }
-    )
-    url = f"https://geocoding-api.open-meteo.com/v1/search?{params}"
+    params: dict[str, str] = {
+        "name": query_name,
+        "count": "6",
+        "language": "de",
+        "format": "json",
+    }
+    if postcode.strip():
+        params["postalCode"] = postcode.strip()
+    url = f"https://geocoding-api.open-meteo.com/v1/search?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(url, headers={"User-Agent": "combined-dashboard/1.0"})
     try:
         with urllib.request.urlopen(request, timeout=1.8) as response:
