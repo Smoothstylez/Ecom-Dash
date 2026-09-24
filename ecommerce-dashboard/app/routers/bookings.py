@@ -420,3 +420,75 @@ def api_delete_monthly_invoice(invoice_id: str) -> dict[str, Any]:
         return {"ok": True, **deleted}
     except BookkeepingServiceError as exc:
         _raise_service_error(exc)
+
+
+# ---------------------------------------------------------------------------
+# Eingangsrechnungen: parsen, ablegen, freigeben
+#
+# Diese drei Endpunkte sind der Einstieg fuer Upload und KI-Agenten. `parse`
+# legt nichts an, `create` speichert ohne Buchung, `approve` ist der einzige
+# Weg ins Ledger. Bestehende Clients der Endpunkte oben bleiben unberuehrt.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/monthly-invoices/parse", dependencies=ADMIN_ONLY)
+def api_parse_platform_invoice(payload: dict[str, Any]) -> dict[str, Any]:
+    """Liest Belegtext (und optional Amazon-CSV) und liefert die Vorbefuellung.
+
+    Es wird nichts gespeichert. Antwort enthaelt `parse_confidence`,
+    `needs_review_reasons` und eine Abgleich-Vorschau gegen die bereits
+    gebuchten Gebuehren.
+    """
+    from app.services.platform_invoices import parse_uploaded_document
+
+    try:
+        parsed = parse_uploaded_document(
+            pdf_text=payload.get("pdf_text") or None,
+            pdf_path=payload.get("pdf_path") or None,
+            csv_text=payload.get("csv_text") or None,
+        )
+        return {"ok": True, "parsed": parsed}
+    except BookkeepingServiceError as exc:
+        _raise_service_error(exc)
+
+
+@router.post("/monthly-invoices/draft", dependencies=ADMIN_ONLY)
+def api_create_platform_invoice(payload: dict[str, Any]) -> dict[str, Any]:
+    """Legt eine Rechnung im Status `needs_review` ab. Es wird nichts gebucht."""
+    from app.services.platform_invoices import create_platform_invoice
+
+    parsed = payload.get("parsed") or {}
+    try:
+        invoice = create_platform_invoice(
+            parsed=parsed,
+            document_id=payload.get("document_id") or None,
+            notes=str(payload.get("notes") or ""),
+            invoice_amount_cents=payload.get("invoice_amount_cents"),
+            vat_amount_cents=payload.get("vat_amount_cents"),
+        )
+        return {"ok": True, "invoice": invoice}
+    except BookkeepingServiceError as exc:
+        _raise_service_error(exc)
+
+
+@router.post("/monthly-invoices/{invoice_id}/approve", dependencies=ADMIN_ONLY)
+def api_approve_platform_invoice(
+    invoice_id: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Freigabe -- der einzige Weg, der etwas ins Ledger schreibt.
+
+    Bucht die fehlenden Positionen, gleicht gegen die bereits gebuchte
+    Verkaufsprovision ab und gleicht eine Abweichung mit einer eigenen,
+    markierten Korrekturbuchung aus. Erneutes Aufrufen ist idempotent.
+    """
+    from app.services.platform_invoices import approve_platform_invoice
+
+    options = payload or {}
+    try:
+        invoice = approve_platform_invoice(
+            invoice_id,
+            create_missing_bookings=bool(options.get("create_missing_bookings", True)),
+        )
+        return {"ok": True, "invoice": invoice}
+    except BookkeepingServiceError as exc:
+        _raise_service_error(exc)
