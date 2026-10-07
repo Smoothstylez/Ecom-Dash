@@ -223,6 +223,7 @@ def _ensure_schema(connection: sqlite3.Connection) -> bool:
     changed = _ensure_column(connection, "monthly_invoices", "doc_kind", "TEXT") or changed
     changed = _ensure_column(connection, "monthly_invoices", "doc_category", "TEXT") or changed
     changed = _ensure_column(connection, "monthly_invoices", "original_invoice_number", "TEXT") or changed
+    changed = _ensure_column(connection, "monthly_invoices", "original_invoice_numbers_json", "TEXT") or changed
     changed = _ensure_column(connection, "monthly_invoices", "lines_json", "TEXT") or changed
     changed = _ensure_column(connection, "monthly_invoices", "parse_confidence", "REAL") or changed
     changed = _ensure_column(connection, "monthly_invoices", "needs_review_reasons", "TEXT") or changed

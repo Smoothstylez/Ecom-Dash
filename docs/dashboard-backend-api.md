@@ -1382,6 +1382,42 @@ Blocked for this automation scope:
 Monthly German VAT report, input VAT ledger and Kaufland rate corrections.
 All routes require `X-Admin-Token`.
 
+### Independent Finance checks (2026-10)
+
+Original tax reports and confirmed invoices determine tax totals. Finance-only
+gaps, mismatches and API-source failures are warnings, never filing blockers
+and never a reason to change a confirmed invoice or create extra VAT bookings.
+`AMAZON_TAX_DATA_INCOMPLETE` and `AMAZON_SOURCE_UNAVAILABLE` are informational
+Finance-check warnings; actual unresolved tax classifications, cutoff dates,
+conflicting invoice records and unreadable booked-VAT sources remain blockers.
+
+`sections.finance_reconciliation` is a read-only Amazon fee check:
+
+- `status`: `matched`, `explained` (proven month shifts), `differences`, `incomplete`.
+- `comparisons`: native `currency`, fee `category`, `invoice_cents`,
+  `finance_cents`, signed `difference_cents` (invoice minus Finance).
+- `details`: order/category-level charge or documented credit differences;
+  opposing differences are retained even if aggregate sums match.
+- `timing`: lifecycle `event_id`, `order_id`, `activity_month`, `release_month`,
+  `currency`, `fees_cents`. Released amounts counted once with original
+  lifecycle activity; release dates are not substituted for tax periods.
+- `issues`: missing coverage/dates, unknown fee types or incompatible lifecycle
+  components. `excluded_ads_cents`: separate EUR advertising payments.
+- `tax_amounts_changed: false`, `source: stored_finance`.
+
+Modern Finance is not summed with settlement representations. Only separately
+identified native subscription evidence fills a missing modern subscription
+stream; equal amount/date alone never merges modern economic transactions.
+Base/Tax/Promo nodes are subdivisions, not additive fees. GBP is compared in
+GBP, not estimated EUR. Confirmed invoice position amounts are for checking;
+their original header VAT continues to determine tax totals.
+
+`FINANCE_RECONCILIATION_INCOMPLETE` and `FEE_RECONCILIATION_DIFFERENCE` remain
+warnings even when `block_filing_when_input_vat_incomplete=true`. That option
+only escalates genuinely missing fee-document findings, not control differences.
+The automatic check uses stored data; `matched` does not claim a fresh remote
+sync, nor validate the seller's tax-regime settings.
+
 ### Periodization (authoritative)
 
 Input VAT is deductible in the first period in which the service has been
@@ -1401,6 +1437,41 @@ service end.
 Output VAT and revenue follow the delivery/transaction month. Returns and
 refunds follow their own booking month.
 
+The seller's `vat_effective_from` preserves its full UTC timestamp. The
+threshold order itself is included (`order timestamp >= cutoff`). Pre-cutoff
+sales carry `pre_vat`, gross equals net, and output VAT is zero, regardless of
+marketplace rate fields. Amazon corrections inherit the original shipment's
+seller eligibility, even in a later month. Exact Amazon order timestamps take
+precedence over date-only tax-report order dates; an ambiguous cutoff-day
+order blocks filing. Raw imported tax components remain unchanged.
+
+Kaufland refunds are separate negative rows (`transaction_type: "REFUND"`)
+dated from the refund's own raw booking/creation date. A sync timestamp or
+return-request date is not used as a substitute. Undated refunds are not
+deducted retrospectively from the sale; affected reports remain blocked.
+
+Booked input VAT uses the same deduction-month resolver as the USt invoice
+ledger. Approved monthly invoices are counted once, in their deduction month,
+not in every service month. Their linked transactions and duplicates of
+`(provider, invoice_number)` already in the USt ledger are excluded. Booked
+amounts are included in `purchases_cents`, `amazon_fees_cents`,
+`kaufland_fees_cents`, or `other_cents`; `booked_fee_vat_cents` is informational
+and MUST NOT be added again to those buckets.
+
+Platform-fee eligibility is separately projected against the VAT cutoff.
+Consumed pre-cutoff services are not deductible; order-related fees and
+credits use the original order's eligibility. Shared monthly services use
+their documented service end. Explicit manual partial allocations are
+preserved. Original invoice totals/confirmations are not rewritten.
+`GET /api/ust-report/documents` additionally exposes
+`effective_deductible_vat_cents`, `eligibility_adjustment_cents`, and
+`eligibility_review_count`; the report's input-VAT section aggregates the
+last two fields. Effective deduction can exceed an invoice's NET signed VAT
+when credits of previously non-deductible pre-cutoff fees are excluded.
+An unproven original credit or cutoff-day allocation blocks filing with
+`INPUT_VAT_ELIGIBILITY_UNRESOLVED`; adjustments are disclosed as
+`INPUT_VAT_START_ADJUSTMENT`.
+
 ### Classification
 
 Amazon `SC_VAT_TAX_REPORT` rows are classified in this order:
@@ -1410,7 +1481,9 @@ Amazon `SC_VAT_TAX_REPORT` rows are classified in this order:
 2. `deemed_supplier` (Tax Collection Responsibility = Amazon)
 3. `export`
 4. `de_b2c` (DE -> DE at 19%, Amazon's own tax components are authoritative)
-5. `eu_b2b_intra_community_supply` (DE -> EU, valid foreign VAT ID, Taxable, 0%)
+5. `eu_b2b_intra_community_supply` (DE -> EU, foreign EU VAT country prefix,
+   VAT registration type, Taxable, 0%; Amazon's report provides the exemption
+   evidence, the classifier does not perform a live VIES validation)
 6. `eu_b2c_home_rate` (EU B2C without VAT ID; `net = round_half_up(gross / 1.19)`)
 7. `unresolved`
 
@@ -1427,12 +1500,53 @@ Hard blockers (prevent `filed`):
 - `TAX_MODE_NOT_REGULAR`
 - `NO_VAT_START_DATE`
 - `UNRESOLVED_RETURN_LINK`
+- `AMAZON_VAT_START_AMBIGUOUS` (no exact timestamp for a cutoff-day order)
+- `KAUFLAND_REFUND_DATE_MISSING` (refund cannot be assigned to a month)
+- `INPUT_VAT_SOURCE_UNAVAILABLE` (bookkeeping VAT could not be inspected)
+- `INPUT_VAT_INVOICE_CONFLICT` (duplicate invoice representations disagree)
+- `AMAZON_TRANSACTION_DATE_MISSING` (transaction has no proven booking date)
+- `INPUT_VAT_ELIGIBILITY_UNRESOLVED` (fee/credit transition allocation unproven)
+
+`sections.amazon_reconciliation` contains `missing_order_ids`,
+`amount_mismatches` (`order_id`, `kind`, `source_gross_cents`,
+`tax_gross_cents`), and `source_error`. `AMAZON_TAX_DATA_INCOMPLETE` and
+`AMAZON_SOURCE_UNAVAILABLE` are warnings from this independent cross-check,
+not hard blockers. A missing order or Finance/API outage does not replace,
+rewrite, or prevent filing a valid original Amazon tax report. The original
+tax-report rows determine tax totals; Finance figures are completeness evidence
+and must never be substituted for missing tax rows or tax classifications.
+Actual unresolved classifications, ambiguous cutoff dates, undated corrections,
+and conflicting input invoices retain their explicit blockers. Earlier lifecycle
+states supply period evidence without contributing amounts twice. Promotional
+shipping rebates reduce customer gross; ordinary fees do not. Synthetic
+finance-order dates are never treated as actual purchase dates.
+Amazon's `Sept` month spelling is supported, including August orders shipped
+in September. Corrections without a shipment/transaction date never fall back
+to their original order date and are excluded from period totals until resolved.
+
+Contradictory duplicate input invoices (approval, deduction month, or VAT
+amount) block filing rather than silently suppressing a deduction. Non-EUR
+booked invoices use proven `vat_cents_eur`; non-EUR deductible transactions
+without EUR conversion block the source check.
+
+Imports identify economic transactions by `(Transaction ID, Order ID,
+Shipment ID, SKU, Transaction Type)`. Changed invoice URLs/metadata update the
+existing transaction and do not create another sale. Reimports also resolve
+legacy content-hash IDs; reclassification supports both ID generations.
 
 Soft warnings: `MISSING_FEE_INVOICE` (also sets `input_vat_incomplete`), and
 `AMAZON_VAT_CALCULATION_MISSING`. A missing fee invoice only means the input
 VAT is not yet deductible -- it does not make the output VAT wrong -- so it
 does NOT block filing unless the named business rule
 `block_filing_when_input_vat_incomplete` is turned on (default `false`).
+`FEE_RECONCILIATION_DIFFERENCE` is an informational Finance control warning;
+it does not mark input VAT incomplete and is never promoted by the optional
+input-VAT blocking rule. It is not proof that a specific invoice is missing.
+`FINANCE_RECONCILIATION_INCOMPLETE` means an API source, fee type, or source
+link could not be verified; it also remains informational. `FEE_SOURCE_ESTIMATE_DIFFERENCE` only compares a
+Kaufland order-derived estimate with an already present full-month statement;
+the statement is authoritative and this informational difference does not
+mark its input VAT incomplete.
 
 ### Filing lifecycle
 
@@ -1446,6 +1560,9 @@ pointing at the filed original.
 | --- | --- | --- |
 | GET | `/api/ust-report?month=YYYY-MM` | Report (live, or the latest filed snapshot) |
 | GET | `/api/ust-report/months` | `{items, total}` of revisions |
+| POST | `/api/ust-report/import` | Multipart `files` (up to 25): automatic content recognition, PDF/CSV pairing, assignment and safe booking |
+| GET | `/api/ust-report/imports` | Latest 30 persisted file-import results |
+| POST | `/api/ust-report/parse-upload` | Multipart `file`: genuine binary PDF extraction and preview without booking |
 | POST | `/api/ust-report/{month}/refresh` | Recompute without filing |
 | POST | `/api/ust-report/{month}/file` | File; `409` while blockers remain |
 | POST | `/api/ust-report/{month}/amend` | Append an amendment revision |
@@ -1459,9 +1576,104 @@ pointing at the filed original.
 | POST | `/api/amazon/tax-report/request` | Request `SC_VAT_TAX_REPORT` |
 | POST | `/api/amazon/tax-report/{report_id}/import` | Fetch, classify, persist |
 
-`POST /api/amazon/pool/tax-report` (legacy manual upload) still stores raw rows
-in `pool_tax_rows` and additionally classifies and persists them into
-`amazon_tax_rows`.
+Amazon upstream errors (including missing report permissions / SP-API `403`)
+return `502` with `detail`, not an unhandled `500`. This is not a successful
+request/import; do not clear completeness blockers. A Seller Central CSV can
+be uploaded through `/api/amazon/pool/tax-report` when API permissions are absent.
+
+`POST /api/amazon/pool/tax-report` accepts a UTF-8 CSV/TSV `file` from either
+`SC_VAT_TAX_REPORT` or the Seller Central `VAT_TRANSACTION` report (AVTR).
+It stores raw evidence in `pool_tax_rows` and additionally classifies and
+persists customer sales/corrections into `amazon_tax_rows`. AVTR rows retain
+their original fields under `_avtr_raw` and their source type under
+`_source_report_type`; fees, stock transfers and other non-customer activities
+are not imported as sales. AVTR supplements a missing VCS shipment, never
+duplicates a matching VCS transaction. Cross-report correspondence requires
+one candidate on each side of the order/SKU/type/date group; amounts are
+validation evidence rather than identity, so authoritative amount corrections
+replace the supplemental row. Multiple possible shipment matches are retained
+as unresolved evidence and block filing instead of silently deleting or
+skipping distinct shipments. A later uniquely matching VCS import replaces
+the supplemental representation. Refunds inherit the original's computed
+standard-rate treatment when their own AVTR VAT calculation is absent.
+
+For pre-VCS domestic DE-to-DE standard goods, a SELLER-responsibility AVTR
+sale with proven EUR customer gross but no Amazon VAT calculation is computed
+at the German standard rate (19%, `net_source: "computed_home_rate"`), with
+`AMAZON_VAT_CALCULATION_MISSING`. Explicit non-standard product tax codes or
+unproven foreign exemptions remain unresolved. Seller cutoff eligibility
+still applies at report time; synthetic finance purchase dates are excluded.
+
+`MISSING_FEE_INVOICE` checks Kaufland order-derived fees against the invoice's
+service month, not its deduction month. A July invoice deducted in August does
+not cover August fees. Confirmed USt-ledger invoices and approved bookkeeping
+invoices can establish coverage; the warning never creates a deduction by
+itself. Amazon invoice/Finance coverage is displayed independently under
+`sections.finance_reconciliation` and does not alter the report's tax totals.
+
+### Unified upload workflow
+
+The USt page's **Reports und Belege importieren** accepts original invoice PDFs,
+Amazon VCS/AVTR tax CSVs, and invoice-specific fee CSVs. File CONTENT determines
+the importer, not a manually chosen provider or the filename. CSV/PDF pairs
+are matched by invoice number, including across separate requests and either
+upload order. Original files and processing results are persisted by SHA-256.
+
+Each response item includes `id`, `filename`, `kind`, `status`, `reasons`, and
+when known `invoice_number`, `provider`, `deduction_month`, `document_id`, or
+tax-report `months`. Fee CSVs expose `invoice_numbers` and `pairings` with
+`invoice_number`, `pdf_filename`, `document_id`, `deduction_month`, `status`,
+and `reasons` per invoice. Statuses: `approved`, `tax_imported`, `paired`, `duplicate`,
+`waiting_pdf`, `paired_review`, `needs_review`, `conflict`, `evidence_only`, `error`.
+`paired_review` means the original PDF exists but its invoice or the CSV needs
+review. `waiting_pdf` names the still-missing invoice numbers; a multi-invoice
+CSV retains its already found pairings. Existing bookkeeping PDFs are matched
+too, including files uploaded before the unified importer. Duplicate/review
+invoice outcomes update the CSV status and month. A repeated PDF/fee CSV is
+re-evaluated idempotently; already imported tax reports remain duplicates.
+Unknown-position reasons use `unbekannte_position:<label>:<count>` (one reason
+per distinct label), preserving the actual labels and number of positions.
+HTTP 200 for a processed batch is not a declaration that every file succeeded;
+clients MUST display each item's status and reasons. Empty/oversized batches
+return 400/413. Total request payload is limited by `MAX_UPLOAD_BYTES`.
+
+An unambiguous supported invoice with matching sums, complete header data,
+proven EUR VAT conversion where needed, and clear transition eligibility is
+automatically drafted and approved through the existing platform-invoice
+services. Unclear invoices remain drafts; unknown files and conflicting
+approved invoice data never create guessed bookings. Recognized sales PDFs
+are evidence only; tax-report values are not duplicated as input VAT.
+Repeated files/invoice identities do not create another document or booking.
+An invoice-specific CSV can improve and complete a previous waiting draft;
+an approved invoice is never overwritten by changed amounts/periods.
+
+Amazon credits preserve every documented original invoice reference in
+`original_invoice_numbers` (stored as `original_invoice_numbers_json`), with
+the first reference retained as `original_invoice_number` for compatibility.
+Without order-level allocation, only confirmed positive fee originals with
+unanimous fully deductible or fully non-deductible treatment allow automatic
+inheritance. Missing, mixed, partially allocated, later-dated or credit-chain
+references remain review cases. The report uses the same eligibility projection.
+`shipping_chargeback` is an order-related FBA shipping-cost charge; it is not
+inventory removal. `inventory_removal` is a separate FBA inventory-removal
+service, assessed using its service date rather than a customer-order ID.
+
+`GET /documents` presents both legacy USt invoices and bookkeeping platform
+invoices in one list. Bookkeeping IDs have `book:` prefix. Their originals
+use the same `/documents/{id}/download`; explicit review confirmation uses
+`PATCH /documents/{id}` with `input_vat_status: "confirmed"`. Raw invoice
+amounts preserve native currency, effective deductible VAT is in EUR.
+Legacy invoice identities take precedence to prevent duplicate presentation.
+
+The bookkeeping PDF **Auslesen** action now posts binary PDF to `parse-upload`
+instead of treating PDF bytes as plain text. Saving a supported selected file,
+or uploading one without an explicit existing-transaction attachment, uses
+the same automatic import workflow. Explicit transaction attachments and
+manual entries retain their dedicated behavior. The upload never files or
+changes an immutable filed USt snapshot.
+
+Helper: `bash scripts/dashboard-api/import-ust-files.sh invoice.pdf fees.csv`.
+Set `DASHBOARD_BASE_URL` to the intended LOCAL/Tailscale dashboard.
 
 ### Input VAT documents
 
@@ -1531,6 +1743,13 @@ Antwort: `parsed` mit Kopfdaten, `lines` (je Position Netto/USt/Brutto),
 `parse_confidence` (0..1), `needs_review_reasons` (Liste) und `preview`
 (`expected_cents`, `invoice_cents`, `difference_cents`, `has_expected`).
 
+Bei einer zugehoerigen Amazon-Gebuehren-CSV werden die PDF-Positionen ersetzt
+und positionsbezogene Pruefhinweise neu berechnet. Eine alte, unbekannte
+PDF-Sammelposition bleibt nicht als Freigabehindernis stehen, wenn die CSV
+eindeutige Positionen liefert und ihre Summen mit dem PDF uebereinstimmen.
+Echte Summenabweichungen, fehlende Kopfdaten und unabhaengige Parserhinweise
+bleiben pruefpflichtig. `parse` erzeugt weiterhin keine Buchung.
+
 ### Draft (ablegen, ohne Buchung)
 
 `POST /api/bookings/monthly-invoices/draft`
@@ -1553,6 +1772,20 @@ Abweichung mit einer eigenen `ADJUSTMENT`-Buchung
 Antwort: `invoice` mit `approved_transaction_ids` und `had_variance`.
 
 **Idempotent** ueber `source_key` -- ein erneuter Aufruf bucht nicht doppelt.
+
+Mehrere Rechnungen desselben Providers im selben Zeitraum werden jeweils
+gegen ihre eigenen verknuepften Buchungen abgeglichen. Bereits einer anderen
+Rechnung zugeordnete Provisionen werden nicht erneut verwendet; externe
+Amazon-Bestellnummern werden ueber `orders.external_order_id` aufgeloest.
+Spaeter eintreffende Buchungen erzeugen bei erneutem Abgleich eine eigene,
+idempotente Korrekturdifferenz. Der tatsaechliche verknuepfte Saldo wird vor
+dem Status-Update geprueft; bestehende Buchungen bleiben unveraendert.
+
+Originale Amazon-Steuergutschriften mit Ursprungsbezug duerfen negative
+Rechnungs- und Steuerbetraege tragen. Im Transaktionsledger bleiben Betraege
+positiv: Rueckzahlungen und negative Korrekturen werden als `direction=IN`
+gebucht; Ausgaben als `OUT`. Rechnung und Vorsteuerkorrektur behalten ihr
+Vorzeichen. Nullsummen-Positionsgruppen erzeugen keine Nullbetrag-Buchung.
 
 ### Statuswerte
 

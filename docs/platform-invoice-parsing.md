@@ -112,7 +112,8 @@ die eindeutig bezahlt werden. Beide Male zieht Kaufland vom Konto des Verkäufer
   Das Minus steht **vor** dem Währungssymbol.
 - Kontrollsumme: `Gesamtsumme  -EUR …` (ohne Satz). Muss vor den Positionszeilen
   geprüft werden, sonst wandert sie als Position ins Ledger.
-- `Ursprüngliche Rechnungsnummer` (mit Umlaut) → `original_invoice_number`.
+- `Ursprüngliche Rechnungsnummer` (mit Umlaut) → alle folgenden Rechnungsnummern
+  in `original_invoice_numbers`; erster Bezug weiterhin `original_invoice_number`.
   Ohne Bezug ist die Gutschrift unvollständig → `originalrechnung_fehlt`.
 
 ## Template 6 — `AMAZON_RETAIL_GUTSCHRIFT` (`DE-…-…-N`)
@@ -147,6 +148,25 @@ PDF-Layout, deshalb **bei Amazon immer zusätzlich einlesen**:
 - Kontrollsumme gegen die PDF-Gesamtsumme über das **Brutto** — das ist robust
   gegen die Rundungsreste der Nettowerte.
 
+### Shipping Chargeback und Inventory Removals
+
+Recherche am 07.10.2026, Amazon-Hilfe als Primärquelle:
+
+- [Shipping chargeback fee](https://sellercentral.amazon.com/help/hub/reference/external/GCKEJYYF9LHR2KBY):
+  Amazon erhält die vom Kunden bezahlten Versandkosten zurück, da Amazon den
+  Versand übernimmt. Keine Remissionsgebühr. Kategorie `shipping_chargeback`,
+  bestellbezogene Abgrenzung wie andere Ordergebühren; eine Erstattung erbt den
+  Ursprungsbezug. Kundenversandumsatz nicht aus der Ausgangs-USt entfernen.
+- [FBA removal order fees](https://sellercentral.amazon.com/help/hub/reference/external/G200685050)
+  und [Lagerbestand entfernen](https://sellercentral.amazon.com/help/hub/reference/external/G200280650):
+  Gebühr je aus dem Logistikzentrum entfernter Einheit, etwa Rücksendung an eine
+  angegebene Adresse. Kategorie `inventory_removal`, Abgrenzung nach belegtem
+  Leistungsdatum. Die Fee-CSV allein belegt nicht, ob eine konkrete Entfernung
+  Rücksendung oder Entsorgung war; dafür ist der Remissionsbericht maßgeblich.
+
+Die USt folgt dem Originalbeleg; aus der amerikanischen Hilfeseite werden keine
+Steuersätze oder US-Gebührentarife übernommen.
+
 ## Selbstvalidierung
 
 `_finalize()` prüft und setzt `needs_review_reasons`:
@@ -156,7 +176,7 @@ PDF-Layout, deshalb **bei Amazon immer zusätzlich einlesen**:
 | `kein_template_erkannt` | nichts erkannt, `parse_confidence = 0`, es wird nichts gebucht |
 | `kontrollsumme_netto_verfehlt` | Summe der Positionen ≠ ausgewiesenes Netto |
 | `kontrollsumme_brutto_verfehlt` | Summe der Positionen ≠ ausgewiesenes Brutto |
-| `unbekannte_position:<text>` | Bezeichner nicht einordenbar |
+| `unbekannte_position:<text>:<anzahl>` | Bezeichner nicht einordenbar, gruppiert je Gebührenart |
 | `keine_positionen_gefunden` | leerer Beleg |
 | `rechnungsnummer_fehlt` | kein Pflichtfeld |
 | `originalrechnung_fehlt` | Gutschrift ohne Bezug |

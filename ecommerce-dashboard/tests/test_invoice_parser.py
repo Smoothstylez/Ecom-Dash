@@ -80,6 +80,13 @@ Es handelt sich um einen nicht steuerbaren Schadensersatz.
 Die Summe wurde mit dem Saldo ihres Kreditorenkontos verrechnet.
 """
 
+
+def test_kaufland_continuation_rows_preserve_original_order_references():
+    invoice = parse_invoice_text(KAUFLAND_SAMMEL)
+    assert invoice.lines[0].order_ref == "TEST-A/123456789012345"
+    assert invoice.lines[1].order_ref == "TEST-B/234567890123456"
+    assert invoice.lines[2].order_ref is None
+
 AMAZON_GEBUEHR = """\
                                                                                                                             RECHNUNG
 
@@ -146,6 +153,27 @@ Gesamtsumme                                                   -EUR 82.41        
 Ursprüngliche Rechnungsnummer
 TEST-AEU-00000001
 """
+
+
+def test_credit_preserves_multiple_original_invoice_references():
+    parsed = parse_invoice_text(AMAZON_GUTSCHRIFT.replace('TEST-AEU-00000001\n', 'TEST-AEU-00000001\nTEST-AEU-00000003\n'))
+    assert parsed.to_dict()['original_invoice_numbers'] == ['TEST-AEU-00000001', 'TEST-AEU-00000003']
+
+
+@pytest.mark.parametrize('label,want', [('Shipping Chargeback', 'shipping_chargeback'), ('Inventory Removals', 'inventory_removal')])
+def test_amazon_shipping_and_removal_fees_are_distinct_known_services(label, want):
+    assert classify_position(label) == want
+
+
+def test_unknown_fee_warnings_group_repeated_types_without_hiding_counts():
+    parsed = parse_invoice_text(AMAZON_GEBUEHR)
+    text = 'Transaction Date,Fee ID,Total Fees (VAT-Inclusive)\n' + '08/15/2026,Unknown service,16.358\n' * 10
+    from app.services.invoice_parser import _merge_csv_lines, _finalize
+    _merge_csv_lines(parsed, parse_amazon_fee_csv(text))
+    _finalize(parsed)
+    unknown = [r for r in parsed.needs_review_reasons if r.startswith('unbekannte_position:')]
+    assert unknown == ['unbekannte_position:Unknown service:10']
+    assert parsed.parse_confidence > 0
 
 AMAZON_RETAIL = """\
                                                                                                                   GUTSCHRIFT

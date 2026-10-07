@@ -22,13 +22,21 @@ export type UstReport = {
   settings: Record<string, unknown>;
   business_rules: Record<string, boolean>;
   sections: {
+    finance_reconciliation?: {
+      status: "matched" | "explained" | "differences" | "incomplete";
+      comparisons: Array<{ currency: string; category: string; invoice_cents: number; finance_cents: number; difference_cents: number }>;
+      details: Array<{ currency: string; order_id: string; category: string; invoice_cents: number; finance_cents: number; difference_cents: number }>;
+      timing: Array<{ event_id: string; order_id?: string; activity_month: string; release_month: string; currency: string; fees_cents: number }>;
+      issues: Array<{ code: string; label?: string; invoice_number?: string; message?: string }>;
+      excluded_ads_cents: number;
+    };
     kaufland: {
       revenue_after_returns_cents: number;
       net_cents: number;
       output_vat_cents: number;
       rate_overrides_pending: number;
       pre_vat_units_cents: number;
-      returns: { count: number; order_unit_ids?: string[] };
+      returns: { count: number; order_unit_ids?: string[]; rows?: Array<Record<string, unknown>> };
       returns_synced: boolean;
       rows: Array<Record<string, unknown>>;
     };
@@ -42,6 +50,10 @@ export type UstReport = {
       pending_review_count: number;
       nontaxable_cents: number;
       input_vat_incomplete: boolean;
+      fee_service_months?: {
+        amazon?: string | null;
+        kaufland?: string | null;
+      };
     };
   };
   totals: {
@@ -68,12 +80,48 @@ export type UstDocument = {
   net_cents: number;
   vat_cents: number;
   deductible_vat_cents: number;
+  effective_deductible_vat_cents?: number;
+  eligibility_adjustment_cents?: number;
+  eligibility_review_count?: number;
   input_vat_status: string;
   deduction_month: string;
   source: string;
   sha256: string;
   notes: string;
+  needs_review_reasons?: string[] | string;
 };
+
+export type ImportItem = {
+  id: string;
+  filename: string;
+  kind: string;
+  status: string;
+  reasons: string[];
+  provider?: string;
+  invoice_number?: string;
+  invoice_numbers?: string[];
+  pairings?: Array<{ invoice_number: string; pdf_filename?: string; document_id?: string; deduction_month?: string; status: string; reasons: string[] }>;
+  deduction_month?: string;
+  document_id?: string;
+  months?: string[];
+  total?: number;
+};
+
+export function importReportFiles(files: File[]) {
+  const form = new FormData();
+  files.forEach(file => form.append("files", file));
+  return request<{ items: ImportItem[]; total: number }>("/api/ust-report/import", { method: "POST", body: form });
+}
+
+export function previewReportFile(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return request<{ parsed: Record<string, unknown> }>("/api/ust-report/parse-upload", { method: "POST", body: form });
+}
+
+export function fetchImportHistory() {
+  return request<{ items: ImportItem[]; total: number }>("/api/ust-report/imports");
+}
 
 export type ReportMonth = {
   month: string;

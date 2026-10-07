@@ -1,6 +1,7 @@
 import { useDashboardShellState, type BookingsSubtab } from "@/app/dashboard-shell-state";
 import { useDashboardRuntime } from "@/app/dashboard-runtime";
 import { formatMoneyFromCents, NUMBER_FORMATTER } from "@/features/analytics/format";
+import { importReportFiles, previewReportFile } from "@/features/tax-report/api";
 import {
   createBookingAccount,
   createBookingTemplate,
@@ -1106,6 +1107,26 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
     };
 
     const handleCreateMonthlyInvoice = () => {
+      const selected = monthlyInvoiceDraftFileRef.current;
+      if (selected && /\.(pdf|csv|tsv|txt)$/i.test(selected.name)) {
+        if (monthlyInvoiceCreateButton instanceof HTMLButtonElement) monthlyInvoiceCreateButton.disabled = true;
+        void importReportFiles([selected]).then(result => {
+          const failures = result.items.filter(item => ["error", "conflict"].includes(item.status));
+          if (failures.length) {
+            setStatusMessage(failures.flatMap(item => item.reasons).join(" "), "error");
+            return;
+          }
+          const pending = result.items.some(item => ["needs_review", "waiting_pdf"].includes(item.status));
+          setStatusMessage(pending ? "Beleg erkannt und zugeordnet. Offene Prüffälle stehen im USt-Import und bei den Eingangsrechnungen." : "Beleg automatisch erkannt, zugeordnet und übernommen.", pending ? "info" : "ok");
+          monthlyInvoiceDraftFileRef.current = null;
+          if (monthlyInvoiceFile instanceof HTMLInputElement) monthlyInvoiceFile.value = "";
+          setMonthlyInvoiceDraft(current => ({ ...current, amount: "", vatAmount: "", notes: "", fileName: "Optional" }));
+          setOpenToolPanelId("");
+          setRefreshNonce(current => current + 1);
+        }).catch(reason => setStatusMessage(reason instanceof Error ? reason.message : "Belegimport fehlgeschlagen", "error"))
+          .finally(() => { if (monthlyInvoiceCreateButton instanceof HTMLButtonElement) monthlyInvoiceCreateButton.disabled = false; });
+        return;
+      }
       const provider = String(monthlyInvoiceDraft.provider || "").trim().toLowerCase();
       const periodFrom = sammelMonthPeriodFrom(monthlyInvoiceDraft.monthToken);
       const periodTo = sammelMonthPeriodTo(monthlyInvoiceDraft.monthToken);
@@ -1735,6 +1756,20 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
       form.append("file", file);
       const transactionId = transactionInput instanceof HTMLSelectElement ? String(transactionInput.value || "").trim() : "";
       const notes = notesInput instanceof HTMLInputElement ? String(notesInput.value || "").trim() : "";
+      if (!transactionId && /\.(pdf|csv|tsv|txt)$/i.test(file.name)) {
+        void importReportFiles([file]).then(result => {
+          const failed = result.items.filter(item => ["error", "conflict"].includes(item.status));
+          if (failed.length) {
+            setStatusMessage(failed.flatMap(item => item.reasons).join(" "), "error");
+            return;
+          }
+          if (fileInput instanceof HTMLInputElement) fileInput.value = "";
+          requestRefresh();
+          const pending = result.items.some(item => ["needs_review", "waiting_pdf"].includes(item.status));
+          setStatusMessage(pending ? "Beleg zugeordnet; Prüffälle stehen im USt-Import." : "Beleg automatisch erkannt und übernommen.", pending ? "info" : "ok");
+        }).catch(reason => setStatusMessage(reason instanceof Error ? reason.message : "Belegimport fehlgeschlagen", "error"));
+        return;
+      }
       if (transactionId) {
         form.append("transaction_id", transactionId);
       }
@@ -1771,11 +1806,10 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
         }
         actionElement.setAttribute("disabled", "true");
         void (async () => {
-          const { parsePlatformInvoice } = await import("./api");
-          const result = await parsePlatformInvoice({ pdfText: await file.text() });
+          const result = await previewReportFile(file);
           actionElement.removeAttribute("disabled");
-          if (!result.ok || !result.parsed) {
-            window.alert(result.detail || "Beleg nicht lesbar");
+          if (!result.parsed) {
+            window.alert("Beleg nicht lesbar");
             return;
           }
           const parsed = result.parsed as Record<string, unknown>;
@@ -1784,6 +1818,12 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           const amount = document.querySelector<HTMLInputElement>("#createSammelAmount");
           const vat = document.querySelector<HTMLInputElement>("#createSammelVatAmount");
           const notes = document.querySelector<HTMLInputElement>("#createSammelNotes");
+          setMonthlyInvoiceDraft(current => ({ ...current,
+            provider: String(parsed.provider || current.provider),
+            monthToken: String(parsed.period_to || parsed.invoice_date || current.monthToken).slice(0, 7),
+            amount: toInput(parsed.gross_cents), vatAmount: toInput(parsed.vat_cents),
+            notes: current.notes || String(parsed.invoice_number || ""),
+          }));
           if (amount) {
             amount.value = toInput(parsed.gross_cents);
           }
@@ -1810,7 +1850,10 @@ export function BookingsPage({ panelElement, isActive }: BookingsPageProps) {
           if (notes && !notes.value) {
             notes.value = String(parsed.invoice_number || "");
           }
-        })();
+        })().catch(reason => {
+          actionElement.removeAttribute("disabled");
+          setStatusMessage(reason instanceof Error ? reason.message : "Beleg nicht lesbar", "error");
+        });
         return;
       }
 

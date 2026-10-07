@@ -590,6 +590,7 @@ body.bookings-full #customersPanel {
 
 body.bookings-full #bookingsPanel {
   display: grid !important;
+  grid-template-rows: auto auto minmax(0, 1fr);
 }
 
 /* Bookings subtabs live in the sidebar; only the shared action button remains here. */
@@ -3071,6 +3072,24 @@ button:hover {
   color: var(--th-badge-default-text);
 }
 
+.badge-shopify {
+  background: var(--th-badge-shopify-bg);
+  border-color: var(--th-badge-shopify-border);
+  color: var(--th-badge-shopify-text);
+}
+
+.badge-kaufland {
+  background: var(--th-badge-kaufland-bg);
+  border-color: var(--th-badge-kaufland-border);
+  color: var(--th-badge-kaufland-text);
+}
+
+.badge-amazon {
+  background: var(--th-badge-amazon-bg);
+  border-color: var(--th-badge-amazon-border);
+  color: var(--th-badge-amazon-text);
+}
+
 
 .tx-type-sub {
   margin-top: 4px;
@@ -3122,11 +3141,15 @@ tr.tx-row-other td:first-child {
 
 
 tr.order-row-shopify td:first-child {
-  box-shadow: inset 3px 0 0 var(--th-row-invoice);
+  box-shadow: inset 3px 0 0 var(--th-marketplace-shopify);
 }
 
 tr.order-row-kaufland td:first-child {
-  box-shadow: inset 3px 0 0 var(--th-row-sale);
+  box-shadow: inset 3px 0 0 var(--th-marketplace-kaufland);
+}
+
+tr.order-row-amazon td:first-child {
+  box-shadow: inset 3px 0 0 var(--th-marketplace-amazon);
 }
 
 .order-invoice-link {
@@ -3336,9 +3359,9 @@ tbody tr:nth-child(even) {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding-top: 12px;
-  margin-top: 12px;
-  border-top: 1px solid var(--th-line-2);
+  padding-top: 10px;
+  margin-top: 0;
+  border-top: none;
 }
 
 .orders-pagination-actions {
@@ -4355,20 +4378,26 @@ tbody tr:nth-child(even) {
   }
 
   .orders-table tbody tr.order-row-shopify,
-  .orders-table tbody tr.order-row-kaufland {
+  .orders-table tbody tr.order-row-kaufland,
+  .orders-table tbody tr.order-row-amazon {
     border-left-width: 4px;
   }
 
   .orders-table tbody tr.order-row-shopify {
-    border-left-color: var(--th-row-invoice);
+    border-left-color: var(--th-marketplace-shopify);
   }
 
   .orders-table tbody tr.order-row-kaufland {
-    border-left-color: var(--th-row-sale);
+    border-left-color: var(--th-marketplace-kaufland);
+  }
+
+  .orders-table tbody tr.order-row-amazon {
+    border-left-color: var(--th-marketplace-amazon);
   }
 
   .orders-table tbody tr.order-row-shopify td:first-child,
-  .orders-table tbody tr.order-row-kaufland td:first-child {
+  .orders-table tbody tr.order-row-kaufland td:first-child,
+  .orders-table tbody tr.order-row-amazon td:first-child {
     box-shadow: none;
   }
 

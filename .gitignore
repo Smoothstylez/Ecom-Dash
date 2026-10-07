@@ -13,6 +13,9 @@ test-results/
 *.sqlite3-shm
 
 # Credentials and data
+experiments/17track/.env
+experiments/17track/dhl-raw-*.xml
+experiments/aliexpress-api/.env
 ecommerce-dashboard/data/credentials.json
 ecommerce-dashboard/data/runtime-credentials.json
 ecommerce-dashboard/data/amazon-sp-api-secrets.json

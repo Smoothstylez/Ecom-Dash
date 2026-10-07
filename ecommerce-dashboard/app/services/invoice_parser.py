@@ -17,7 +17,8 @@ import csv
 import io
 import re
 import subprocess
-from dataclasses import asdict, dataclass, field
+from collections import Counter
+from dataclasses import asdict, dataclass, field, replace
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any, Optional
@@ -58,6 +59,8 @@ POSITION_BASE_FEE = "base_fee"
 POSITION_ADVERTISING = "advertising"
 POSITION_SUBSCRIPTION = "subscription"
 POSITION_FULFILLMENT = "fulfillment"
+POSITION_SHIPPING_CHARGEBACK = "shipping_chargeback"
+POSITION_INVENTORY_REMOVAL = "inventory_removal"
 POSITION_REFUND_ADMIN = "refund_admin"
 POSITION_CANCELLATION_FEE = "cancellation_fee"
 POSITION_FEE_REFUND = "fee_refund"
@@ -71,6 +74,8 @@ POSITION_KEYS: frozenset[str] = frozenset(
         POSITION_ADVERTISING,
         POSITION_SUBSCRIPTION,
         POSITION_FULFILLMENT,
+        POSITION_SHIPPING_CHARGEBACK,
+        POSITION_INVENTORY_REMOVAL,
         POSITION_REFUND_ADMIN,
         POSITION_CANCELLATION_FEE,
         POSITION_FEE_REFUND,
@@ -130,6 +135,7 @@ class ParsedInvoice:
     fx_rate: Optional[str] = None
     vat_cents_eur: Optional[int] = None
     original_invoice_number: Optional[str] = None
+    original_invoice_numbers: list[str] = field(default_factory=list)
     is_vat_deductible: bool = True
     lines: list[ParsedLine] = field(default_factory=list)
     net_cents: int = 0
@@ -228,6 +234,10 @@ def classify_position(label: Any) -> str:
     low = _text(label).lower()
     if not low:
         return POSITION_OTHER
+    if low == "shipping chargeback":
+        return POSITION_SHIPPING_CHARGEBACK
+    if low == "inventory removals":
+        return POSITION_INVENTORY_REMOVAL
     if "storno provision" in low or "storno-provision" in low:
         return POSITION_PROVISION_STORNO
     if "cancelled orders" in low:
@@ -381,6 +391,11 @@ def _parse_kaufland_sammel(text: str) -> ParsedInvoice:
                     line_date=_iso_day_first(line_date),
                 )
             )
+            continue
+        reference = re.match(r"^\s*([A-Za-z0-9_-]+/\d{8,})\b", row)
+        if reference and invoice.lines and invoice.lines[-1].position_key in {POSITION_PROVISION, POSITION_PROVISION_STORNO}:
+            if invoice.lines[-1].order_ref is None:
+                invoice.lines[-1] = replace(invoice.lines[-1], order_ref=reference.group(1))
             continue
         match = _RE_KFL_TOTAL.match(row)
         if match:
@@ -555,9 +570,11 @@ def _parse_amazon_gutschrift(text: str) -> ParsedInvoice:
     if match:
         invoice.period_from = _iso_day_first(match.group(1))
         invoice.period_to = _iso_day_first(match.group(2))
-    match = re.search(r"Ursprüngliche Rechnungsnummer\s*\n\s*(\S+)", text)
+    match = re.search(r"Ursprüngliche Rechnungsnummer(?:n)?\s*\n", text)
     if match:
-        invoice.original_invoice_number = match.group(1)
+        references = re.findall(r"\b[A-Z][A-Z0-9-]*AEU-[A-Z0-9-]+\b", text[match.end():])
+        invoice.original_invoice_numbers = list(dict.fromkeys(references))
+        invoice.original_invoice_number = references[0] if references else None
 
     for raw in text.splitlines():
         row = raw.strip()
@@ -678,6 +695,9 @@ def parse_amazon_fee_csv(text: str) -> list[ParsedLine]:
         gross = to_cents(row.get("Total Fees (VAT-Inclusive)") or 0)
         rate = _HOME_RATE_PERCENT
         net, vat = split_gross(gross, rate)
+        order_ref = _text(row.get("Order ID"))
+        if order_ref.lower() in {"", "-", "null", "none", "n/a"}:
+            order_ref = None
         lines.append(
             _make_line(
                 label,
@@ -687,7 +707,7 @@ def parse_amazon_fee_csv(text: str) -> list[ParsedLine]:
                 gross,
                 "EUR",
                 line_date=_iso_month_first(row.get("Transaction Date") or ""),
-                order_ref=_text(row.get("Order ID")) or None,
+                order_ref=order_ref,
             )
         )
     return lines
@@ -696,7 +716,7 @@ def parse_amazon_fee_csv(text: str) -> list[ParsedLine]:
 def _merge_csv_lines(invoice: ParsedInvoice, lines: list[ParsedLine]) -> None:
     if not lines:
         return
-    invoice.lines = lines
+    invoice.lines = [replace(line, currency=invoice.currency) for line in lines]
     if invoice.gross_cents == 0:
         invoice.gross_cents = sum(line.gross_cents for line in lines)
     if invoice.net_cents == 0:
@@ -706,6 +726,14 @@ def _merge_csv_lines(invoice: ParsedInvoice, lines: list[ParsedLine]) -> None:
 
 
 def _finalize(invoice: ParsedInvoice) -> None:
+    # These findings describe the current parsed fields/lines. A paired CSV
+    # replaces PDF lines, so warnings about the superseded lines must not
+    # survive (or accumulate on repeated finalization). Independent parsing
+    # findings, e.g. unsupported currency/template evidence, remain intact.
+    derived = {REVIEW_CHECKSUM_NET, REVIEW_CHECKSUM_GROSS, REVIEW_NO_LINES,
+               REVIEW_MISSING_NUMBER, REVIEW_MISSING_ORIGINAL, REVIEW_MISSING_PERIOD}
+    invoice.needs_review_reasons = [reason for reason in invoice.needs_review_reasons
+        if reason not in derived and not reason.startswith(REVIEW_UNKNOWN_POSITION)]
     if not invoice.invoice_number:
         invoice.needs_review_reasons.append(REVIEW_MISSING_NUMBER)
     if not invoice.lines:
@@ -715,9 +743,9 @@ def _finalize(invoice: ParsedInvoice) -> None:
     if invoice.doc_kind == DOC_KIND_CONSOLIDATED and not (invoice.period_from and invoice.period_to):
         invoice.needs_review_reasons.append(REVIEW_MISSING_PERIOD)
 
-    unknown = [line.label for line in invoice.lines if line.position_key == POSITION_OTHER]
-    for label in unknown:
-        invoice.needs_review_reasons.append(f"{REVIEW_UNKNOWN_POSITION}:{label[:40]}")
+    unknown = Counter(line.label for line in invoice.lines if line.position_key == POSITION_OTHER)
+    for label, count in unknown.items():
+        invoice.needs_review_reasons.append(f"{REVIEW_UNKNOWN_POSITION}:{label}:{count}")
 
     line_gross = sum(line.gross_cents for line in invoice.lines)
     line_net = sum(line.net_cents for line in invoice.lines)

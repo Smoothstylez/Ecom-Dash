@@ -416,6 +416,8 @@ def api_request_amazon_tax_report(payload: Optional[dict[str, Any]] = None) -> d
         return {"ok": True, **amazon_tax_import.request_sc_vat_tax_report(month=month)}
     except amazon_tax_import.AmazonTaxImportError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except AmazonSpApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/tax-report/{report_id}/import", dependencies=ADMIN_ONLY)
@@ -427,3 +429,5 @@ def api_import_amazon_tax_report(report_id: str) -> dict[str, Any]:
         return {"ok": True, **amazon_tax_import.import_report_document(report_id)}
     except amazon_tax_import.AmazonTaxImportError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except AmazonSpApiError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc

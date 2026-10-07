@@ -29,6 +29,7 @@ kollidieren.
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 import uuid
 from contextlib import contextmanager
@@ -50,6 +51,8 @@ POSITION_TO_TRANSACTION_TYPE = {
     parser.POSITION_ADVERTISING: "FEE",
     parser.POSITION_SUBSCRIPTION: "SUBSCRIPTION",
     parser.POSITION_FULFILLMENT: "FEE",
+    parser.POSITION_SHIPPING_CHARGEBACK: "FEE",
+    parser.POSITION_INVENTORY_REMOVAL: "FEE",
     parser.POSITION_REFUND_ADMIN: "FEE",
     parser.POSITION_CANCELLATION_FEE: "EXPENSE",
     parser.POSITION_FEE_REFUND: "FEE",
@@ -68,6 +71,8 @@ EXPECTED_FEE_CATEGORIES = frozenset(
         parser.POSITION_ADVERTISING,
         parser.POSITION_SUBSCRIPTION,
         parser.POSITION_FULFILLMENT,
+        parser.POSITION_SHIPPING_CHARGEBACK,
+        parser.POSITION_INVENTORY_REMOVAL,
         parser.POSITION_REFUND_ADMIN,
         parser.POSITION_FEE_REFUND,
     }
@@ -185,9 +190,9 @@ def expected_fee_cents(
     placeholders = ",".join("?" for _ in categories)
     row = connection.execute(
         f"""
-        SELECT COALESCE(SUM(amount_gross), 0) AS total
+        SELECT COALESCE(SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END), 0) AS total
         FROM transactions
-        WHERE direction = 'OUT'
+        WHERE direction IN ('OUT', 'IN')
           AND provider = ?
           AND substr(date, 1, 10) BETWEEN ? AND ?
           AND category IN ({placeholders})
@@ -243,6 +248,7 @@ def get_invoice(invoice_id: str) -> dict[str, Any]:
         payload = dict(row)
         lines = payload.get("lines_json")
         payload["lines"] = json.loads(lines) if lines else []
+        payload["original_invoice_numbers"] = json.loads(payload.get("original_invoice_numbers_json") or "[]") or ([payload['original_invoice_number']] if payload.get('original_invoice_number') else [])
         reasons = payload.get("needs_review_reasons")
         payload["needs_review_reasons"] = json.loads(reasons) if reasons else []
         transactions = connection.execute(
@@ -297,9 +303,10 @@ def create_platform_invoice(
         if vat_amount_cents is not None
         else int(parsed.get("vat_cents") or 0)
     )
-    if amount <= 0:
+    is_credit = parsed.get("template") == parser.TEMPLATE_AMAZON_STEUERGUTSCHRIFT and bool(parsed.get("original_invoice_number"))
+    if amount == 0 or (amount < 0 and not is_credit):
         raise BookkeepingServiceError(422, "Rechnungsbetrag fehlt oder ist nicht positiv")
-    if vat > amount:
+    if (amount < 0 and vat > 0) or (amount > 0 and vat < 0) or abs(vat) > abs(amount):
         raise BookkeepingServiceError(422, "Vorsteuer darf den Rechnungsbetrag nicht uebersteigen")
 
     doc_kind = parsed.get("doc_kind") or parser.DOC_KIND_UNKNOWN
@@ -387,6 +394,8 @@ def _store_parsed_fields(
     *,
     status: str,
 ) -> None:
+    from app.services.bookkeeping_full import _ensure_column
+    _ensure_column(connection, 'monthly_invoices', 'original_invoice_numbers_json', 'TEXT')
     connection.execute(
         """
         UPDATE monthly_invoices
@@ -395,6 +404,7 @@ def _store_parsed_fields(
                doc_kind = ?,
                doc_category = ?,
                original_invoice_number = ?,
+               original_invoice_numbers_json = ?,
                lines_json = ?,
                parse_confidence = ?,
                needs_review_reasons = ?,
@@ -410,6 +420,7 @@ def _store_parsed_fields(
             parsed.get("doc_kind"),
             parsed.get("category_hint") or parsed.get("doc_category"),
             parsed.get("original_invoice_number"),
+            json.dumps(parsed.get("original_invoice_numbers") or ([parsed['original_invoice_number']] if parsed.get('original_invoice_number') else [])),
             json.dumps(parsed.get("lines") or [], ensure_ascii=False),
             parsed.get("parse_confidence"),
             json.dumps(parsed.get("needs_review_reasons") or [], ensure_ascii=False),
@@ -459,13 +470,11 @@ def approve_platform_invoice(
         # Zeitraum rechnen, zoegen sie Buchungen der Sammelrechnung an sich und
         # erzeugten eine falsche Korrektur.
         booked = (
-            expected_fee_cents(
-                connection,
-                provider=invoice.get("provider") or "",
-                period_from=period_from,
-                period_to=period_to,
-                include_booked=True,
-            )
+            int(connection.execute(
+                "SELECT COALESCE(SUM(CASE t.direction WHEN 'OUT' THEN t.amount_gross ELSE -t.amount_gross END),0) FROM transactions t "
+                "JOIN monthly_invoice_transactions mit ON mit.transaction_id=t.id "
+                "WHERE mit.invoice_id=?", (invoice_id,)
+            ).fetchone()[0])
             if is_consolidated
             else invoice_amount
         )
@@ -483,8 +492,14 @@ def approve_platform_invoice(
                 (invoice_id, variance_id),
             )
             had_variance = True
-            booked = invoice_amount
-            difference = 0
+            booked = int(connection.execute(
+                "SELECT COALESCE(SUM(CASE t.direction WHEN 'OUT' THEN t.amount_gross ELSE -t.amount_gross END),0) "
+                "FROM transactions t JOIN monthly_invoice_transactions mit ON mit.transaction_id=t.id WHERE mit.invoice_id=?",
+                (invoice_id,)
+            ).fetchone()[0])
+            difference = invoice_amount - booked
+            if difference:
+                raise BookkeepingServiceError(409, "Rechnungsabgleich ist nach der Korrektur noch nicht ausgeglichen")
 
         connection.execute(
             """
@@ -516,9 +531,12 @@ def _create_line_bookings(
     if isinstance(lines, str):
         lines = json.loads(lines or "[]")
     skip = {parser.POSITION_PROVISION, parser.POSITION_PROVISION_STORNO}
+    is_credit = int(invoice.get("invoice_amount_cents") or 0) < 0 and invoice.get("doc_category") == "fee_refund"
     by_category: dict[str, dict[str, Any]] = {}
     for line in lines:
         key = line.get("position_key") or parser.POSITION_OTHER
+        if is_credit and key in skip:
+            key = parser.POSITION_FEE_REFUND
         if key in skip:
             continue
         bucket = by_category.setdefault(
@@ -539,6 +557,10 @@ def _create_line_bookings(
 
     created: list[str] = []
     for category, bucket in sorted(by_category.items()):
+        if not bucket["gross_cents"]:
+            if bucket["net_cents"] or bucket["vat_cents"]:
+                raise BookkeepingServiceError(422, "Positionengruppe hat null Brutto, aber widerspruechliche Netto-/Steuerbetraege")
+            continue
         created.append(
             _insert_transaction(
                 connection,
@@ -565,6 +587,12 @@ def _create_variance_booking(
     booked_cents: int,
 ) -> str:
     """Korrekturbuchung: Rechnungsbetrag gilt, die Abweichung bleibt sichtbar."""
+    snapshot = [tuple(r) for r in connection.execute(
+        "SELECT t.id,t.direction,t.amount_gross FROM transactions t "
+        "JOIN monthly_invoice_transactions mit ON mit.transaction_id=t.id WHERE mit.invoice_id=? ORDER BY t.id",
+        (invoice["id"],)
+    )]
+    revision = hashlib.sha256(json.dumps(snapshot).encode()).hexdigest()[:24]
     return _insert_transaction(
         connection,
         invoice=invoice,
@@ -581,7 +609,7 @@ def _create_variance_booking(
             f"Gebuehren {booked_cents} ct -- Differenz {difference_cents} ct nach "
             f"Rechnung ausgeglichen. Eigene Freigabe erforderlich."
         ),
-        source_key=f"platform-invoice:{invoice['id']}:variance",
+        source_key=f"platform-invoice:{invoice['id']}:variance:{revision}",
     )
 
 
@@ -614,26 +642,29 @@ def _insert_transaction(
         or _iso_day(invoice.get("invoice_date"))
         or now[:10]
     )
-    connection.execute(
+    direction = "IN" if amount_gross < 0 else "OUT"
+    cursor = connection.execute(
         """
-        INSERT OR IGNORE INTO transactions (
+        INSERT INTO transactions (
             id, date, type, direction, amount_gross, currency,
             vat_rate, vat_amount, amount_net, is_vat_deductible,
             provider, counterparty_name, category, reference, notes,
             order_id, document_id, template_id, payment_account_id, period_key,
             source, source_key, status, booking_class, created_at, updated_at
-        ) VALUES (?, ?, ?, 'OUT', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                   NULL, ?, NULL, NULL, ?, 'manual', ?, 'confirmed', 'single', ?, ?)
+        ON CONFLICT(source_key) DO NOTHING
         """,
         (
             transaction_id,
             f"{day}T00:00:00Z",
             tx_type,
-            amount_gross,
+            direction,
+            abs(amount_gross),
             invoice.get("currency") or "EUR",
             vat_rate,
-            vat_amount,
-            amount_net,
+            -vat_amount if direction == "IN" else vat_amount,
+            -amount_net if direction == "IN" else amount_net,
             1 if is_vat_deductible else 0,
             invoice.get("provider") or "other",
             invoice.get("provider") or "other",
@@ -647,6 +678,11 @@ def _insert_transaction(
             now,
         ),
     )
+    if not cursor.rowcount:
+        existing = connection.execute("SELECT id FROM transactions WHERE source_key=?", (source_key,)).fetchone()
+        if existing is None:
+            raise BookkeepingServiceError(409, "Buchung konnte nicht eindeutig gespeichert werden")
+        return str(existing["id"])
     return transaction_id
 
 
@@ -659,24 +695,35 @@ def _link_transactions(
     period_from = _iso_day(invoice.get("period_from"))
     period_to = _iso_day(invoice.get("period_to"))
     invoice_id = invoice["id"]
+    lines = invoice.get("lines") or []
+    provision_lines = [line for line in lines if line.get("position_key") in
+                       {parser.POSITION_PROVISION, parser.POSITION_PROVISION_STORNO}]
     # Nur Sammelrechnungen verknuepfen die orderbezogene Provision. Ein
     # Einzelbeleg hat damit nichts zu tun und darf sie nicht mitzaehlen.
-    if period_from and invoice.get("doc_kind") != parser.DOC_KIND_SINGLE:
+    if period_from and invoice.get("doc_kind") != parser.DOC_KIND_SINGLE and (not lines or provision_lines):
+        params = [invoice.get("provider") or "", period_from, period_to or period_from,
+                  parser.POSITION_PROVISION, parser.POSITION_PROVISION_STORNO,
+                  invoice.get("currency") or "EUR", invoice_id]
+        refs = sorted({line.get("order_ref") for line in provision_lines if line.get("order_ref")})
+        ref_filter = ""
+        if invoice.get("provider") == "amazon" and refs:
+            ref_filter = " AND t.order_id IN (SELECT id FROM orders WHERE provider=? AND external_order_id IN (" + ",".join("?" for _ in refs) + "))"
+            params.extend([invoice.get("provider"), *refs])
+        directions = {"OUT", "IN"} if not lines else {
+            "IN" if int(line.get("gross_cents") or 0) < 0 else "OUT" for line in provision_lines}
+        sign_filter = " AND t.direction IN (" + ",".join("?" for _ in directions) + ")"
+        params.extend(sorted(directions))
         rows = connection.execute(
             """
-            SELECT id FROM transactions
-            WHERE direction = 'OUT'
-              AND provider = ?
-              AND substr(date, 1, 10) BETWEEN ? AND ?
-              AND category IN ('fees', ?, ?)
-            """,
-            (
-                invoice.get("provider") or "",
-                period_from,
-                period_to or period_from,
-                parser.POSITION_PROVISION,
-                parser.POSITION_PROVISION_STORNO,
-            ),
+            SELECT t.id FROM transactions t
+            WHERE t.provider = ?
+              AND substr(t.date, 1, 10) BETWEEN ? AND ?
+              AND t.category IN ('fees', ?, ?)
+              AND t.currency = ?
+              AND NOT EXISTS (SELECT 1 FROM monthly_invoice_transactions other
+                  WHERE other.transaction_id=t.id AND other.invoice_id != ?)
+            """ + ref_filter + sign_filter,
+            params,
         ).fetchall()
         for row in rows:
             connection.execute(

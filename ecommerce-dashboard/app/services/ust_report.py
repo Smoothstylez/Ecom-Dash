@@ -100,12 +100,13 @@ def get_vat_effective_from() -> Optional[datetime]:
     if not token:
         return None
     try:
-        return datetime.strptime(token[:10], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        parsed = datetime.fromisoformat(token.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
     except ValueError:
         return None
 
 
-def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
+def load_kaufland_vat_rows(month: str, *, _include_refunds: bool = True) -> list[dict[str, Any]]:
     """Alle nicht stornierten Order-Units eines Monats mit Steuerbehandlung."""
     overrides = _load_overrides()
     vat_effective_from = get_vat_effective_from()
@@ -114,8 +115,7 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
             """
             SELECT u.id_order_unit, u.id_order, u.ts_created_iso, u.status, u.price, u.shipping_rate,
                    u.vat, u.is_marketplace_deemed_supplier, u.shipping_country, u.revenue_gross,
-                   COALESCE((SELECT SUM(CAST(NULLIF(r.amount, '') AS REAL)) FROM order_unit_refunds r
-                             WHERE r.id_order_unit = u.id_order_unit), 0) AS refund_sum
+                   0 AS refund_sum
             FROM order_units u
             WHERE substr(u.ts_created_iso, 1, 7) = ?
               AND COALESCE(u.status, '') NOT IN ('cancelled', 'canceled')
@@ -157,6 +157,15 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
             result.append(entry)
             continue
 
+        order_date = datetime.fromisoformat(_text(row["ts_created_iso"]).replace("Z", "+00:00"))
+        if order_date.tzinfo is None:
+            order_date = order_date.replace(tzinfo=timezone.utc)
+        if vat_effective_from is not None and order_date < vat_effective_from:
+            entry.update(tax_class=CLASS_PRE_VAT, net_cents=gross_cents,
+                         output_vat_cents=0, blocker=False, vat_rate=0)
+            result.append(entry)
+            continue
+
         effective_rate = rate
         if override is not None:
             effective_rate = float(override["to_rate"])
@@ -172,23 +181,61 @@ def load_kaufland_vat_rows(month: str) -> list[dict[str, Any]]:
             result.append(entry)
             continue
 
-        # rate == 0: vor dem USt-Start korrekt, danach Falschfeld.
-        order_date = None
+        entry.update(
+            tax_class=CLASS_NEEDS_OVERRIDE, net_cents=gross_cents,
+            output_vat_cents=0, blocker=True,
+            warnings=["KAUFLAND_VAT_RATE_MISSING"],
+        )
+        result.append(entry)
+    if not _include_refunds:
+        return result
+    # Corrections keep their own date and inherit the original sale's treatment.
+    # Never use the import timestamp or a return-request timestamp as refund date.
+    with _connect_kaufland() as connection:
+        refunds = connection.execute(
+            "SELECT r.*, u.ts_created_iso AS sale_date FROM order_unit_refunds r "
+            "JOIN order_units u ON u.id_order_unit=r.id_order_unit "
+            "WHERE substr(u.ts_created_iso,1,7) <= ?", (month,)
+        ).fetchall()
+    originals: dict[str, dict[str, Any]] = {r["id_order_unit"]: r for r in result}
+    for refund in refunds:
+        amount = abs(_to_int(refund["amount"]))
+        if not amount:
+            continue
         try:
-            order_date = datetime.strptime(booking_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        except ValueError:
-            order_date = None
-        if vat_effective_from is not None and order_date is not None and order_date < vat_effective_from:
-            entry.update(
-                tax_class=CLASS_PRE_VAT, net_cents=gross_cents,
-                output_vat_cents=0, blocker=False,
-            )
-        else:
-            entry.update(
-                tax_class=CLASS_NEEDS_OVERRIDE, net_cents=gross_cents,
-                output_vat_cents=0, blocker=True,
-                warnings=["KAUFLAND_VAT_RATE_MISSING"],
-            )
+            raw = _json.loads(refund["raw_json"] or "{}")
+        except (ValueError, TypeError):
+            raw = {}
+        date = next((_text(raw.get(key)) for key in
+                     ("booking_date", "ts_refunded_iso", "ts_created_iso", "created_at", "date")
+                     if _text(raw.get(key))), "")
+        if date:
+            try:
+                datetime.fromisoformat(date.replace("Z", "+00:00"))
+            except ValueError:
+                date = ""
+        if not date:
+            # Unknown corrections may affect any later unfiled month.
+            result.append({"id_order_unit": str(refund["id_order_unit"]), "order_id": "",
+                           "booking_date": "", "tax_class": "unresolved_refund_date",
+                           "gross_cents": 0, "net_cents": 0, "output_vat_cents": 0,
+                           "refund_cents": amount, "fees_cents": 0, "blocker": True,
+                           "warnings": ["KAUFLAND_REFUND_DATE_MISSING"]})
+            continue
+        if _month_of(date) != month:
+            continue
+        unit_id = str(refund["id_order_unit"])
+        if unit_id not in originals:
+            sale_month = _month_of(refund["sale_date"])
+            # Only sales are needed here, never recursively load their refunds.
+            originals.update({r["id_order_unit"]: r for r in load_kaufland_vat_rows(sale_month, _include_refunds=False)})
+        original = originals.get(unit_id)
+        if original is None:
+            continue
+        entry = {**original, "booking_date": date[:10], "transaction_type": "REFUND",
+                 "refund_cents": amount, "gross_cents": -amount, "fees_cents": 0}
+        net, vat = split_vat_from_gross(-amount, original["vat_rate"]) if original["output_vat_cents"] else (-amount, 0)
+        entry.update(net_cents=net, output_vat_cents=vat)
         result.append(entry)
     return result
 
@@ -484,11 +531,12 @@ def _shift_month(month: str, steps: int = 1) -> str:
 def load_amazon_tax_rows(month: str) -> list[dict[str, Any]]:
     with connect_combined_db() as connection:
         rows = connection.execute(
-            "SELECT * FROM amazon_tax_rows WHERE substr(booking_date, 1, 7) = ? "
+            "SELECT * FROM amazon_tax_rows WHERE substr(booking_date, 1, 7) = ? OR booking_date='' "
             "ORDER BY booking_date, id",
             (month,),
         ).fetchall()
-    return [dict(row) for row in rows]
+    from app.services.ust_reconciliation import apply_amazon_cutoff
+    return apply_amazon_cutoff([dict(row) for row in rows], get_vat_effective_from())
 
 
 def _bucket_amazon(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
@@ -496,7 +544,7 @@ def _bucket_amazon(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
         return {"count": 0, "gross": 0, "net": 0, "output_vat": 0}
 
     classes = ("de_b2c", "eu_b2b_intra_community_supply", "eu_b2c_home_rate",
-               "unresolved", "deemed_supplier", "export", "unresolved_return_link")
+               "unresolved", "deemed_supplier", "export", "unresolved_return_link", "pre_vat")
     buckets: dict[str, Any] = {name: empty() for name in classes}
     buckets["returns"] = {"count": 0, "gross": 0, "net": 0, "output_vat": 0,
                           "by_original_class": {}}
@@ -518,18 +566,26 @@ def _bucket_amazon(rows: Iterable[dict[str, Any]]) -> dict[str, Any]:
 def detect_missing_fee_invoices(month: str) -> list[dict[str, Any]]:
     """Gebuehren in `month` angefallen, aber keine freigegebene Gebuehrenrechnung."""
     findings: list[dict[str, Any]] = []
-    kaufland_fees = sum(int(row.get("fees_cents") or 0) for row in load_kaufland_vat_rows(month))
-    candidates = {_text(row.get("deduction_month")) for row in (
-        _docs.list_input_vat_invoices(provider="kaufland")
-    ) if row.get("doc_type") == "fee" and row.get("input_vat_status") == "confirmed"}
-    if kaufland_fees > 0 and not ({month, _shift_month(month)} & candidates):
-        findings.append({
-            "code": WARNING_MISSING_FEE_INVOICE,
-            "provider": "kaufland",
-            "fees_cents": kaufland_fees,
-            "hint": "Kaufland-Gebuehren angefallen, aber keine freigegebene Gebuehrenrechnung "
-                    "(Rechnung kommt zum 1. des Folgemonats).",
-        })
+    from app.services.ust_reconciliation import fee_invoice_coverage, has_full_kaufland_statement
+    try:
+        coverage = fee_invoice_coverage()
+    except sqlite3.Error:
+        coverage = {"amazon": {}, "kaufland": {}}
+    fees = {"kaufland": sum(int(row.get("fees_cents") or 0) for row in load_kaufland_vat_rows(month))}
+    for provider, amount in fees.items():
+        covered = int(coverage[provider].get(month, 0))
+        if amount > 0 and covered < amount - 2:
+            code = WARNING_MISSING_FEE_INVOICE if not covered else "FEE_RECONCILIATION_DIFFERENCE"
+            if provider == "kaufland" and covered:
+                try:
+                    if has_full_kaufland_statement(month):
+                        code = "FEE_SOURCE_ESTIMATE_DIFFERENCE"
+                except sqlite3.Error:
+                    pass
+            findings.append({"code": code, "provider": provider,
+                             "fees_cents": amount, "covered_invoice_gross_cents": covered,
+                             "hint": f"{provider.title()}: Gebuehrenschaetzung aus Quelldaten und freigegebene Rechnungen stimmen noch nicht ueberein." if covered else
+                                     f"{provider.title()}-Gebuehren angefallen, aber keine freigegebene Rechnung fuer diesen Leistungsmonat."})
     return findings
 
 
@@ -543,8 +599,22 @@ def build_ust_report(
     kaufland_rows = load_kaufland_vat_rows(month)
     kaufland_returns = load_kaufland_returns(month)
     amazon_rows = load_amazon_tax_rows(month)
-    amazon = _bucket_amazon(amazon_rows)
-    input_vat = _docs.sum_input_vat_by_deduction_month(month)
+    amazon = _bucket_amazon(row for row in amazon_rows if row.get("booking_date"))
+    from app.services.ust_input_vat import FeeTaxContext
+    fee_context = FeeTaxContext(settings.vat_effective_from)
+    input_vat = _docs.sum_input_vat_by_deduction_month(month, fee_tax_context=fee_context)
+    from app.services.ust_reconciliation import VAT_BUCKETS, booked_input_vat, amazon_completeness
+    booked_vat = booked_input_vat(month, fee_tax_context=fee_context)
+    booked_fee_vat_cents = sum(int(booked_vat[key]) for key in VAT_BUCKETS)
+    for key in VAT_BUCKETS:
+        input_vat[key] += int(booked_vat[key])
+    for provider, service_month in booked_vat["fee_service_months"].items():
+        if service_month and not input_vat["fee_service_months"].get(provider):
+            input_vat["fee_service_months"][provider] = service_month
+    input_vat["pending_review_count"] += booked_vat["pending_review_count"]
+    input_vat["eligibility_adjustment_cents"] += booked_vat["eligibility_adjustment_cents"]
+    input_vat["eligibility_review_count"] += booked_vat["eligibility_review_count"]
+    completeness = amazon_completeness(month)
     missing_fee = detect_missing_fee_invoices(month)
 
     kaufland_output_vat = sum(int(row["output_vat_cents"]) for row in kaufland_rows)
@@ -559,12 +629,43 @@ def build_ust_report(
         int(input_vat[key]) for key in
         ("purchases_cents", "amazon_fees_cents", "kaufland_fees_cents", "other_cents")
     )
-    # Spiegel der Buchungen: bereits gebuchte und freigegebene Vorsteuer.
-    booked_fee_vat_cents = sum_booked_input_vat(month)
-    input_vat_cents += booked_fee_vat_cents
 
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
+    if completeness["source_error"]:
+        warnings.append({"code": "AMAZON_SOURCE_UNAVAILABLE", "count": 1,
+                         "hint": "Amazon-Quelle konnte nicht vollstaendig geprueft werden."})
+    if completeness["missing_order_ids"] or completeness["amount_mismatches"]:
+        warnings.append({"code": "AMAZON_TAX_DATA_INCOMPLETE",
+                         "count": len(completeness["missing_order_ids"]) + len(completeness["amount_mismatches"]),
+                         "hint": "Amazon-Lieferungen oder Erstattungen fehlen im Steuerreport; Monatsreports importieren."})
+    ambiguous = sum(bool(r.get("cutoff_ambiguous")) for r in amazon_rows)
+    if ambiguous:
+        blockers.append({"code": "AMAZON_VAT_START_AMBIGUOUS", "count": ambiguous,
+                         "hint": "Am USt-Starttag fehlt der eindeutige Bestellzeitpunkt."})
+    undated_refunds = sum(r["tax_class"] == "unresolved_refund_date" for r in kaufland_rows)
+    if undated_refunds:
+        blockers.append({"code": "KAUFLAND_REFUND_DATE_MISSING", "count": undated_refunds,
+                         "hint": "Kaufland-Erstattungen ohne belegtes Buchungsdatum; Monatszuordnung ungeklart."})
+    if booked_vat["source_error"]:
+        blockers.append({"code": "INPUT_VAT_SOURCE_UNAVAILABLE", "count": 1,
+                         "hint": "Gebuchte Vorsteuer konnte nicht vollstaendig gelesen werden."})
+    if booked_vat["conflicts"]:
+        blockers.append({"code": "INPUT_VAT_INVOICE_CONFLICT", "count": len(booked_vat["conflicts"]),
+                         "hint": "Doppelte Eingangsrechnung mit abweichender Freigabe, Vorsteuer oder Abzugsmonat."})
+    if input_vat["eligibility_review_count"]:
+        blockers.append({"code": "INPUT_VAT_ELIGIBILITY_UNRESOLVED", "count": input_vat["eligibility_review_count"],
+                         "hint": "Gebuehren oder Gebuehrengutschriften koennen nicht eindeutig vor/nach USt-Beginn zugeordnet werden."})
+    if input_vat["eligibility_adjustment_cents"]:
+        warnings.append({"code": "INPUT_VAT_START_ADJUSTMENT", "count": 1,
+                         "adjustment_cents": input_vat["eligibility_adjustment_cents"],
+                         "hint": "Abziehbare Vorsteuer wurde an den USt-Beginn angepasst; Altumsatz-Gebuehrengutschriften erben die urspruengliche Behandlung."})
+    undated_amazon = sum(not r.get("booking_date") for r in amazon_rows)
+    if undated_amazon:
+        blockers.append({"code": "AMAZON_TRANSACTION_DATE_MISSING", "count": undated_amazon,
+                         "hint": "Amazon-Transaktion ohne belegtes Buchungsdatum; Zuordnung ungeklart."})
+    # Undated transactions are shown as issues only, never netted against a
+    # month's revenue based on the original order or the import timestamp.
 
     unresolved_amazon = [
         row for row in amazon_rows
@@ -602,8 +703,17 @@ def build_ust_report(
         blockers.append({"code": BLOCKER_NO_VAT_START, "count": 1,
                          "hint": "Kein USt-Startzeitpunkt gesetzt."})
 
-    input_vat_incomplete = pending_review_count > 0 or bool(missing_fee)
+    fee_incomplete = [finding for finding in missing_fee if finding["code"] == WARNING_MISSING_FEE_INVOICE]
+    input_vat_incomplete = pending_review_count > 0 or bool(fee_incomplete) or input_vat["eligibility_review_count"] > 0
     warnings.extend(missing_fee)
+    from app.services.finance_reconciliation import reconcile_amazon_fees
+    finance = reconcile_amazon_fees(month)
+    if completeness['source_error'] or completeness['missing_order_ids'] or completeness['amount_mismatches']:
+        finance['status'] = 'incomplete' if completeness['source_error'] else 'differences'
+    if finance['status'] in {'differences', 'incomplete'}:
+        warnings.append({'code': 'FINANCE_RECONCILIATION_INCOMPLETE' if finance['status'] == 'incomplete' else 'FEE_RECONCILIATION_DIFFERENCE',
+            'provider': 'amazon', 'count': len(finance['issues']) + len(finance['details']) or 1,
+            'hint': 'Finanzabgleich noch offen; die Steuerberechnung verwendet unverändert die Originalreports und bestätigten Belege.'})
     if any(row.get("net_source") == "computed_home_rate" for row in amazon_rows):
         warnings.append({"code": "AMAZON_VAT_CALCULATION_MISSING", "count": sum(
             1 for row in amazon_rows if row.get("net_source") == "computed_home_rate"),
@@ -614,8 +724,8 @@ def build_ust_report(
                          "hint": "Die Kaufland-Retouren konnten nicht abgerufen werden — bitte Sync ausfuehren."})
 
     business_rules = {"block_filing_when_input_vat_incomplete": bool(block_filing_when_input_vat_incomplete)}
-    if block_filing_when_input_vat_incomplete and missing_fee:
-        blockers.extend(missing_fee)
+    if block_filing_when_input_vat_incomplete and fee_incomplete:
+        blockers.extend(fee_incomplete)
 
     status = "draft" if blockers else "ready"
     return {
@@ -646,6 +756,8 @@ def build_ust_report(
                 "rows": [{k: v for k, v in row.items() if k != "warnings"} for row in kaufland_rows],
             },
             "amazon": amazon,
+            "amazon_reconciliation": completeness,
+            "finance_reconciliation": finance,
             "input_vat": {
                 **input_vat,
                 "booked_fee_vat_cents": booked_fee_vat_cents,
@@ -772,37 +884,8 @@ def sum_booked_input_vat(month: str) -> int:
     freigegebene `monthly_invoices` laeuft, zaehlt hier mit. Altbestand aus
     `input_vat_invoices` bleibt zusaetzlich lesbar, bis er migriert ist.
     """
-    from app.config import BOOKKEEPING_DB_PATH
-    import sqlite3
-
-    if not BOOKKEEPING_DB_PATH.exists():
-        return 0
-    total = 0
-    connection = sqlite3.connect(BOOKKEEPING_DB_PATH)
-    try:
-        connection.row_factory = sqlite3.Row
-        row = connection.execute(
-            """
-            SELECT COALESCE(SUM(vat_amount), 0) AS vat
-            FROM transactions
-            WHERE direction = 'OUT'
-              AND is_vat_deductible = 1
-              AND substr(date, 1, 10) BETWEEN ? AND ?
-            """,
-            (f"{month}-01", f"{month}-31"),
-        ).fetchone()
-        total += int(row["vat"])
-        row = connection.execute(
-            """
-            SELECT COALESCE(SUM(vat_amount_cents), 0) AS vat
-            FROM monthly_invoices
-            WHERE status = 'approved'
-              AND substr(period_from, 1, 7) <= ?
-              AND substr(period_to, 1, 7) >= ?
-            """,
-            (month, month),
-        ).fetchone()
-        total += int(row["vat"])
-    finally:
-        connection.close()
-    return total
+    from app.services.ust_reconciliation import VAT_BUCKETS, booked_input_vat
+    totals = booked_input_vat(month)
+    if totals["source_error"]:
+        raise _docs.UstDocumentError(409, "Gebuchte Vorsteuer konnte nicht geprueft werden")
+    return sum(int(totals[key]) for key in VAT_BUCKETS)

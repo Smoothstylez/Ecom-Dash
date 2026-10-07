@@ -66,6 +66,49 @@ def _require_month(month: str) -> str:
 
 
 # Statische Routen vor /{month}/...
+@router.post('/import')
+async def api_import_files(files: list[UploadFile] = File(...)) -> dict[str, Any]:
+    from app.services import ust_import
+    if len(files) > 25:
+        raise HTTPException(400, 'Hoechstens 25 Dateien pro Import')
+    payload, total = [], 0
+    for file in files:
+        data = await file.read(MAX_UPLOAD_BYTES + 1)
+        total += len(data)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, 'Import ist zu gross')
+        if not data:
+            raise HTTPException(400, 'Leere Datei: ' + (file.filename or 'Datei'))
+        payload.append((file.filename or 'Datei', data))
+    # PDF extraction/SQLite processing is blocking, not work for the ASGI loop.
+    from starlette.concurrency import run_in_threadpool
+    items = await run_in_threadpool(ust_import.import_files, payload)
+    return {'items': items, 'total': len(items)}
+
+
+@router.post('/parse-upload')
+async def api_preview_file(file: UploadFile = File(...)) -> dict[str, Any]:
+    from app.services import ust_import
+    from app.services.bookkeeping_full import BookkeepingServiceError
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, 'Datei ist zu gross')
+    try:
+        from starlette.concurrency import run_in_threadpool
+        return {'parsed': await run_in_threadpool(ust_import.preview_pdf, data)}
+    except BookkeepingServiceError as exc:
+        raise HTTPException(exc.status_code, exc.detail) from exc
+    except ust_import.invoice_parser.InvoiceParseError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.get('/imports')
+def api_import_history() -> dict[str, Any]:
+    from app.services import ust_import
+    items = ust_import.list_imports()
+    return {'items': items, 'total': len(items)}
+
+
 @router.get("/months")
 def api_list_report_months() -> dict[str, Any]:
     return {"items": ust_report.list_report_months(), "total": len(ust_report.list_report_months())}
@@ -77,9 +120,8 @@ def api_list_documents(
     provider: Optional[str] = Query(default=None),
     status: Optional[str] = Query(default=None, alias="input_vat_status"),
 ) -> dict[str, Any]:
-    items = ust_documents.list_input_vat_invoices(
-        deduction_month=month, provider=provider, status=status
-    )
+    from app.services import ust_import
+    items = ust_import.list_report_documents(month=month, provider=provider, status=status)
     return {"items": items, "total": len(items), "limit": len(items), "offset": 0}
 
 
@@ -136,6 +178,18 @@ async def api_upload_document(
 
 @router.get("/documents/{document_id}/download")
 def api_download_document(document_id: str) -> FileResponse:
+    if document_id.startswith('book:'):
+        from app.services import platform_invoices, bookkeeping_full
+        from pathlib import Path
+        invoice = platform_invoices.get_invoice(document_id[5:])
+        with platform_invoices._open_db() as c:
+            row = c.execute('SELECT file_path FROM documents WHERE id=?', (invoice.get('document_id'),)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Kein Originalbeleg vorhanden')
+        path = bookkeeping_full.get_document_resolved_path(row['file_path'])
+        if not path.is_file():
+            raise HTTPException(404, 'Belegdatei fehlt')
+        return FileResponse(path, filename=invoice['invoice_number'] + Path(path).suffix)
     try:
         path, filename = ust_documents.get_document_file(document_id)
     except ust_documents.UstDocumentError as exc:
@@ -145,6 +199,16 @@ def api_download_document(document_id: str) -> FileResponse:
 
 @router.patch("/documents/{document_id}")
 def api_patch_document(document_id: str, payload: DocumentPatch) -> dict[str, Any]:
+    if document_id.startswith('book:'):
+        from app.services import platform_invoices
+        from app.services.bookkeeping_full import BookkeepingServiceError
+        try:
+            if payload.input_vat_status != 'confirmed' or any((payload.service_date, payload.received_date, payload.delivery_date, payload.notes)):
+                raise HTTPException(400, 'Buchhaltungsbelege hier nur freigeben; Bearbeitung im Buchungsbereich')
+            invoice = platform_invoices.approve_platform_invoice(document_id[5:])
+            return {'ok': True, 'invoice': invoice}
+        except BookkeepingServiceError as exc:
+            raise HTTPException(exc.status_code, exc.detail) from exc
     fields = {key: value for key, value in payload.model_dump().items() if value is not None}
     try:
         invoice = ust_documents.update_input_vat_invoice(document_id, fields)

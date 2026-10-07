@@ -72,7 +72,7 @@ def _amount_cents(value: Any) -> int:
         return 0
 
 
-_DATE_FORMATS = ("%d-%b-%Y", "%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y")
+_DATE_FORMATS = ("%d-%b-%Y", "%Y-%m-%d", "%d-%m-%Y", "%d.%m.%Y", "%d/%m/%Y", "%m/%d/%Y")
 
 
 def _date_token(value: Any) -> str:
@@ -81,7 +81,7 @@ def _date_token(value: Any) -> str:
     Amazon schreibt im SC_VAT_TAX_REPORT ``01-Sep-2026 UTC`` bzw.
     ``01-Sep-2026 10:00:00 UTC``; andere Quellen liefern ISO-8601.
     """
-    token = _text(value)
+    token = _text(value).replace("-Sept-", "-Sep-")
     if not token:
         return ""
     head = token[:-4] if token.endswith(" UTC") else token
@@ -171,8 +171,8 @@ def classify_amazon_tax_row(
     gross_cents, tax_cents, net_cents = sum_components(row)
     booking_date = (
         _date_token(row.get("Shipment Date"))
-        or _date_token(row.get("Tax Calculation Date"))
-        or _date_token(row.get("Order Date"))
+        or ("" if is_correction else (
+            _date_token(row.get("Tax Calculation Date")) or _date_token(row.get("Order Date"))))
     )
 
     result: dict[str, Any] = {
@@ -205,6 +205,11 @@ def classify_amazon_tax_row(
         "blocker": False,
         "needs_inheritance": False,
     }
+    if row.get("_source_match_conflict"):
+        result.update(tax_class=CLASS_UNRESOLVED, output_vat_cents=0,
+                      net_cents=gross_cents, blocker=True)
+        result["warnings"].append("AMAZON_SOURCE_MATCH_AMBIGUOUS")
+        return result
 
     # 1. RETURN/REFUND zuerst: Erben statt neu klassifizieren.
     if is_correction:
@@ -229,16 +234,33 @@ def classify_amazon_tax_row(
         return result
 
     # 4. Inlandsverkauf DE->DE mit 19 % (auch inlaendisches B2B bleibt 19 %).
-    if ship_from == "DE" and ship_to == "DE" and abs(result["vat_rate"] - 0.19) < 1e-9:
+    if (ship_from == "DE" and ship_to == "DE" and abs(result["vat_rate"] - 0.19) < 1e-9
+        and not (row.get("_source_report_type") == "VAT_TRANSACTION"
+                 and not _text((row.get("_avtr_raw") or {}).get("TOTAL_ACTIVITY_VALUE_VAT_AMT")))):
         result["tax_class"] = CLASS_DE_B2C
         result["is_domestic_b2b"] = bool(buyer_vat)
+        return result
+
+    # Before activation of VCS, AVTR still proves the customer's gross,
+    # shipment and countries. Standard German goods remain taxable once the
+    # seller is eligible; missing Amazon calculation is explicitly disclosed.
+    avtr = row.get("_avtr_raw") or {}
+    if (row.get("_source_report_type") == "VAT_TRANSACTION" and ship_from == ship_to == "DE"
+        and collection.upper() == "SELLER" and not _text(avtr.get("TOTAL_ACTIVITY_VALUE_VAT_AMT"))
+        and _text(avtr.get("PRODUCT_TAX_CODE")) in {"", "A_GEN_STANDARD"}
+        and _text(row.get("Currency")) == "EUR"):
+        net_home, vat_home = split_home_rate_vat(gross_cents)
+        result.update(tax_class=CLASS_DE_B2C, net_source="computed_home_rate",
+                      net_cents=net_home, output_vat_cents=vat_home, vat_rate=0.19)
+        result["warnings"].append(WARNING_VAT_CALC_MISSING)
         return result
 
     # 5. Innergemeinschaftliche Lieferung DE->EU mit gueltiger fremder USt-IdNr.
     if (
         ship_from == "DE"
         and _is_eu_country(ship_to)
-        and buyer_vat
+        and buyer_vat[:2].upper() in (EU_MEMBER_STATE_CODES - {"DE"}) | {"EL"}
+        and len(buyer_vat.replace(" ", "")) > 4
         and buyer_vat_type.upper() == "VAT"
         and abs(result["vat_rate"]) < 1e-9
         and reason_code.lower() == "taxable"
@@ -301,17 +323,20 @@ def link_and_inherit(
         )
         for row in rows
     ]
-    shipments = [item for item in classified if not item["needs_inheritance"]]
-    exact = {_link_key(item): item for item in shipments}
+    shipments = list({_row_id(item["raw_row"]): item for item in classified
+                      if item["transaction_type"] not in CORRECTION_TYPES}.values())
+    exact: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     by_order_sku: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for item in shipments:
+        exact.setdefault(_link_key(item), []).append(item)
         by_order_sku.setdefault((item["order_id"], item["seller_sku"]), []).append(item)
 
     for item in classified:
         if not item["needs_inheritance"]:
             continue
-        original = exact.get(_link_key(item))
-        if original is None:
+        exact_candidates = exact.get(_link_key(item), [])
+        original = exact_candidates[0] if len(exact_candidates) == 1 else None
+        if not exact_candidates:
             candidates = by_order_sku.get((item["order_id"], item["seller_sku"]), [])
             original = candidates[0] if len(candidates) == 1 else None
         if original is None:
@@ -326,7 +351,14 @@ def link_and_inherit(
         item["vat_rate"] = original["vat_rate"]
         item["warnings"] = [w for w in item["warnings"] if w != "AMAZON_RETURN_AWAITING_LINK"]
 
-        if inherited_class == CLASS_EU_B2C_HOME_RATE:
+        if inherited_class == CLASS_EU_B2C_HOME_RATE or (
+            inherited_class == CLASS_DE_B2C and (
+                original["net_source"] == "computed_home_rate" or (
+                    item["raw_row"].get("_source_report_type") == "VAT_TRANSACTION"
+                    and not _text((item["raw_row"].get("_avtr_raw") or {}).get("TOTAL_ACTIVITY_VALUE_VAT_AMT"))
+                )
+            )
+        ):
             net_home, vat_home = split_home_rate_vat(item["gross_cents"])
             item["net_cents"] = net_home
             item["output_vat_cents"] = vat_home
@@ -360,6 +392,35 @@ def parse_sc_vat_tax_report(text: str, *, delimiter: Optional[str] = None) -> li
     ]
     if not rows:
         raise ValueError("SC_VAT_TAX_REPORT enthaelt keine Datenzeilen")
+    if {"TRANSACTION_EVENT_ID", "ACTIVITY_TRANSACTION_ID", "SELLER_SKU"}.issubset(rows[0]):
+        normalized = []
+        for raw in rows:
+            kind = _text(raw.get("TRANSACTION_TYPE")).upper()
+            if kind not in {"SALE", "RETURN", "REFUND"} or raw.get("SALES_CHANNEL") == "AMAZON_FEE":
+                continue
+            normalized.append({
+                "Transaction ID": "AVTR:" + raw["ACTIVITY_TRANSACTION_ID"],
+                "Order ID": raw["TRANSACTION_EVENT_ID"], "Shipment ID": raw["ACTIVITY_TRANSACTION_ID"],
+                "SKU": raw["SELLER_SKU"], "Transaction Type": "SHIPMENT" if kind == "SALE" else kind,
+                "Shipment Date": raw.get("TRANSACTION_DEPART_DATE") if kind == "SALE" else raw.get("TRANSACTION_COMPLETE_DATE"),
+                "Order Date": "", "Tax Calculation Date": raw.get("TAX_CALCULATION_DATE", ""),
+                "Ship From Country": raw.get("SALE_DEPART_COUNTRY") or raw.get("DEPARTURE_COUNTRY", ""),
+                "Ship To Country": raw.get("SALE_ARRIVAL_COUNTRY") or raw.get("ARRIVAL_COUNTRY", ""),
+                "Tax Rate": raw.get("PRICE_OF_ITEMS_VAT_RATE_PERCENT", ""),
+                "Tax Calculation Reason Code": "unconfirmed",
+                "Tax Collection Responsibility": raw.get("TAX_COLLECTION_RESPONSIBILITY", ""),
+                "Buyer Tax Registration": raw.get("BUYER_VAT_NUMBER", ""), "Buyer Tax Registration Type": "VAT" if raw.get("BUYER_VAT_NUMBER") else "",
+                "Export Outside EU": raw.get("EXPORT_OUTSIDE_EU", ""),
+                "OUR_PRICE Tax Inclusive Selling Price": raw.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_INCL", ""),
+                "OUR_PRICE Tax Exclusive Selling Price": raw.get("TOTAL_ACTIVITY_VALUE_AMT_VAT_EXCL", ""),
+                "OUR_PRICE Tax Amount": raw.get("TOTAL_ACTIVITY_VALUE_VAT_AMT", ""),
+                "Currency": raw.get("TRANSACTION_CURRENCY_CODE", ""),
+                "VAT Invoice Number": raw.get("VAT_INV_NUMBER", ""), "Invoice Url": raw.get("INVOICE_URL", ""),
+                "_source_report_type": "VAT_TRANSACTION", "_avtr_raw": raw,
+            })
+        if not normalized:
+            raise ValueError("VAT_TRANSACTION enthaelt keine Verkaeufe oder Erstattungen")
+        return normalized
     missing = [name for name in REQUIRED_COLUMNS if name not in rows[0]]
     if missing:
         raise ValueError(
@@ -373,7 +434,10 @@ def _utc_now() -> str:
 
 
 def _row_id(raw_row: dict[str, Any]) -> str:
-    raw = json.dumps(raw_row, ensure_ascii=True, sort_keys=True, default=str)
+    identity = [_text(raw_row.get(key)) for key in
+                ("Transaction ID", "Order ID", "Shipment ID", "SKU", "Transaction Type")]
+    # Only unidentified legacy rows need a content-derived fallback.
+    raw = json.dumps(identity if identity[0] else raw_row, ensure_ascii=True, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
@@ -388,10 +452,42 @@ def import_sc_vat_tax_rows(classified_rows: Iterable[dict[str, Any]]) -> dict[st
 
     inserted = 0
     skipped = 0
+    classified_rows = list(classified_rows)
+    incoming_groups: dict[tuple, set[str]] = {}
+    for item in classified_rows:
+        key = (item["order_id"], item["seller_sku"], item["transaction_type"], item["booking_date"],
+               (item.get("raw_row") or {}).get("_source_report_type") == "VAT_TRANSACTION")
+        incoming_groups.setdefault(key, set()).add(_row_id(item.get("raw_row") or {}))
     with connect_combined_db() as connection:
         for item in classified_rows:
             raw_row = item.get("raw_row") or {}
             row_id = _row_id(raw_row)
+            counterparts = connection.execute(
+                "SELECT id,raw_json FROM amazon_tax_rows WHERE order_id=? AND seller_sku=? "
+                "AND transaction_type=? AND booking_date=?",
+                (item["order_id"], item["seller_sku"], item["transaction_type"], item["booking_date"]),
+            ).fetchall()
+            supplemental = raw_row.get("_source_report_type") == "VAT_TRANSACTION"
+            opposite = [r for r in counterparts if (json.loads(r["raw_json"]).get("_source_report_type") == "VAT_TRANSACTION") != supplemental]
+            key = (item["order_id"], item["seller_sku"], item["transaction_type"], item["booking_date"], supplemental)
+            unambiguous = len(opposite) == 1 and len(incoming_groups[key]) == 1
+            if opposite and not unambiguous:
+                raw_row = {**raw_row, "_source_match_conflict": True}
+                item = {**item, "tax_class": CLASS_UNRESOLVED, "output_vat_cents": 0,
+                        "net_cents": item["gross_cents"]}
+            elif opposite and supplemental:
+                skipped += 1
+                continue
+            existing = connection.execute(
+                "SELECT id FROM amazon_tax_rows WHERE transaction_id=? AND order_id=? "
+                "AND shipment_id=? AND seller_sku=? AND transaction_type=?",
+                (item["transaction_id"], item["order_id"], item["shipment_id"], item["seller_sku"], item["transaction_type"]),
+            ).fetchall() if item["transaction_id"] else []
+            if not supplemental and unambiguous:
+                existing = [*existing, *opposite]
+            if existing:
+                # Also collapse historical content-hash IDs on first reimport.
+                connection.executemany("DELETE FROM amazon_tax_rows WHERE id=?", [(r["id"],) for r in existing])
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO amazon_tax_rows(
@@ -431,7 +527,7 @@ def import_sc_vat_tax_rows(classified_rows: Iterable[dict[str, Any]]) -> dict[st
                     _utc_now(),
                 ),
             )
-            if cursor.rowcount:
+            if cursor.rowcount and not existing:
                 inserted += 1
             else:
                 skipped += 1
@@ -499,13 +595,19 @@ def import_report_document(report_id: str, *, report_type: str = "SC_VAT_TAX_REP
     body = client.download_report_text(document_url, access_token=rdt)
     rows = parse_sc_vat_tax_report(body)
     eu_settings = _ust.get_eu_tax_settings()
-    classified = link_and_inherit(
-        rows,
+    from app.db import connect_combined_db
+    with connect_combined_db() as connection:
+        originals = [json.loads(r["raw_json"]) for r in connection.execute(
+            "SELECT raw_json FROM amazon_tax_rows WHERE transaction_type NOT IN ('RETURN','REFUND')")]
+    incoming_ids = {_row_id(r) for r in rows}
+    classified = [item for item in link_and_inherit(
+        [*originals, *rows],
         eu_tax_regime=eu_settings["eu_tax_regime"],
         eu_distance_prior_year_cents=eu_settings["eu_distance_prior_year_cents"],
         eu_distance_current_year_cents=eu_settings["eu_distance_current_year_cents"],
-    )
+    ) if _row_id(item["raw_row"]) in incoming_ids]
     persisted = import_sc_vat_tax_rows(classified)
+    reclassify_all_rows(**eu_settings)
     return {
         "status": "imported",
         "report_id": report_id,
@@ -550,7 +652,7 @@ def reclassify_all_rows(
     updated = 0
     with connect_combined_db() as connection:
         for row in stored:
-            item = by_id.get(row["id"])
+            item = by_id.get(_row_id(json.loads(row["raw_json"])))
             if item is None:
                 continue
             connection.execute(

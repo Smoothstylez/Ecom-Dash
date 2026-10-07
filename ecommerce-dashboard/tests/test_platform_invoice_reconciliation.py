@@ -154,7 +154,7 @@ class TestKeineDoppelbuchung:
         varianten = _rows(db, "SELECT amount_gross FROM transactions WHERE category = 'invoice_variance'")
         assert len(varianten) == 1, f"Korrekturbuchung mehrfach angelegt: {varianten}"
         # und sie ist genau einmal in der Summe enthalten
-        assert _total(db, "SELECT COALESCE(SUM(amount_gross), 0) FROM transactions") == 6130
+        assert _total(db, "SELECT COALESCE(SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END), 0) FROM transactions") == 6130
 
     def test_zwei_rechnungen_im_selben_zeitraum_buchen_provision_nicht_doppelt(self, db: Path) -> None:
         """R- und C-Beleg teilen den Monat -- die Provision darf trotzdem nur einmal gezaehlt werden."""
@@ -258,7 +258,7 @@ class TestExakteVerrechnung:
                     _seed(pfad, key=f"p{seed_cents}", cents=seed_cents)
                 invoice = _anlegen(SAMMEL)
                 result = pi.approve_platform_invoice(invoice["id"])
-                gebucht = _total(pfad, "SELECT COALESCE(SUM(amount_gross), 0) FROM transactions")
+                gebucht = _total(pfad, "SELECT COALESCE(SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END), 0) FROM transactions")
                 assert gebucht == 6130, f"seed={seed_cents}: gebucht {gebucht} statt 6130"
                 assert result["difference_cents"] == 0, f"seed={seed_cents}: Rest {result['difference_cents']}"
 
@@ -312,7 +312,7 @@ class TestExakteVerrechnung:
         _seed(db, key="prov-2", cents=857)
         invoice = _anlegen(SAMMEL)  # Rechnung 61,30, Provision 22,33 -> es fehlt 38,97
         result = pi.approve_platform_invoice(invoice["id"])
-        gebucht = _total(db, "SELECT COALESCE(SUM(amount_gross), 0) FROM transactions")
+        gebucht = _total(db, "SELECT COALESCE(SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END), 0) FROM transactions")
         assert gebucht == 6130
         assert result["difference_cents"] == 0
         assert result["had_variance"] is True

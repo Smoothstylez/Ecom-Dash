@@ -175,19 +175,21 @@ def test_cancelled_units_are_not_tax_base(combined, kaufland):
     assert ust_report.load_kaufland_vat_rows("2026-02")[0]["gross_cents"] == 10000
 
 
-def test_order_unit_refunds_net_against_the_sale_month(combined, kaufland):
-    """order_unit_refunds hat kein eigenes Buchungsdatum; die Gutschrift mindert
-    den Umsatz der Unit (wie in order_summaries.kaufland_summary_from_row)."""
+def test_dated_refund_in_sale_month_is_a_separate_correction(combined, kaufland):
+    """Only a refund actually booked in February reduces February's totals."""
     set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
     _unit(kaufland, "u1", vat=19.0, price="11900", created="2026-02-10T00:00:00Z")
     kaufland.execute(
-        "INSERT INTO order_unit_refunds(id_order_unit,position,amount,reason) VALUES ('u1',0,'1190','Teilerstattung')"
+        "INSERT INTO order_unit_refunds(id_order_unit,position,amount,reason,raw_json) "
+        "VALUES ('u1',0,'1190','Teilerstattung','{\"ts_created_iso\":\"2026-02-15T10:00:00Z\"}')"
     )
     kaufland.commit()
-    row = ust_report.load_kaufland_vat_rows("2026-02")[0]
-    assert row["refund_cents"] == 1190
-    assert row["gross_cents"] == 10710
-    assert row["net_cents"] + row["output_vat_cents"] == 10710
+    rows = ust_report.load_kaufland_vat_rows("2026-02")
+    assert rows[0]["gross_cents"] == 11900
+    assert rows[1]["refund_cents"] == 1190
+    assert rows[1]["gross_cents"] == -1190
+    assert sum(row["gross_cents"] for row in rows) == 10710
+    assert sum(row["net_cents"] + row["output_vat_cents"] for row in rows) == 10710
 
 
 def test_kaufland_returns_fall_into_their_own_booking_month(combined, kaufland):
@@ -373,7 +375,7 @@ def _amazon_row(**overrides):
         "seller_sku": "A", "transaction_type": "SHIPMENT", "tax_class": "unresolved",
         "original_tax_class": None, "net_source": "amazon_components", "vat_rate": 0.0,
         "booking_date": "2026-02-10", "gross_cents": 2699, "net_cents": 2699,
-        "output_vat_cents": 0, "raw_json": "{}", "imported_at": "t",
+        "output_vat_cents": 0, "raw_json": '{"Order Date":"2026-02-10"}', "imported_at": "t",
     }
     row.update(overrides)
     return row
@@ -476,8 +478,8 @@ def test_filed_snapshot_is_immutable_and_amendment_adds_a_revision(combined, kau
     assert (first["revision"], first["kind"], first["status"]) == (1, "original", "filed")
 
     kaufland.execute(
-        "INSERT INTO order_unit_refunds(id_order_unit,position,amount,reason) "
-        "VALUES ('u1',0,'1190','spaet erkannt')"
+        "INSERT INTO order_unit_refunds(id_order_unit,position,amount,reason,raw_json) "
+        "VALUES ('u1',0,'1190','spaet erkannt','{\"ts_created_iso\":\"2026-02-15T10:00:00Z\"}')"
     )
     kaufland.commit()
     second = ust_report.amend_report("2026-02")
@@ -580,3 +582,43 @@ def test_returns_warning_stays_without_a_returns_sync(combined, kaufland):
     report = ust_report.build_ust_report("2026-02")
     assert any(w["code"] == "KAUFLAND_RETURNS_NOT_SYNCED" for w in report["warnings"])
     assert report["sections"]["kaufland"]["returns_synced"] is False
+
+
+# ── fee_service_months: Leistungsmonat der Gebuehrenrechnungen ──────────────
+
+def test_fee_service_months_exposes_the_service_period_of_fee_invoices(combined, kaufland):
+    """Der Report muss den Leistungsmonat der Gebuehrenrechnung liefern,
+    damit die UI '(Juni 26)' anzeigen kann."""
+    set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
+    for provider, number, gross, net, vat, pfrom, pto in (
+        ("kaufland", "TEST-FEE-R07", 167009, 140337, 26672, "2026-06-01", "2026-06-30"),
+        ("amazon", "TEST-FEE-A07", 1190, 1000, 190, "2026-06-01", "2026-06-30"),
+    ):
+        _docs.save_input_vat_invoice({
+            "provider": provider, "doc_type": "fee", "invoice_number": number,
+            "invoice_date": "2026-07-01", "received_date": "2026-07-01",
+            "period_from": pfrom, "period_to": pto,
+            "gross_cents": gross, "net_cents": net, "vat_cents": vat,
+            "deductible_vat_cents": vat,
+        })
+    for row in _docs.list_input_vat_invoices(deduction_month="2026-07"):
+        _docs.set_input_vat_status(row["id"], "confirmed")
+
+    report = ust_report.build_ust_report("2026-07")
+    fee_months = report["sections"]["input_vat"]["fee_service_months"]
+    assert fee_months["kaufland"] == "2026-06", (
+        f"Kaufland-Leistungsmonat sollte 2026-06 sein, ist {fee_months['kaufland']}"
+    )
+    assert fee_months["amazon"] == "2026-06", (
+        f"Amazon-Leistungsmonat sollte 2026-06 sein, ist {fee_months['amazon']}"
+    )
+    assert report["sections"]["input_vat"]["kaufland_fees_cents"] == 26672
+    assert report["sections"]["input_vat"]["amazon_fees_cents"] == 190
+
+
+def test_fee_service_months_none_when_no_fee_invoice(combined, kaufland):
+    set_tax_settings(combined.connect_combined_db, vat_effective_from="2026-01-01")
+    report = ust_report.build_ust_report("2026-07")
+    fee_months = report["sections"]["input_vat"]["fee_service_months"]
+    assert fee_months["kaufland"] is None
+    assert fee_months["amazon"] is None

@@ -19,12 +19,13 @@ from app.services import platform_invoices as pi
 from app.services.invoice_parser import parse_invoice_text
 
 DDL = """
+CREATE TABLE orders(id TEXT PRIMARY KEY, provider TEXT, external_order_id TEXT);
 CREATE TABLE documents (
     id TEXT PRIMARY KEY, original_filename TEXT, stored_filename TEXT,
     file_path TEXT, mime_type TEXT, uploaded_at TEXT, notes TEXT);
 CREATE TABLE transactions (
     id TEXT PRIMARY KEY, date TEXT, type TEXT, direction TEXT,
-    amount_gross INTEGER, currency TEXT, vat_rate INTEGER, vat_amount INTEGER,
+    amount_gross INTEGER CHECK (amount_gross > 0), currency TEXT, vat_rate INTEGER, vat_amount INTEGER,
     amount_net INTEGER, is_vat_deductible INTEGER, provider TEXT,
     counterparty_name TEXT, category TEXT, reference TEXT, notes TEXT,
     order_id TEXT, document_id TEXT, template_id TEXT, payment_account_id TEXT,
@@ -40,7 +41,9 @@ CREATE TABLE monthly_invoices (
     needs_review_reasons TEXT, fx_rate TEXT, vat_cents_eur INTEGER);
 CREATE TABLE monthly_invoice_transactions (
     invoice_id TEXT, transaction_id TEXT,
-    PRIMARY KEY (invoice_id, transaction_id));
+    PRIMARY KEY (invoice_id, transaction_id),
+    FOREIGN KEY (invoice_id) REFERENCES monthly_invoices(id),
+    FOREIGN KEY (transaction_id) REFERENCES transactions(id));
 """
 
 RECHNUNG = """\
@@ -107,11 +110,137 @@ def _count(db_path: Path, sql: str, params: tuple = ()) -> int:
         return int(connection.execute(sql, params).fetchone()[0])
 
 
+def test_two_amazon_invoices_in_same_period_do_not_offset_each_other(db: Path) -> None:
+    invoices = []
+    for number, net, vat, gross in [("FBA-1", 10000, 1900, 11900), ("FBA-2", 20000, 3800, 23800)]:
+        invoices.append(pi.create_platform_invoice(parsed={
+            "provider": "amazon", "invoice_number": number, "invoice_date": "2026-07-31",
+            "period_from": "2026-07-01", "period_to": "2026-07-31", "doc_kind": "consolidated",
+            "doc_category": "fee", "gross_cents": gross, "net_cents": net, "vat_cents": vat,
+            "currency": "EUR", "parse_confidence": 1.0, "needs_review_reasons": [],
+            "lines": [{"position_key": "fulfillment", "label": "MCF FBA Pick & Pack Fee",
+                       "net_cents": net, "vat_cents": vat, "gross_cents": gross, "vat_rate": 19}],
+        }))
+    for invoice in invoices:
+        approved = pi.approve_platform_invoice(invoice["id"])
+        assert approved["had_variance"] is False
+    assert _count(db, "SELECT SUM(amount_gross) FROM transactions") == 35700
+    assert _count(db, "SELECT COUNT(*) FROM transactions WHERE category='invoice_variance'") == 0
+    pi.approve_platform_invoice(invoices[0]["id"])
+    assert _count(db, "SELECT SUM(amount_gross) FROM transactions") == 35700
+
+
+def test_original_amazon_fee_credit_is_stored_and_booked_with_negative_sign(db: Path) -> None:
+    from test_invoice_parser import AMAZON_GUTSCHRIFT
+
+    csv = 'Transaction Date,Transaction ID,Order ID,Fees Invoice Number,Marketplace,Fee ID,Total Fees (VAT-Inclusive)\n08/20/2026,R1,O1,TEST-CN-00000001,Amazon.de,Referral Fee,-98.07\n'
+    parsed = pi.parse_uploaded_document(pdf_text=AMAZON_GUTSCHRIFT, csv_text=csv)
+    assert parsed["parse_confidence"] == 1.0
+    credit = pi.create_platform_invoice(parsed=parsed)
+    assert credit["invoice_amount_cents"] == -9807
+    assert credit["vat_amount_cents"] == -1566
+    approved = pi.approve_platform_invoice(credit["id"])
+    assert approved["status"] == "approved"
+    assert _count(db, "SELECT SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END) FROM transactions") == -9807
+    assert _count(db, "SELECT SUM(CASE direction WHEN 'OUT' THEN vat_amount ELSE -vat_amount END) FROM transactions") == -1566
+    with sqlite3.connect(db) as c:
+        assert c.execute("SELECT direction,amount_gross,vat_amount FROM transactions").fetchone() == ("IN", 9807, 1566)
+    pi.approve_platform_invoice(credit["id"])
+    assert _count(db, "SELECT COUNT(*) FROM transactions") == 1
+    assert _count(db, "SELECT COUNT(*) FROM transactions WHERE category='invoice_variance'") == 0
+
+
+def commission_invoice(number, gross, *, provider="kaufland", refs=None):
+    return {"provider": provider, "invoice_number": number, "invoice_date": "2026-08-31",
+            "period_from": "2026-08-01", "period_to": "2026-08-31", "doc_kind": "consolidated",
+            "doc_category": "fee", "currency": "EUR", "gross_cents": gross, "vat_cents": 0,
+            "lines": [{"position_key": "provision", "gross_cents": gross, "net_cents": gross,
+                       "vat_cents": 0, "order_ref": refs}]}
+
+
+def seed_commission(path, ident, gross, direction="OUT", order_id=None, provider="kaufland"):
+    with sqlite3.connect(path) as c:
+        c.execute("INSERT INTO transactions(id,date,type,direction,amount_gross,currency,provider,category,source_key,order_id) VALUES (?,'2026-08-10','FEE',?,?,'EUR',?,'fees',?,?)",
+                  (ident, direction, gross, provider, ident, order_id))
+
+
+def test_existing_fee_reversal_is_linked_without_duplicate_variance(db):
+    seed_commission(db, "charge", 23800)
+    seed_commission(db, "reversal", 11900, "IN")
+    parsed = commission_invoice("MIXED", 11900)
+    parsed["lines"] = [{"position_key": "provision", "gross_cents": 23800},
+                       {"position_key": "provision_storno", "gross_cents": -11900}]
+    inv = pi.create_platform_invoice(parsed=parsed)
+    approved = pi.approve_platform_invoice(inv["id"])
+    assert approved["had_variance"] is False
+    assert _count(db, "SELECT COUNT(*) FROM transactions") == 2
+
+
+def test_amazon_external_order_reference_resolves_internal_bookkeeping_id(db):
+    with sqlite3.connect(db) as c:
+        c.execute("INSERT INTO orders VALUES ('internal-uuid','amazon','123-1234567-1234567')")
+    seed_commission(db, "fee", 1190, order_id="internal-uuid", provider="amazon")
+    inv = pi.create_platform_invoice(parsed=commission_invoice("EXTERNAL", 1190, provider="amazon", refs="123-1234567-1234567"))
+    assert pi.approve_platform_invoice(inv["id"])["had_variance"] is False
+    assert _count(db, "SELECT COUNT(*) FROM transactions") == 1
+
+
+def test_late_automatic_fee_reapproval_appends_an_exact_idempotent_delta(db):
+    inv = pi.create_platform_invoice(parsed=commission_invoice("LATE", 1190))
+    pi.approve_platform_invoice(inv["id"])
+    seed_commission(db, "late-fee", 500)
+    pi.approve_platform_invoice(inv["id"])
+    assert _count(db, "SELECT SUM(CASE direction WHEN 'OUT' THEN amount_gross ELSE -amount_gross END) FROM transactions") == 1190
+    count = _count(db, "SELECT COUNT(*) FROM transactions")
+    pi.approve_platform_invoice(inv["id"])
+    assert _count(db, "SELECT COUNT(*) FROM transactions") == count
+
+
+def test_zero_net_category_bucket_is_not_inserted(db):
+    parsed = commission_invoice("ZERO-BUCKET", 11900, provider="amazon")
+    parsed["lines"] = [{"position_key": "subscription", "gross_cents": 11900, "net_cents": 10000, "vat_cents": 1900},
+                       {"position_key": "fulfillment", "gross_cents": 11900, "net_cents": 10000, "vat_cents": 1900},
+                       {"position_key": "fulfillment", "gross_cents": -11900, "net_cents": -10000, "vat_cents": -1900}]
+    inv = pi.create_platform_invoice(parsed=parsed)
+    pi.approve_platform_invoice(inv["id"])
+    assert _count(db, "SELECT COUNT(*) FROM transactions") == 1
+
+
 class TestPrefillOhneBuchung:
     def test_parse_legt_nichts_an(self, db: Path) -> None:
         pi.parse_uploaded_document(pdf_text=RECHNUNG)
         assert _count(db, "SELECT COUNT(*) FROM monthly_invoices") == 0
         assert _count(db, "SELECT COUNT(*) FROM transactions") == 0
+
+    def test_matching_fee_csv_replaces_stale_pdf_position_warning(self, db: Path) -> None:
+        from test_invoice_parser import AMAZON_GEBUEHR
+
+        text = AMAZON_GEBUEHR.replace("Gebuehren im Zusammenhang mit", "Unbekannte Abrechnungsposition").replace('"Versand durch Amazon"', '"Unbekannte Leistung"')
+        pdf_only = pi.parse_uploaded_document(pdf_text=text)
+        assert any(r.startswith("unbekannte_position") for r in pdf_only["needs_review_reasons"])
+        csv = 'Transaction Date,Transaction ID,Order ID,Fees Invoice Number,Marketplace,Fee ID,Total Fees (VAT-Inclusive)\n2026-08-15,T1,O1,TEST-AEU-00000001,Amazon.de,MCF FBA Pick & Pack Fee,163.58\n'
+        combined = pi.parse_uploaded_document(pdf_text=text, csv_text=csv)
+        assert combined["parse_confidence"] == 1.0
+        assert combined["needs_review_reasons"] == []
+        assert (combined["net_cents"], combined["vat_cents"], combined["gross_cents"]) == (13746, 2612, 16358)
+        assert _count(db, "SELECT COUNT(*) FROM transactions") == 0
+
+    def test_mismatching_fee_csv_keeps_a_real_checksum_warning(self, db: Path) -> None:
+        from test_invoice_parser import AMAZON_GEBUEHR
+
+        csv = 'Transaction Date,Transaction ID,Order ID,Fees Invoice Number,Marketplace,Fee ID,Total Fees (VAT-Inclusive)\n2026-08-15,T1,O1,TEST-AEU-00000001,Amazon.de,MCF FBA Pick & Pack Fee,164.58\n'
+        result = pi.parse_uploaded_document(pdf_text=AMAZON_GEBUEHR, csv_text=csv)
+        assert "kontrollsumme_brutto_verfehlt" in result["needs_review_reasons"]
+        assert result["parse_confidence"] < 1.0
+
+    def test_fee_csv_inherits_native_invoice_currency(self, db: Path) -> None:
+        from test_invoice_parser import AMAZON_ABO
+
+        csv = 'Transaction Date,Transaction ID,Order ID,Fees Invoice Number,Marketplace,Fee ID,Total Fees (VAT-Inclusive)\n06/30/2026,T1,,TEST-AEU-00000002,Amazon.co.uk,Subscription Fee,29.75\n'
+        result = pi.parse_uploaded_document(pdf_text=AMAZON_ABO, csv_text=csv)
+        assert result["currency"] == "GBP"
+        assert result["lines"][0]["currency"] == "GBP"
+        assert result["vat_cents_eur"] == 551
 
     def test_vorbefuellung_und_vorschau(self, db: Path) -> None:
         _seed_provision(db, cents=2233)

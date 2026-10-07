@@ -22,8 +22,10 @@ import {
   issueLabel,
   monthLabel,
   toCents,
+  reviewReasonLabel,
 } from "./labels";
 import { TaxReportMonthPicker } from "./tax-report-month-picker";
+import { TaxReportImport } from "./tax-report-import";
 
 function cx(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(" ");
@@ -61,6 +63,7 @@ const TABS: Array<{ token: TabToken; label: string }> = [
 
 const AMAZON_ORDER = [
   "de_b2c",
+  "pre_vat",
   "eu_b2b_intra_community_supply",
   "eu_b2c_home_rate",
   "returns",
@@ -68,6 +71,30 @@ const AMAZON_ORDER = [
   "export",
   "unresolved",
 ];
+
+const KAUFLAND_ORDER = [
+  "de_b2c",
+  "pre_vat",
+  "kaufland_rate_needs_override",
+  "deemed_supplier",
+  "returns",
+  "unresolved_refund_date",
+];
+
+type ClassBucket = { count: number; gross: number; net: number; output_vat: number };
+
+function aggregateByClass(rows: Array<Record<string, unknown>>): Record<string, ClassBucket> {
+  const acc: Record<string, ClassBucket> = {};
+  for (const row of rows) {
+    const cls = row.transaction_type === "REFUND" ? "returns" : String(row.tax_class || "unknown");
+    if (!acc[cls]) acc[cls] = { count: 0, gross: 0, net: 0, output_vat: 0 };
+    acc[cls].count += 1;
+    acc[cls].gross += Number(row.gross_cents || 0);
+    acc[cls].net += Number(row.net_cents || 0);
+    acc[cls].output_vat += Number(row.output_vat_cents || 0);
+  }
+  return acc;
+}
 
 const STATUS_LABELS: Record<string, { text: string; className: string }> = {
   draft: { text: "Entwurf", className: "badge badge-default" },
@@ -239,6 +266,13 @@ export function TaxReportPage() {
         ))}
       </div>
 
+      <TaxReportImport onComplete={items => {
+        const months = Array.from(new Set(items.flatMap(item => item.deduction_month ? [item.deduction_month] : item.months || [])));
+        setStatus(filed ? "Import zugeordnet. Der abgegebene Bericht bleibt unverändert; Änderungen benötigen eine Berichtigung." : "Import abgeschlossen. Zuordnungen und Prüffälle stehen im Importergebnis.");
+        if (months.length === 1 && months[0] !== month) setMonth(months[0]);
+        else void reload();
+      }} />
+
       <div
         className="trend-granularity"
         role="tablist"
@@ -274,49 +308,127 @@ export function TaxReportPage() {
               </div>
             </article>
             <article className="detail-card">
-              <h3>Kaufland</h3>
-              <div className="detail-kv">
-                <DetailRows
-                  items={[
-                    ["Umsatz nach Retouren", formatMoneyFromCents(kaufland?.revenue_after_returns_cents || 0)],
-                    ["Netto", formatMoneyFromCents(kaufland?.net_cents || 0)],
-                    ["USt (19 %)", formatMoneyFromCents(kaufland?.output_vat_cents || 0)],
-                    [
-                      "Retouren",
-                      kaufland?.returns.count
-                        ? String(kaufland.returns.count)
-                        : kaufland?.returns_synced
-                          ? "Keine"
-                          : "Unbekannt",
-                    ],
-                    ["Positionen ohne Steuersatz", String(pendingOverrides)],
-                  ]}
-                />
-              </div>
-            </article>
-            <article className="detail-card">
-              <h3>Amazon</h3>
-              <div className="detail-kv">
-                <DetailRows
-                  items={AMAZON_ORDER.filter((key) => amazon[key]).map((key) => [
-                    classLabel(key),
-                    `${amazon[key].count} · ${formatMoneyFromCents(amazon[key].net)}`,
-                  ])}
-                />
-              </div>
-            </article>
-            <article className="detail-card">
               <h3>Vorsteuer</h3>
               <div className="detail-kv">
                 <DetailRows
-                  items={INPUT_VAT_BUCKETS.map(([key, label]) => [
-                    label,
-                    formatMoneyFromCents(Number((inputVat as Record<string, number> | undefined)?.[key] || 0)),
-                  ])}
+                  items={INPUT_VAT_BUCKETS.map(([key, label]) => {
+                    const feeMonths = (inputVat as Record<string, unknown> | undefined)?.fee_service_months as
+                      | { amazon?: string | null; kaufland?: string | null }
+                      | undefined;
+                    const serviceKey = key === "amazon_fees_cents" ? "amazon" : key === "kaufland_fees_cents" ? "kaufland" : null;
+                    const smToken = serviceKey ? feeMonths?.[serviceKey as "amazon" | "kaufland"] : null;
+                    const displayLabel = smToken ? `${label} (${monthLabel(smToken)})` : label;
+                    return [
+                      displayLabel,
+                      formatMoneyFromCents(Number((inputVat as Record<string, number> | undefined)?.[key] || 0)),
+                    ] as [string, string];
+                  })}
                 />
               </div>
             </article>
           </section>
+
+          {(() => {
+            const kauflandBuckets = aggregateByClass(kaufland?.rows || []);
+            const kauflandRows: Array<[string, ClassBucket]> = [
+              ...KAUFLAND_ORDER.filter((key) => kauflandBuckets[key]).map((key) => [classLabel(key), kauflandBuckets[key]] as [string, ClassBucket]),
+            ];
+            return (
+              <>
+                <section className="card table-card" style={{ marginTop: 12 }}>
+                  <div className="table-head">
+                    <h2 className="table-title">Kaufland-Umsätze</h2>
+                    <div className="table-meta">nach steuerlicher Behandlung</div>
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Behandlung</th>
+                          <th>Anzahl</th>
+                          <th>Brutto</th>
+                          <th>Netto</th>
+                          <th>USt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {kauflandRows.length ? kauflandRows.map(([label, bucket]) => (
+                          <tr key={label}>
+                            <td>{label}</td>
+                            <td>{bucket.count}</td>
+                            <td>{formatMoneyFromCents(bucket.gross)}</td>
+                            <td>{formatMoneyFromCents(bucket.net)}</td>
+                            <td>{formatMoneyFromCents(bucket.output_vat)}</td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan={5}>Keine Kaufland-Umsätze in diesem Monat.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="card table-card" style={{ marginTop: 12 }}>
+                  <div className="table-head">
+                    <h2 className="table-title">Amazon-Umsätze</h2>
+                    <div className="table-meta">nach steuerlicher Behandlung</div>
+                  </div>
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Behandlung</th>
+                          <th>Anzahl</th>
+                          <th>Brutto</th>
+                          <th>Netto</th>
+                          <th>USt</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {AMAZON_ORDER.filter((key) => amazon[key]).map((key) => {
+                          const bucket = amazon[key];
+                          return (
+                            <tr key={key}>
+                              <td>{classLabel(key)}</td>
+                              <td>{bucket.count}</td>
+                              <td>{formatMoneyFromCents(bucket.gross)}</td>
+                              <td>{formatMoneyFromCents(bucket.net)}</td>
+                              <td>{formatMoneyFromCents(bucket.output_vat)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </>
+            );
+          })()}
+
+          {report.sections.finance_reconciliation ? <section className="card table-card" style={{ marginTop: 12 }} aria-label="Finanzabgleich">
+            <div className="table-head">
+              <h2 className="table-title">Finanzabgleich · Amazon</h2>
+              <div className="table-meta">{{ matched: "Abgestimmt", explained: "Abgestimmt mit erklärten Zeitverschiebungen", differences: "Abweichungen noch offen", incomplete: "Nicht vollständig prüfbar" }[report.sections.finance_reconciliation.status]}</div>
+            </div>
+            <div className="table-meta">Steuerbeträge stammen aus Originalreports und bestätigten Belegen. Finanzhinweise ändern diese Beträge nicht und erfordern keine zusätzliche Freigabe.</div>
+            <div className="table-wrap"><table><thead><tr><th>Gebührenart</th><th>Währung</th><th>Belege</th><th>Finanzdaten · Aktivitätsmonat</th><th>Differenz</th></tr></thead>
+              <tbody>{report.sections.finance_reconciliation.comparisons.map(row => <tr key={`${row.currency}-${row.category}`}>
+                <td>{{ selling_fees: "Provisionen und Erstattungsgebühren", fulfillment: "FBA-Versand, Lagerung und Anlieferung", inventory_removal: "Remission und Entsorgung", shipping_chargeback: "Einbehaltene Kundenversandkosten", subscription: "Abonnement" }[row.category] || "Weitere Gebühren"}</td>
+                <td>{row.currency}</td><td>{(row.invoice_cents / 100).toFixed(2)}</td><td>{(row.finance_cents / 100).toFixed(2)}</td><td>{(row.difference_cents / 100).toFixed(2)}</td>
+              </tr>)}</tbody></table></div>
+            {report.sections.finance_reconciliation.timing.length ? <div className="table-meta">{report.sections.finance_reconciliation.timing.length} Transaktion(en) mit Freigabe in einem anderen Monat – automatisch zugeordnet.</div> : null}
+            {report.sections.finance_reconciliation.excluded_ads_cents ? <div className="table-meta">Werbung separat: {formatMoneyFromCents(report.sections.finance_reconciliation.excluded_ads_cents)}. Eigene Werbebelege sind maßgeblich.</div> : null}
+            {report.sections.finance_reconciliation.details.length ? <details style={{ marginTop: 8 }}><summary>Abweichende Einzelzuordnungen ({report.sections.finance_reconciliation.details.length})</summary>
+              <div className="table-wrap"><table><thead><tr><th>Bestellung</th><th>Währung</th><th>Belege</th><th>Finanzdaten</th><th>Differenz</th></tr></thead><tbody>
+                {report.sections.finance_reconciliation.details.map((row, index) => <tr key={index}><td>{row.order_id}</td><td>{row.currency}</td><td>{(row.invoice_cents/100).toFixed(2)}</td><td>{(row.finance_cents/100).toFixed(2)}</td><td>{(row.difference_cents/100).toFixed(2)}</td></tr>)}
+              </tbody></table></div></details> : null}
+            {report.sections.finance_reconciliation.issues.length ? <details style={{ marginTop: 8 }}><summary>Offene Kontrollpunkte ({report.sections.finance_reconciliation.issues.length})</summary>
+              {report.sections.finance_reconciliation.issues.map((issue, index) => <div className="table-meta" key={index}>
+                {{ FINANCE_SOURCE_MISSING: "Finanzquelle fehlt", FINANCE_COVERAGE_EMPTY: "Keine Finanztransaktionen verfügbar", FINANCE_CHECK_FAILED: "Finanzquelle konnte nicht vollständig geprüft werden", INVOICE_DETAILS_MISSING: "Rechnungspositionen für den Kontrollabgleich fehlen", UNKNOWN_INVOICE_FEE: "Beleggebühr noch nicht zugeordnet", UNKNOWN_FINANCE_FEE: "Neue Finanzgebührenart noch nicht zugeordnet", ORIGINAL_LIFECYCLE_MISSING: "Ursprünglicher Transaktionszeitpunkt noch nicht belegt", LIFECYCLE_COMPONENTS_CHANGED: "Gebührenwerte unterscheiden sich zwischen Transaktionsständen", LEGACY_FINANCE_COVERAGE: "Nur ältere Finanzdaten vorhanden", FINANCE_DATE_MISSING: "Transaktionsdatum fehlt", INVOICE_POSITION_TOTAL_DIFFERENCE: "Positionssumme weicht vom Beleg ab" }[issue.code] || "Zuordnung noch offen"}
+                {issue.invoice_number ? ` · ${issue.invoice_number}` : ""}{issue.label ? ` · ${issue.label}` : ""}
+              </div>)}
+            </details> : null}
+          </section> : null}
 
           <section className="card table-card" style={{ marginTop: 12 }}>
             <div className="table-head">
@@ -487,14 +599,22 @@ export function TaxReportPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {INPUT_VAT_BUCKETS.map(([key, label]) => (
-                    <tr key={key}>
-                      <td>{label}</td>
-                      <td>
-                        {formatMoneyFromCents(Number((inputVat as Record<string, number> | undefined)?.[key] || 0))}
-                      </td>
-                    </tr>
-                  ))}
+                  {INPUT_VAT_BUCKETS.map(([key, label]) => {
+                    const feeMonths = (inputVat as Record<string, unknown> | undefined)?.fee_service_months as
+                      | { amazon?: string | null; kaufland?: string | null }
+                      | undefined;
+                    const serviceKey = key === "amazon_fees_cents" ? "amazon" : key === "kaufland_fees_cents" ? "kaufland" : null;
+                    const smToken = serviceKey ? feeMonths?.[serviceKey as "amazon" | "kaufland"] : null;
+                    const displayLabel = smToken ? `${label} (${monthLabel(smToken)})` : label;
+                    return (
+                      <tr key={key}>
+                        <td>{displayLabel}</td>
+                        <td>
+                          {formatMoneyFromCents(Number((inputVat as Record<string, number> | undefined)?.[key] || 0))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -714,8 +834,8 @@ export function TaxReportPage() {
                     </td>
                     <td>{document.service_date || document.period_to || document.invoice_date}</td>
                     <td>{monthLabel(document.deduction_month)}</td>
-                    <td>{formatMoneyFromCents(document.net_cents)}</td>
-                    <td>{formatMoneyFromCents(document.deductible_vat_cents)}</td>
+                    <td>{document.currency && document.currency !== "EUR" ? new Intl.NumberFormat("de-DE", { style: "currency", currency: document.currency }).format(document.net_cents / 100) : formatMoneyFromCents(document.net_cents)}</td>
+                    <td>{formatMoneyFromCents(document.effective_deductible_vat_cents ?? document.deductible_vat_cents)}</td>
                     <td>
                       <span
                         className={cx(
@@ -735,9 +855,12 @@ export function TaxReportPage() {
                               ? "Ohne Vorsteuer"
                               : "Zu prüfen"}
                       </span>
+                      {document.input_vat_status !== "confirmed" && Array.isArray(document.needs_review_reasons) && document.needs_review_reasons.length ?
+                        <div className="table-meta">{document.needs_review_reasons.map(reviewReasonLabel).join(" ")}</div> : null}
                     </td>
                     <td>
                       <span className="doc-actions">
+                        <a href={`/api/ust-report/documents/${encodeURIComponent(document.id)}/download`} target="_blank" rel="noreferrer">Originalbeleg</a>
                         {document.input_vat_status !== "confirmed" && document.doc_type !== "damage_compensation" ? (
                           <button
                             className="btn-inline primary"

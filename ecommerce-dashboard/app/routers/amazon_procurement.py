@@ -206,10 +206,8 @@ def import_tax_report(file: UploadFile = File(...)):
         raise HTTPException(413, 'Datei zu groß')
     try:
         text = data.decode('utf-8-sig')
-        delimiter = '\t' if '\t' in text.partition('\n')[0] else ','
-        rows = list(csv.DictReader(io.StringIO(text), delimiter=delimiter))
-        if not rows or not {'Transaction ID', 'Order ID', 'SKU'}.issubset(rows[0]):
-            raise ValueError('SC_VAT_TAX_REPORT mit Transaction ID, Order ID und SKU erforderlich')
+        from app.services import amazon_tax_import as ati
+        rows = ati.parse_sc_vat_tax_report(text)
         service.initialize()
         with db._connect() as c:
             for row in rows:
@@ -230,6 +228,7 @@ def import_tax_report(file: UploadFile = File(...)):
             eu_distance_current_year_cents=eu['eu_distance_current_year_cents'],
         )
         persisted = ati.import_sc_vat_tax_rows(classified)
+        ati.reclassify_all_rows(**eu)
         return {'rows': len(rows), 'status': 'classified', 'classified': persisted,
                 'blockers': sum(1 for item in classified if item['blocker'])}
     except (ValueError, UnicodeError, csv.Error) as exc:

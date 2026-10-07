@@ -342,9 +342,14 @@ def get_document_file(invoice_id: str) -> tuple[Path, str]:
     return path, path.name.split("-", 1)[-1] if "-" in path.name else path.name
 
 
-def sum_input_vat_by_deduction_month(month: str) -> dict[str, int]:
-    """Vorsteuerbloecke je Abzugsmonat; nur freigegebene Rechnungen sind abziehbar."""
-    totals = {
+def sum_input_vat_by_deduction_month(month: str, *, fee_tax_context=None) -> dict[str, Any]:
+    """Vorsteuerbloecke je Abzugsmonat; nur freigegebene Rechnungen sind abziehbar.
+
+    ``fee_service_months`` enthaelt je Gebuehren-Provider den Leistungsmonat
+    der zugehoerigen Rechnung (aus ``period_to``/``service_date``/``period_from``),
+    damit die UI den Zeitraum als z. B. "(Juni 26)" anzeigen kann.
+    """
+    totals: dict[str, Any] = {
         "purchases_cents": 0,
         "amazon_fees_cents": 0,
         "kaufland_fees_cents": 0,
@@ -352,7 +357,18 @@ def sum_input_vat_by_deduction_month(month: str) -> dict[str, int]:
         "pending_review_cents": 0,
         "pending_review_count": 0,
         "nontaxable_cents": 0,
+        "fee_service_months": {"amazon": None, "kaufland": None},
+        "eligibility_adjustment_cents": 0,
+        "eligibility_review_count": 0,
     }
+
+    def _service_month(row: dict[str, Any]) -> str | None:
+        for field in ("period_to", "service_date", "period_from"):
+            token = _month_token(row.get(field))
+            if token:
+                return token
+        return None
+
     for row in list_input_vat_invoices(deduction_month=month):
         doc_type = row["doc_type"]
         provider = row["provider"]
@@ -366,12 +382,23 @@ def sum_input_vat_by_deduction_month(month: str) -> dict[str, int]:
         if status != "confirmed":
             continue
         deductible = int(row["deductible_vat_cents"])
+        if fee_tax_context is not None:
+            assessment = fee_tax_context.assess(row)
+            deductible = assessment["effective_deductible_vat_cents"]
+            totals["eligibility_adjustment_cents"] += assessment["eligibility_adjustment_cents"]
+            totals["eligibility_review_count"] += assessment["eligibility_review_count"]
         if doc_type == "purchase":
             totals["purchases_cents"] += deductible
         elif doc_type == "fee" and provider == "amazon":
             totals["amazon_fees_cents"] += deductible
+            sm = _service_month(row)
+            if sm and not totals["fee_service_months"]["amazon"]:
+                totals["fee_service_months"]["amazon"] = sm
         elif doc_type == "fee" and provider == "kaufland":
             totals["kaufland_fees_cents"] += deductible
+            sm = _service_month(row)
+            if sm and not totals["fee_service_months"]["kaufland"]:
+                totals["fee_service_months"]["kaufland"] = sm
         else:
             totals["other_cents"] += deductible
     return totals
