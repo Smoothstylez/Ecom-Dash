@@ -147,6 +147,15 @@ Helper: `scripts/dashboard-api/file-ust-report.sh`.
   outstanding; `waiting_pdf` names genuinely missing invoice numbers.
 - Pairing includes existing bookkeeping originals. Repeated PDF/fee CSV uploads
   re-evaluate safely without duplicate bookings; approved totals are not changed.
+- Fee-credit CSVs use `Credit Note Number` instead of `Fees Invoice Number`;
+  pair them with the credit PDF, not the original invoice. Unknown files are
+  reclassified on re-upload, so previously rejected credit CSVs can recover.
+- Positive PDFs are processed before credits. A later original upload also
+  re-evaluates stored pending credits; response items can include those credits.
+  Missing order/original evidence still requires review; never force-confirm it.
+- Kaufland sales/account/booking CSV ingestion is not implemented in this endpoint.
+  They are reconciliation evidence, not extra invoice VAT. Older exports must
+  not overwrite newer cancellation states from the Kaufland API.
 - Credit `original_invoice_numbers` includes all original references. Inheritance
   without order allocation requires confirmed positive fee originals with the
   same fully eligible/ineligible treatment. Mixed/partial/missing/credit-chain

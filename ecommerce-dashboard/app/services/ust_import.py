@@ -31,7 +31,14 @@ def _schema():
 def _records(text):
     delimiter = '\t' if '\t' in text.partition('\n')[0] else ','
     reader = csv.DictReader(io.StringIO(text.lstrip('\ufeff')), delimiter=delimiter)
-    return list(reader.fieldnames or []), list(reader)
+    fields, records = list(reader.fieldnames or []), list(reader)
+    # Amazon uses a different identity column for fee credit-note exports.
+    # Keep the original-reference column; pairing uses the CREDIT, not its origin.
+    if 'Credit Note Number' in fields and 'Fees Invoice Number' not in fields:
+        fields = ['Fees Invoice Number' if f == 'Credit Note Number' else f for f in fields]
+        records = [{('Fees Invoice Number' if k == 'Credit Note Number' else k): v
+                    for k, v in row.items()} for row in records]
+    return fields, records
 
 
 def _decode(data):
@@ -198,6 +205,17 @@ def _invoice(file_row):
     return _save_result(file_row['id'], result)
 
 
+def _processing_priority(row):
+    """Confirm positive originals before credits, independent of upload order."""
+    if row['kind'] != 'invoice_pdf':
+        return 0
+    try:
+        parsed = invoices.parse_uploaded_document(pdf_path=row['stored_path'])
+        return 2 if parsed.get('gross_cents', 0) < 0 else 1
+    except (books.BookkeepingServiceError, invoice_parser.InvoiceParseError, ValueError, OSError):
+        return 1  # The normal processing loop persists the extraction error.
+
+
 def import_files(files):
     """Stage all files before processing, so PDF/CSV upload order is irrelevant."""
     with _LOCK:
@@ -207,7 +225,7 @@ def import_files(files):
             digest = hashlib.sha256(data).hexdigest()
             with connect_combined_db() as c:
                 old = c.execute('SELECT * FROM ust_import_files WHERE id=?', (digest,)).fetchone()
-            if old:
+            if old and old['kind'] != 'unknown':
                 result = json.loads(old['result_json'])
                 if old['kind'] == 'amazon_tax' and result.get('status') == 'tax_imported':
                     results.append({**result, 'status': 'duplicate'})
@@ -233,7 +251,12 @@ def import_files(files):
             path.write_bytes(data)
             base = {'id': digest, 'filename': Path(filename).name, 'kind': kind, 'status': 'queued', 'reasons': []}
             with connect_combined_db() as c:
-                c.execute('INSERT INTO ust_import_files VALUES (?,?,?,?,?,?,?)', (digest, base['filename'], kind, str(path), json.dumps(numbers), json.dumps(base), tax._utc_now()))
+                if old:
+                    # Earlier releases cached unsupported classifications forever.
+                    c.execute('UPDATE ust_import_files SET kind=?,stored_path=?,invoice_numbers_json=?,result_json=? WHERE id=?',
+                              (kind, str(path), json.dumps(numbers), json.dumps(base), digest))
+                else:
+                    c.execute('INSERT INTO ust_import_files VALUES (?,?,?,?,?,?,?)', (digest, base['filename'], kind, str(path), json.dumps(numbers), json.dumps(base), tax._utc_now()))
             staged.append({**base, 'stored_path': str(path), 'invoice_numbers_json': json.dumps(numbers)})
         # Fee CSVs arrive independently too: revisit matching waiting PDFs.
         if csv_numbers:
@@ -246,7 +269,17 @@ def import_files(files):
                 original = _stored_invoice_pdf(number)
                 if original and original['id'] not in {r['id'] for r in staged}:
                     staged.append(original)
-        for row in sorted(staged, key=lambda r: r['kind'] == 'invoice_pdf'):
+        if any(r['kind'] == 'invoice_pdf' for r in staged):
+            # An original can arrive in a later request. Revisit stored waiting
+            # credits too, without requiring another upload or manual approval.
+            with connect_combined_db() as c:
+                waiting = c.execute("SELECT * FROM ust_import_files WHERE kind='invoice_pdf'").fetchall()
+            ids = {r['id'] for r in staged}
+            for row in waiting:
+                previous = json.loads(row['result_json'])
+                if row['id'] not in ids and previous.get('status') == 'needs_review' and int(previous.get('gross_cents') or 0) < 0:
+                    staged.append(dict(row))
+        for row in sorted(staged, key=_processing_priority):
             result = {'id': row['id'], 'filename': row['filename'], 'kind': row['kind'], 'reasons': []}
             try:
                 if row['kind'] == 'invoice_pdf':

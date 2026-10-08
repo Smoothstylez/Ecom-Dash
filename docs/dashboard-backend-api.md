@@ -1623,6 +1623,11 @@ Amazon VCS/AVTR tax CSVs, and invoice-specific fee CSVs. File CONTENT determines
 the importer, not a manually chosen provider or the filename. CSV/PDF pairs
 are matched by invoice number, including across separate requests and either
 upload order. Original files and processing results are persisted by SHA-256.
+Amazon fee-credit CSVs with `Credit Note Number`, `Original Invoice Number`,
+`Fee ID`, and `Total Fees (VAT-Inclusive)` are supported too. They pair with
+the credit-note PDF by **credit-note number**, never by the original invoice
+number. Original bytes remain unchanged; order-level credit lines supplement
+the PDF's documented signed totals and are assessed against original order dates.
 
 Each response item includes `id`, `filename`, `kind`, `status`, `reasons`, and
 when known `invoice_number`, `provider`, `deduction_month`, `document_id`, or
@@ -1636,6 +1641,8 @@ CSV retains its already found pairings. Existing bookkeeping PDFs are matched
 too, including files uploaded before the unified importer. Duplicate/review
 invoice outcomes update the CSV status and month. A repeated PDF/fee CSV is
 re-evaluated idempotently; already imported tax reports remain duplicates.
+Previously unsupported files are classified again on re-upload, allowing
+old `unknown/error` credit CSVs to recover after an importer update.
 Unknown-position reasons use `unbekannte_position:<label>:<count>` (one reason
 per distinct label), preserving the actual labels and number of positions.
 HTTP 200 for a processed batch is not a declaration that every file succeeded;
@@ -1659,9 +1666,20 @@ Without order-level allocation, only confirmed positive fee originals with
 unanimous fully deductible or fully non-deductible treatment allow automatic
 inheritance. Missing, mixed, partially allocated, later-dated or credit-chain
 references remain review cases. The report uses the same eligibility projection.
+Within an upload, positive original PDFs are processed before credit PDFs.
+Uploading an original later also re-evaluates stored review-pending credit PDFs;
+only proven eligibility permits automatic approval. Responses may therefore
+include updated stored credits in addition to the newly submitted files.
 `shipping_chargeback` is an order-related FBA shipping-cost charge; it is not
 inventory removal. `inventory_removal` is a separate FBA inventory-removal
 service, assessed using its service date rather than a customer-order ID.
+
+Kaufland seller-portal sales/account/booking CSVs are not currently implemented
+in this endpoint. Their originals are stored with an `unknown/error` result;
+their rows are not imported. Synced Kaufland orders remain the sales source and
+fee PDFs remain the input-VAT source. These CSVs are valuable reconciliation
+evidence; re-importing an older sales snapshot must not restore later-cancelled
+orders or book fee VAT a second time alongside an invoice PDF.
 
 `GET /documents` presents both legacy USt invoices and bookkeeping platform
 invoices in one list. Bookkeeping IDs have `book:` prefix. Their originals

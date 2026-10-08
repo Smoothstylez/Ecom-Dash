@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Original PDFs and tax/fee CSVs use the same automatic pipeline as the UI.
+# Original PDFs and Amazon tax/fee/credit CSVs use the same pipeline as the UI.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/_lib.sh"
 if [[ "$#" -eq 0 ]]; then
-  printf 'Usage: bash %s invoice.pdf [fees.csv] [tax-report.csv]\n' "$0" >&2
+  printf 'Usage: bash %s invoice.pdf [fees.csv] [credit-note.csv] [tax-report.csv]\n' "$0" >&2
   exit 2
 fi
 args=(-X POST)
@@ -14,4 +14,7 @@ for file in "$@"; do
 done
 # Inspect each item's status/reasons and fee-CSV pairings: paired_review means
 # the original PDF was found but review remains; waiting_pdf lists missing IDs.
+# Credit Note Number CSVs pair with their credit PDF. Later originals can also
+# return updated stored credit results. Old unknown files are reclassified.
+# Kaufland portal CSV ingestion is not implemented; do not infer tax from them.
 dashboard_api_curl "${args[@]}" "$(dashboard_api_base_url)/api/ust-report/import"
