@@ -71,6 +71,10 @@ mode does not promote Finance-only warnings into blockers.
   HTTP 200 alone is not full success. `GET /api/ust-report/imports` shows history.
   Repeated uploads are idempotent; conflicting approved records are preserved.
   `POST /api/ust-report/parse-upload` previews binary PDF without booking.
+  PDF extraction requires `pdftotext`; the add-on installs it through
+  `poppler-utils` and verifies the executable during image build. `503` naming
+  missing `pdftotext` means update/rebuild the add-on image, not install a tool
+  on the HA OS host. Unreadable uploaded PDFs remain `400` client errors.
   Use `scripts/dashboard-api/import-ust-files.sh` with explicit target base URL.
 - Filing: `POST /api/ust-report/{month}/refresh` | `file` | `amend`.
   `file` returns `409` while hard blockers remain (`AMAZON_UNRESOLVED`,

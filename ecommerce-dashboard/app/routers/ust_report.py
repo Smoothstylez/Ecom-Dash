@@ -99,7 +99,10 @@ async def api_preview_file(file: UploadFile = File(...)) -> dict[str, Any]:
     except BookkeepingServiceError as exc:
         raise HTTPException(exc.status_code, exc.detail) from exc
     except ust_import.invoice_parser.InvoiceParseError as exc:
-        raise HTTPException(400, str(exc)) from exc
+        # Invalid user PDFs remain client errors; a missing image dependency is
+        # a service failure and tells operators to update the add-on.
+        status_code = 400 if exc.status_code == 422 else exc.status_code
+        raise HTTPException(status_code, exc.detail) from exc
 
 
 @router.get('/imports')

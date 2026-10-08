@@ -1563,6 +1563,11 @@ pointing at the filed original.
 | POST | `/api/ust-report/import` | Multipart `files` (up to 25): automatic content recognition, PDF/CSV pairing, assignment and safe booking |
 | GET | `/api/ust-report/imports` | Latest 30 persisted file-import results |
 | POST | `/api/ust-report/parse-upload` | Multipart `file`: genuine binary PDF extraction and preview without booking |
+
+PDF extraction uses Poppler's `pdftotext -layout`; the add-on image installs
+`poppler-utils` and checks for the executable at build time. A missing
+`pdftotext` in an older image returns `503` with an add-on-update hint. A PDF
+that exists but cannot be read remains a client-side `400` error.
 | POST | `/api/ust-report/{month}/refresh` | Recompute without filing |
 | POST | `/api/ust-report/{month}/file` | File; `409` while blockers remain |
 | POST | `/api/ust-report/{month}/amend` | Append an amendment revision |

@@ -163,6 +163,18 @@ def test_invalid_pdf_preview_is_a_visible_client_error(client):
     assert r.status_code == 400
 
 
+def test_missing_pdf_text_utility_is_reported_as_service_unavailable(client, monkeypatch):
+    from app.services import invoice_parser
+
+    def missing_binary(*args, **kwargs):
+        raise FileNotFoundError("pdftotext")
+
+    monkeypatch.setattr(invoice_parser.subprocess, "run", missing_binary)
+    response = client.post('/api/ust-report/parse-upload', files={'file': ('invoice.pdf', pdf_bytes(RECHNUNG), 'application/pdf')})
+    assert response.status_code == 503
+    assert 'pdftotext' in response.json()['detail']
+
+
 def test_upload_finishes_matching_legacy_review_entry_without_second_invoice(client):
     from app.services import ust_documents
     stored = ust_documents.save_input_vat_invoice({'provider': 'kaufland', 'doc_type': 'fee',

@@ -167,7 +167,11 @@ Recherche am 07.10.2026, Amazon-Hilfe als Primärquelle:
 Die USt folgt dem Originalbeleg; aus der amerikanischen Hilfeseite werden keine
 Steuersätze oder US-Gebührentarife übernommen.
 
-## Selbstvalidierung
+## Laufzeitvoraussetzung und Selbstvalidierung
+
+PDF-Text wird im Add-on über Poppler `pdftotext -layout` extrahiert. Das
+Docker-Image installiert `poppler-utils` und prüft den Binary-Pfad beim Build.
+Ein Start außerhalb des Add-on-Images benötigt ebenfalls `pdftotext` im PATH.
 
 `_finalize()` prüft und setzt `needs_review_reasons`:
 

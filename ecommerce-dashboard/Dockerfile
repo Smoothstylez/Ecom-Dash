@@ -5,7 +5,7 @@ LABEL \
     io.hass.name="E-Commerce Dashboard" \
     io.hass.description="React-based e-commerce analytics dashboard with integrated bookkeeping" \
     io.hass.type="addon" \
-    io.hass.version="0.5.9"
+    io.hass.version="0.5.10"
 
 # Prevent python from writing pyc files and buffering stdout
 ENV PYTHONDONTWRITEBYTECODE=1
@@ -18,7 +18,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
+        poppler-utils \
     && rm -rf /var/lib/apt/lists/*
+
+# PDF invoice parsing depends on Poppler's pdftotext utility.
+RUN command -v pdftotext >/dev/null
 
 # Copy requirements first (better Docker cache)
 COPY requirements.txt .

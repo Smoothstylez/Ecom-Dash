@@ -643,12 +643,17 @@ def extract_text(path: str | Path) -> str:
     source = Path(path)
     if not source.exists():
         raise InvoiceParseError(404, f"Datei nicht gefunden: {source}")
-    result = subprocess.run(
-        ["pdftotext", "-layout", str(source), "-"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["pdftotext", "-layout", str(source), "-"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as exc:
+        raise InvoiceParseError(
+            503, "PDF-Textwerkzeug 'pdftotext' fehlt im Add-on-Image. Bitte das Add-on aktualisieren."
+        ) from exc
     if result.returncode != 0:
         raise InvoiceParseError(422, f"PDF nicht lesbar: {source.name}")
     return result.stdout

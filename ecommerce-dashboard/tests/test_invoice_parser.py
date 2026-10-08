@@ -10,6 +10,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.services import invoice_parser
 from app.services.invoice_parser import (
     DOC_KIND_CONSOLIDATED,
     DOC_KIND_SALES,
@@ -86,6 +87,19 @@ def test_kaufland_continuation_rows_preserve_original_order_references():
     assert invoice.lines[0].order_ref == "TEST-A/123456789012345"
     assert invoice.lines[1].order_ref == "TEST-B/234567890123456"
     assert invoice.lines[2].order_ref is None
+
+
+def test_missing_pdftotext_is_a_clear_parser_service_error(monkeypatch, tmp_path):
+    pdf = tmp_path / "invoice.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    def missing_binary(*args, **kwargs):
+        raise FileNotFoundError("pdftotext")
+
+    monkeypatch.setattr(invoice_parser.subprocess, "run", missing_binary)
+    with pytest.raises(invoice_parser.InvoiceParseError, match="pdftotext") as exc:
+        invoice_parser.extract_text(pdf)
+    assert exc.value.status_code == 503
 
 AMAZON_GEBUEHR = """\
                                                                                                                             RECHNUNG
